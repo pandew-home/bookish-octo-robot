@@ -1,0 +1,37 @@
+
+**DevOps Chatbot v2.0 Deployment Design Guide**  
+
+- **GitOps Strategy (ArgoCD)**  
+  - Operator installed per cluster via ArgoCD `Application` resources.  
+  - Helm chart sourced from `https://charts.k8sgpt.ai/`; cluster-specific values in `values-<cluster>.yaml` [1].  
+  - Mono-repo structure: Cluster manifests stored under `argocd/applications/k8sgpt-operator/<cluster>` [1].  
+
+- **RBAC & Credential Flow**  
+  - `k8sgpt-reader` `ClusterRole` grants:  
+    - Read-only access to core Kubernetes resources (pods, services) [1].  
+    - Full access to K8sGPT CRDs (`k8sgpts`, `results`) [1].  
+  - Central app authenticates via:  
+    - Kion STS credentials → EKS bearer token (60s TTL) [2].  
+    - Generated token maps to user identity via EKS `aws-auth` access entries [2].  
+
+- **Central Application Deployment**  
+  - Single deployment in common cluster; no per-cluster instances [1].  
+  - On-demand EKS credential generation per query:  
+    ```python  
+    # Credential flow example  
+    token = get_eks_bearer_token(aws_creds, cluster_name)  # 60s TTL [2]  
+    ```  
+  - Reads remote cluster CRDs via `CustomObjectsApi` [2].  
+
+- **Security Considerations**  
+  - Credentials stored in-memory with TTL-based expiration in `CredentialStore` [1].  
+  - Temporary CA cert files created but require explicit cleanup (not implemented in context) [1].  
+
+- **Networking & Integration**  
+  - Operator independent; central app reads CRDs remotely without inter-service networking [1].  
+  - Logging/backup/DR handled at cluster level (e.g., Velero) [1].  
+
+**Document Source**:  
+- Authentication flow: [1]  
+- RBAC/credential details: [1][2]  
+- Credential generation code: [2]
