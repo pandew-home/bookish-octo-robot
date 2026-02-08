@@ -1,0 +1,90 @@
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: K8sGPT
+metadata:
+  name: k8sgpt-instance
+  namespace: k8sgpt-operator-system
+spec:
+  # AI Backend Configuration
+  # Choose one: openai or amazonbedrock
+  ai:
+    enabled: true
+    # OpenAI Configuration (default)
+    backend: openai
+    secret:
+      name: k8sgpt-ai-secret
+      key: openai-api-key
+    modelSecret:
+      name: k8sgpt-model-secret
+      key: model-name
+    
+    # Alternative: Amazon Bedrock Configuration
+    # Uncomment to use Bedrock instead of OpenAI
+    # backend: amazonbedrock
+    # model: anthropic.claude-3-haiku-20240307-v1:0  # Cost-efficient Bedrock model
+    # region: us-east-1
+    # secret:
+    #   name: k8sgpt-ai-secret
+    #   key: aws-credentials  # JSON with access_key, secret_key, session_token
+  
+  # Scanning Configuration
+  noCache: false
+  version: v0.3.31  # K8sGPT CLI version
+  
+  # Resource Filters - What to analyze
+  # Focused on high-impact, actionable issues
+  # This configuration balances coverage with performance and cost
+  filters:
+    # Core Workload Issues (High Priority)
+    - Pod                          # CrashLoopBackOff, ImagePullBackOff, OOMKilled, Pending
+    - Deployment                   # Replica unavailability, rollout failures
+    - StatefulSet                  # Pod management, volume claim issues
+    - DaemonSet                    # Node coverage, scheduling failures
+    - CronJob                      # Job failures, scheduling issues
+    - Job                          # Failed jobs, backoff limits
+    
+    # Networking Issues (High Priority)
+    - Service                      # No endpoints, port mismatches
+    - Ingress                      # Backend errors, TLS issues, routing problems
+    
+    # Storage Issues (High Priority)
+    - PersistentVolumeClaim        # Pending PVCs, binding failures
+    
+    # Cluster Health (Medium Priority)
+    - Node                         # NotReady, resource pressure, taints
+    - HorizontalPodAutoscaler      # Metrics unavailable, scaling issues
+    
+    # Optional: Uncomment for deeper analysis
+    # - ReplicaSet                 # Usually covered by Deployment analyzer
+    # - NetworkPolicy              # Enable if using network policies extensively
+    # - PodDisruptionBudget        # Enable for production clusters with PDBs
+    # - VerticalPodAutoscaler      # Enable if using VPA
+
+    
+  # Namespace Configuration
+  # Leave empty to scan all namespaces
+  # Or specify specific namespaces to scan
+  # namespace: ""
+  
+  # Sink Configuration - Where to send results
+  # Results are stored as K8sGPT Result CRDs by default
+  # Additional sinks can be configured (Slack, S3, etc.)
+  # sink:
+  #   type: slack
+  #   endpoint: https://hooks.slack.com/services/YOUR/WEBHOOK/URL
+  
+  # Remote Cache (optional)
+  # Improves performance by caching AI responses
+  # remoteCache:
+  #   enabled: true
+  #   backend: redis
+  #   endpoint: redis-service:6379
+  
+  # Integrations (optional)
+  # Enable additional analyzers for specific tools
+  # integrations:
+  #   trivy:
+  #     enabled: true
+  #     namespace: trivy-system
+  #   prometheus:
+  #     enabled: true
+  #     namespace: monitoring

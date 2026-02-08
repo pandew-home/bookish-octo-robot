@@ -1,0 +1,277 @@
+---
+# ServiceAccount for K8sGPT Operator
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: k8sgpt-operator
+  namespace: k8sgpt-operator-system
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+    app.kubernetes.io/component: rbac
+
+---
+# ClusterRole for K8sGPT Operator
+# Provides read-only access to cluster resources for analysis
+# and read/write access to K8sGPT Result CRDs
+# SECURITY: Secrets access removed - use namespace-scoped Role instead
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k8sgpt-operator-role
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+    app.kubernetes.io/component: rbac
+rules:
+  # Read-only access to cluster resources for analysis
+  - apiGroups: [""]
+    resources:
+      - pods
+      - services
+      - endpoints
+      - persistentvolumeclaims
+      - configmaps
+      # SECURITY: secrets removed - use namespace-scoped Role
+      - nodes
+      - namespaces
+      - events
+      - serviceaccounts
+    verbs:
+      - get
+      - list
+      - watch
+  
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - replicasets
+      - statefulsets
+      - daemonsets
+    verbs:
+      - get
+      - list
+      - watch
+  
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs:
+      - get
+      - list
+      - watch
+  
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - ingresses
+      - networkpolicies
+    verbs:
+      - get
+      - list
+      - watch
+  
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+      - volumeattachments
+    verbs:
+      - get
+      - list
+      - watch
+  
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - rolebindings
+      - clusterroles
+      - clusterrolebindings
+    verbs:
+      - get
+      - list
+      - watch
+  
+  - apiGroups: ["policy"]
+    resources:
+      - poddisruptionbudgets
+      - podsecuritypolicies
+    verbs:
+      - get
+      - list
+      - watch
+  
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs:
+      - get
+      - list
+      - watch
+  
+  # Read/write access to K8sGPT Result CRDs
+  - apiGroups: ["core.k8sgpt.ai"]
+    resources:
+      - results
+      - k8sgpts
+    verbs:
+      - create
+      - delete
+      - get
+      - list
+      - patch
+      - update
+      - watch
+  
+  - apiGroups: ["core.k8sgpt.ai"]
+    resources:
+      - results/status
+      - k8sgpts/status
+    verbs:
+      - get
+      - patch
+      - update
+  
+  - apiGroups: ["core.k8sgpt.ai"]
+    resources:
+      - results/finalizers
+      - k8sgpts/finalizers
+    verbs:
+      - update
+  
+  # Optional: ArgoCD Application CRD access for ArgoCD integration
+  - apiGroups: ["argoproj.io"]
+    resources:
+      - applications
+      - applicationsets
+    verbs:
+      - get
+      - list
+      - watch
+  
+  # Optional: Prometheus integration
+  - apiGroups: ["monitoring.coreos.com"]
+    resources:
+      - servicemonitors
+      - prometheusrules
+    verbs:
+      - get
+      - list
+      - watch
+
+---
+# ClusterRoleBinding for K8sGPT Operator
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k8sgpt-operator-rolebinding
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k8sgpt-operator-role
+subjects:
+  - kind: ServiceAccount
+    name: k8sgpt-operator
+    namespace: k8sgpt-operator-system
+
+---
+# SECURITY: Namespace-scoped Role for secrets access
+# Only allows access to specific secret in operator namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8sgpt-operator-secrets-reader
+  namespace: k8sgpt-operator-system
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources:
+      - secrets
+    verbs:
+      - get
+      - list
+    resourceNames:
+      - k8sgpt-ai-secret  # Only allow access to AI secret
+
+---
+# RoleBinding for secrets access
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8sgpt-operator-secrets-reader
+  namespace: k8sgpt-operator-system
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8sgpt-operator-secrets-reader
+subjects:
+  - kind: ServiceAccount
+    name: k8sgpt-operator
+    namespace: k8sgpt-operator-system
+
+---
+# Role for K8sGPT Operator in its own namespace
+# Provides additional permissions for operator management
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: k8sgpt-operator-leader-election
+  namespace: k8sgpt-operator-system
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources:
+      - configmaps
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  
+  - apiGroups: ["coordination.k8s.io"]
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+  
+  - apiGroups: [""]
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+
+---
+# RoleBinding for K8sGPT Operator in its own namespace
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: k8sgpt-operator-leader-election
+  namespace: k8sgpt-operator-system
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: k8sgpt-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: k8sgpt-operator
+    namespace: k8sgpt-operator-system

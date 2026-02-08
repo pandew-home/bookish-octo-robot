@@ -1,0 +1,181 @@
+---
+# NetworkPolicy for DevOps Chatbot
+# Restricts ingress and egress traffic for security
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: devops-chatbot-netpol
+  namespace: devops-chatbot
+  labels:
+    app: devops-chatbot
+spec:
+  podSelector:
+    matchLabels:
+      app: devops-chatbot
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  # Ingress: Only allow traffic from ingress controller
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 80
+  
+  # Egress: Allow specific outbound traffic only
+  egress:
+  # Allow DNS resolution
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow Kubernetes API server access
+  - to:
+    - namespaceSelector: {}
+      podSelector:
+        matchLabels:
+          component: kube-apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow access to Kubernetes API via service
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: default
+      podSelector:
+        matchLabels:
+          component: apiserver
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow HTTPS for external APIs (LLM providers, AWS)
+  # Note: This is broad but necessary for cloud APIs
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow HTTP for health checks and metrics
+  - to:
+    - podSelector:
+        matchLabels:
+          app: devops-chatbot
+    ports:
+    - protocol: TCP
+      port: 80
+
+---
+# NetworkPolicy for K8sGPT Operator
+# Restricts operator traffic
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: k8sgpt-operator-netpol
+  namespace: k8sgpt-operator-system
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: k8sgpt-operator
+  policyTypes:
+  - Ingress
+  - Egress
+  
+  # Ingress: Allow metrics scraping from Prometheus
+  ingress:
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: monitoring
+      podSelector:
+        matchLabels:
+          app: prometheus
+    ports:
+    - protocol: TCP
+      port: 8080  # Metrics port
+  
+  # Egress: Allow specific outbound traffic
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  
+  # Allow Kubernetes API
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow AI API (OpenAI, Bedrock)
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 443
+  
+  # Allow Redis cache (if enabled)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: k8sgpt-operator-system
+      podSelector:
+        matchLabels:
+          app: redis
+    ports:
+    - protocol: TCP
+      port: 6379
+
+---
+# Default deny all ingress for namespace
+# This ensures any pods without specific policies are denied
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: devops-chatbot
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+
+---
+# Default deny all egress for namespace (optional - may be too restrictive)
+# Uncomment if you want to enforce explicit egress rules
+# apiVersion: networking.k8s.io/v1
+# kind: NetworkPolicy
+# metadata:
+#   name: default-deny-egress
+#   namespace: devops-chatbot
+# spec:
+#   podSelector: {}
+#   policyTypes:
+#   - Egress

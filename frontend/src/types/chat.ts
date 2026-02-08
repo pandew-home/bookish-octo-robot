@@ -1,0 +1,52 @@
+/**
+ * Chat message citation interface
+ */
+export interface Citation {
+  documentId: string;
+  title: string;
+  snippet: string;
+  relevanceScore: number;
+  usageCount?: number;
+  successRate?: number;
+}
+
+/**
+ * K8sGPT finding interface
+ */
+export interface K8sGPTFinding {
+  name: string;
+  kind: string;
+  namespace: string;
+  severity: string;
+  problem: string;
+}
+
+/**
+ * Chat message interface
+ */
+export interface ChatMessage {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  citations?: Citation[];
+  k8sgptFindings?: K8sGPTFinding[];
+  safetyNotice?: string;
+  timestamp: string;
+  savedToKB?: boolean;
+  queryType?: string;
+  loading?: boolean;
+  cluster?: string;
+}
+
+/**
+ * Chat history export format
+ */
+export interface ConversationExport {
+  problem: string;
+  investigation: string;
+  rootCause: string;
+  solution: string;
+  verification: string;
+  timestamp: string;
+  cluster: string;
+}

@@ -1,0 +1,26 @@
+[project]
+name = "devops-rag"
+version = "0.1.0"
+description = "RAG engine for DevOps chatbot with vector store and LLM client"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "MIT"}
+
+dependencies = [
+    "faiss-cpu>=1.7.4",
+    "sentence-transformers>=2.2.2",
+    "numpy>=1.24.0",
+    "openai>=1.0.0",
+    "anthropic>=0.7.0",
+    "requests>=2.31.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

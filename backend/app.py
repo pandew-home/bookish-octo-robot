@@ -1,0 +1,188 @@
+"""
+DevOps Chatbot v2.0 - Main FastAPI Application
+
+This is the main entry point for the DevOps Chatbot backend API.
+It initializes the FastAPI application and registers all API routers.
+
+Requirements: 15.2, 16.6, 16.7, 17.5
+"""
+import logging
+import sys
+from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
+
+# Import startup validator
+from startup_validator import get_validator, validate_startup
+
+# Import API routers
+from api.credentials import router as credentials_router
+from api.clusters import router as clusters_router
+from api.weather import router as weather_router
+from api.solutions import router as solutions_router
+from api.chat import router as chat_router
+
+# Import metrics
+from utils.metrics import get_metrics
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
+logger = logging.getLogger(__name__)
+
+# Create FastAPI app
+logger.info("Creating FastAPI application...")
+app = FastAPI(
+    title="DevOps Chatbot v2.0 API",
+    description="Kubernetes troubleshooting assistant with K8sGPT integration",
+    version="2.0.0",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc"
+)
+
+# Configure CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Configure appropriately for production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Register API routers
+logger.info("Registering API routers...")
+app.include_router(credentials_router)
+app.include_router(clusters_router)
+app.include_router(weather_router)
+app.include_router(solutions_router)
+app.include_router(chat_router)
+
+logger.info("API routers registered successfully")
+
+
+@app.get("/api/health")
+async def health_check():
+    """
+    Health check endpoint for liveness probes.
+    
+    This endpoint always returns 200 OK to indicate the application is running.
+    It does not check if the application is ready to serve requests.
+    
+    Requirements: 16.6
+    
+    Returns:
+        Simple health status
+    """
+    return {"status": "healthy", "service": "devops-chatbot-v2"}
+
+
+@app.get("/api/health/ready")
+async def readiness_check():
+    """
+    Readiness check endpoint for readiness probes.
+    
+    This endpoint returns 200 only after all startup validation completes successfully.
+    Returns 503 Service Unavailable if validation has not completed or failed.
+    
+    Requirements: 16.7
+    
+    Returns:
+        Readiness status with validation details
+    """
+    from fastapi import Response
+    from fastapi.responses import JSONResponse
+    
+    validator = get_validator()
+    
+    if not validator.is_ready():
+        status = validator.get_status()
+        return JSONResponse(
+            content={
+                "status": "not_ready",
+                "service": "devops-chatbot-v2",
+                "validation_complete": status["validation_complete"],
+                "errors": status["errors"],
+                "warnings": status["warnings"]
+            },
+            status_code=503
+        )
+    
+    return {
+        "status": "ready",
+        "service": "devops-chatbot-v2",
+        "validation_complete": True
+    }
+
+
+@app.get("/metrics")
+async def metrics():
+    """
+    Prometheus metrics endpoint.
+    
+    Exposes metrics for query latency, error rates, and API call counts.
+    
+    Requirements: 17.5
+    
+    Returns:
+        Prometheus metrics in text format
+    """
+    metrics_data, content_type = get_metrics()
+    return Response(content=metrics_data, media_type=content_type)
+
+
+@app.on_event("startup")
+async def startup_event():
+    """
+    Startup event handler.
+    
+    Performs initialization tasks when the application starts.
+    Runs startup validation and exits if critical checks fail.
+    
+    Requirements: 16.1, 16.2, 16.3, 16.4, 16.5
+    """
+    logger.info("=" * 80)
+    logger.info("DevOps Chatbot v2.0 - Starting up")
+    logger.info("=" * 80)
+    
+    # Run startup validation
+    # This will exit with code 1 if validation fails
+    validate_startup()
+    
+    logger.info("Startup complete - ready to accept requests")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """
+    Shutdown event handler.
+    
+    Performs cleanup tasks when the application shuts down.
+    """
+    logger.info("=" * 80)
+    logger.info("DevOps Chatbot v2.0 - Shutting down")
+    logger.info("=" * 80)
+    
+    # TODO: Add cleanup tasks
+    # - Close K8s client connections
+    # - Cleanup temporary files
+    # - Flush logs
+    
+    logger.info("Shutdown complete")
+
+
+if __name__ == "__main__":
+    import uvicorn
+    
+    logger.info("Starting uvicorn server...")
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True,
+        log_level="info"
+    )

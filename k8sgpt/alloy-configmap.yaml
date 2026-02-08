@@ -1,0 +1,94 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-k8sgpt-scripts
+  namespace: monitoring  # Adjust to your Alloy namespace
+  labels:
+    app: alloy
+    component: k8sgpt-integration
+data:
+  k8sgpt-cleanup.sh: |
+    #!/bin/bash
+    # K8sGPT Result CRD Cleanup Script for Grafana Alloy
+    # This script is called by Alloy's prometheus.exporter.script component
+    # It deletes Result CRDs older than the retention period and exports metrics
+
+    set -e
+
+    # Configuration
+    RETENTION_HOURS=${RETENTION_HOURS:-24}
+    CUTOFF_TIME=$(date -u -d "${RETENTION_HOURS} hours ago" '+%Y-%m-%dT%H:%M:%SZ')
+
+    # Initialize counters
+    TOTAL=0
+    DELETED=0
+    ERRORS=0
+
+    # Fetch all K8sGPT Result CRDs
+    RESULTS=$(kubectl get results.core.k8sgpt.ai --all-namespaces -o json 2>/dev/null || echo '{"items":[]}')
+
+    # Count total results
+    TOTAL=$(echo "$RESULTS" | jq '.items | length')
+
+    # Delete old results
+    echo "$RESULTS" | jq -r --arg cutoff "$CUTOFF_TIME" \
+      '.items[] | select(.metadata.creationTimestamp < $cutoff) | "\(.metadata.namespace) \(.metadata.name)"' | \
+    while read -r namespace name; do
+      if [ -n "$namespace" ] && [ -n "$name" ]; then
+        if kubectl delete result "$name" -n "$namespace" --ignore-not-found=true 2>/dev/null; then
+          DELETED=$((DELETED + 1))
+        else
+          ERRORS=$((ERRORS + 1))
+        fi
+      fi
+    done
+
+    # Calculate remaining results
+    REMAINING=$((TOTAL - DELETED))
+
+    # Export Prometheus metrics
+    cat <<EOF
+    # HELP k8sgpt_results_total Total number of K8sGPT Result CRDs found
+    # TYPE k8sgpt_results_total gauge
+    k8sgpt_results_total $TOTAL
+
+    # HELP k8sgpt_results_deleted_total Total number of K8sGPT Result CRDs deleted
+    # TYPE k8sgpt_results_deleted_total counter
+    k8sgpt_results_deleted_total $DELETED
+
+    # HELP k8sgpt_results_remaining Total number of K8sGPT Result CRDs remaining
+    # TYPE k8sgpt_results_remaining gauge
+    k8sgpt_results_remaining $REMAINING
+
+    # HELP k8sgpt_cleanup_errors_total Total number of errors during cleanup
+    # TYPE k8sgpt_cleanup_errors_total counter
+    k8sgpt_cleanup_errors_total $ERRORS
+
+    # HELP k8sgpt_cleanup_last_run_timestamp_seconds Timestamp of last cleanup run
+    # TYPE k8sgpt_cleanup_last_run_timestamp_seconds gauge
+    k8sgpt_cleanup_last_run_timestamp_seconds $(date +%s)
+
+    # HELP k8sgpt_cleanup_retention_hours Configured retention period in hours
+    # TYPE k8sgpt_cleanup_retention_hours gauge
+    k8sgpt_cleanup_retention_hours $RETENTION_HOURS
+    EOF
+
+    # Log to stderr for Alloy logs
+    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] K8sGPT cleanup: Total=$TOTAL, Deleted=$DELETED, Remaining=$REMAINING, Errors=$ERRORS" >&2
+
+    exit 0
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy-k8sgpt-config
+  namespace: monitoring  # Adjust to your Alloy namespace
+  labels:
+    app: alloy
+    component: k8sgpt-integration
+data:
+  # Add the Alloy configuration from alloy-k8sgpt-integration.yaml here
+  # Or include it in your main Alloy ConfigMap
+  k8sgpt-integration.alloy: |
+    # See alloy-k8sgpt-integration.yaml for the full configuration
+    # This is a placeholder - copy the content from that file

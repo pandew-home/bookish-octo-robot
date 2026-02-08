@@ -1,0 +1,26 @@
+---
+# ResourceQuota for DevOps Chatbot namespace
+# Prevents resource exhaustion
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: devops-chatbot-quota
+  namespace: devops-chatbot
+  labels:
+    app: devops-chatbot
+spec:
+  hard:
+    # CPU limits
+    requests.cpu: "4"
+    limits.cpu: "8"
+    # Memory limits
+    requests.memory: 8Gi
+    limits.memory: 16Gi
+    # Storage limits
+    persistentvolumeclaims: "2"
+    requests.storage: 20Gi
+    # Object limits
+    pods: "10"
+    services: "5"
+    secrets: "10"
+    configmaps: "10"

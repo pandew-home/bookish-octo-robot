@@ -1,0 +1,189 @@
+# Grafana Alloy Configuration for K8sGPT Result CRDs
+# This configuration:
+# 1. Watches K8sGPT Result CRDs via Kubernetes API
+# 2. Exports them as logs to Loki with structured metadata
+# 3. Exposes metrics about K8sGPT results
+# 4. Automatically deletes Results older than 24 hours
+#
+# Prerequisites:
+# - Alloy deployed with ServiceAccount that has permissions to read/delete Result CRDs
+# - Loki endpoint configured
+#
+# Add this to your Alloy configuration file or ConfigMap
+
+// ============================================================================
+// PART 1: Scrape K8sGPT Result CRDs and send to Loki
+// ============================================================================
+
+// Watch K8sGPT Result CRDs using Kubernetes API
+prometheus.exporter.kubernetes "k8sgpt_results" {
+  // Use in-cluster config
+  kubeconfig_file = ""
+  
+  // Watch Result CRDs
+  resources {
+    api_version = "core.k8sgpt.ai/v1alpha1"
+    kind        = "Result"
+    namespace   = ""  // All namespaces
+  }
+}
+
+// Scrape the exporter
+prometheus.scrape "k8sgpt_results" {
+  targets    = prometheus.exporter.kubernetes.k8sgpt_results.targets
+  forward_to = [prometheus.relabel.k8sgpt_results.receiver]
+  
+  scrape_interval = "30s"
+}
+
+// Add labels and metadata
+prometheus.relabel "k8sgpt_results" {
+  forward_to = [prometheus.remote_write.default.receiver]
+  
+  rule {
+    source_labels = ["__name__"]
+    regex         = "kube_customresource_.*"
+    action        = "keep"
+  }
+  
+  rule {
+    source_labels = ["customresource_kind"]
+    regex         = "Result"
+    action        = "keep"
+  }
+}
+
+// Also send to Loki as structured logs
+loki.source.kubernetes_events "k8sgpt_results" {
+  job_name   = "k8sgpt-results"
+  log_format = "json"
+  
+  namespaces = []  // All namespaces
+  
+  forward_to = [loki.process.k8sgpt_results.receiver]
+  
+  selector {
+    match_expression {
+      key      = "app.kubernetes.io/name"
+      operator = "In"
+      values   = ["k8sgpt-operator"]
+    }
+  }
+}
+
+// Process and structure K8sGPT result logs
+loki.process "k8sgpt_results" {
+  forward_to = [loki.write.default.receiver]
+  
+  // Extract JSON fields
+  stage.json {
+    expressions = {
+      kind          = "kind",
+      name          = "metadata.name",
+      namespace     = "metadata.namespace",
+      created_at    = "metadata.creationTimestamp",
+      error_text    = "spec.error[0].text",
+      details       = "spec.details",
+      parent_object = "spec.parentObject",
+      severity      = "spec.error[0].severity",
+    }
+  }
+  
+  // Add labels for querying
+  stage.labels {
+    values = {
+      kind          = "kind",
+      namespace     = "namespace",
+      parent_object = "parent_object",
+      severity      = "severity",
+    }
+  }
+  
+  // Parse timestamp
+  stage.timestamp {
+    source = "created_at"
+    format = "RFC3339"
+  }
+  
+  // Add static labels
+  stage.static_labels {
+    values = {
+      source = "k8sgpt",
+    }
+  }
+}
+
+// Write to Loki
+loki.write "default" {
+  endpoint {
+    url = env("LOKI_URL")  // e.g., http://loki-gateway.monitoring.svc:3100/loki/api/v1/push
+    
+    // Optional: Basic auth
+    // basic_auth {
+    //   username = env("LOKI_USERNAME")
+    //   password = env("LOKI_PASSWORD")
+    // }
+  }
+  
+  external_labels = {
+    cluster = env("CLUSTER_NAME"),
+    source  = "k8sgpt",
+  }
+}
+
+// Write metrics to Prometheus/Mimir
+prometheus.remote_write "default" {
+  endpoint {
+    url = env("PROMETHEUS_URL")  // e.g., http://prometheus.monitoring.svc:9090/api/v1/write
+    
+    // Optional: Basic auth
+    // basic_auth {
+    //   username = env("PROMETHEUS_USERNAME")
+    //   password = env("PROMETHEUS_PASSWORD")
+    // }
+  }
+  
+  external_labels = {
+    cluster = env("CLUSTER_NAME"),
+  }
+}
+
+// ============================================================================
+// PART 2: Cleanup old Result CRDs (24-hour retention)
+// ============================================================================
+
+// Custom metrics exporter that also performs cleanup
+prometheus.exporter.script "k8sgpt_cleanup" {
+  // Targets for scraping
+  targets = [{
+    __address__ = "localhost:9999",
+    job         = "k8sgpt-cleanup",
+  }]
+  
+  // Cleanup script
+  script_path = "/etc/alloy/scripts/k8sgpt-cleanup.sh"
+  
+  // Run every 6 hours
+  timeout = "5m"
+}
+
+// Scrape cleanup metrics
+prometheus.scrape "k8sgpt_cleanup" {
+  targets    = prometheus.exporter.script.k8sgpt_cleanup.targets
+  forward_to = [prometheus.remote_write.default.receiver]
+  
+  scrape_interval = "6h"
+  scrape_timeout  = "5m"
+}
+
+// ============================================================================
+// PART 3: Alerting (optional)
+// ============================================================================
+
+// Alert on high number of K8sGPT results
+prometheus.exporter.self "alloy" { }
+
+// You can add alerting rules here or in your Prometheus/Mimir config:
+// - Alert when k8sgpt_results_total > threshold
+// - Alert when k8sgpt_results_deleted_total is 0 (cleanup not working)
+// - Alert on specific error types or namespaces

@@ -1,0 +1,102 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-chatbot
+  namespace: devops-chatbot
+  labels:
+    app: devops-chatbot
+    version: v2.0
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: devops-chatbot
+  template:
+    metadata:
+      labels:
+        app: devops-chatbot
+        version: v2.0
+      annotations:
+        # Security profiles
+        seccomp.security.alpha.kubernetes.io/pod: runtime/default
+        container.apparmor.security.beta.kubernetes.io/chatbot: runtime/default
+    spec:
+      serviceAccountName: devops-chatbot
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+      - name: chatbot
+        image: devops-chatbot:v2.0
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 80
+          name: http
+          protocol: TCP
+        env:
+        - name: LLM_PROVIDER
+          valueFrom:
+            secretKeyRef:
+              name: devops-chatbot-secrets
+              key: llm-provider
+        - name: LLM_MODEL
+          valueFrom:
+            secretKeyRef:
+              name: devops-chatbot-secrets
+              key: llm-model
+        - name: LLM_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devops-chatbot-secrets
+              key: llm-api-key
+        - name: DEFAULT_REGION
+          value: "us-east-1"
+        - name: KB_SEEDING_ENABLED
+          value: "true"
+        - name: KB_FORCE_RESEED
+          value: "false"
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 80
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/health/ready
+            port: 80
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: true
+          runAsUser: 1000
+          capabilities:
+            drop:
+            - ALL
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: devops-chatbot-pvc
+      - name: tmp
+        emptyDir: {}

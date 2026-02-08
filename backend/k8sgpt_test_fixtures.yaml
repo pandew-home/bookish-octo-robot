@@ -1,0 +1,246 @@
+# K8sGPT Result CRD Test Fixtures
+# These are example Result CRDs for testing and development
+
+---
+# Example 1: Pod CrashLoopBackOff (High Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: default-nginx-deployment-7d6b8c9f4d-x7k2m
+  namespace: default
+  creationTimestamp: "2024-01-15T10:30:00Z"
+spec:
+  kind: Pod
+  name: nginx-deployment-7d6b8c9f4d-x7k2m
+  namespace: default
+  details: "Pod default/nginx-deployment-7d6b8c9f4d-x7k2m is in CrashLoopBackOff state"
+  error:
+    - "Container 'nginx' is in CrashLoopBackOff state"
+    - "Last termination reason: Error"
+    - "Exit code: 1"
+    - "Back-off 5m0s restarting failed container"
+    - "Solution: Check application logs using 'kubectl logs nginx-deployment-7d6b8c9f4d-x7k2m'. Verify the container image and startup command are correct. Check for missing environment variables or configuration files."
+  backend: openai
+
+---
+# Example 2: ImagePullBackOff (High Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: production-api-deployment-5f9c8d7b6a-p4m9n
+  namespace: production
+  creationTimestamp: "2024-01-15T10:35:00Z"
+spec:
+  kind: Pod
+  name: api-deployment-5f9c8d7b6a-p4m9n
+  namespace: production
+  details: "Pod production/api-deployment-5f9c8d7b6a-p4m9n has ImagePullBackOff"
+  error:
+    - "Failed to pull image 'myregistry.io/api:v2.1.0'"
+    - "Error: pull access denied, repository does not exist or may require authentication"
+    - "Back-off pulling image 'myregistry.io/api:v2.1.0'"
+    - "Solution: Verify the image name and tag are correct. Check that imagePullSecrets are configured if using a private registry. Ensure the registry credentials are valid."
+  backend: openai
+
+---
+# Example 3: Service Without Endpoints (Medium Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: default-frontend-service
+  namespace: default
+  creationTimestamp: "2024-01-15T10:40:00Z"
+spec:
+  kind: Service
+  name: frontend-service
+  namespace: default
+  details: "Service default/frontend-service has no endpoints"
+  error:
+    - "Service selector does not match any pods"
+    - "Selector: app=frontend, version=v2"
+    - "No pods found with matching labels in namespace 'default'"
+    - "Solution: Verify that pods with labels 'app=frontend' and 'version=v2' are running. Check pod labels using 'kubectl get pods -l app=frontend,version=v2'. Update service selector or pod labels to match."
+  backend: openai
+
+---
+# Example 4: Deployment Replica Issues (Medium Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: staging-backend-deployment
+  namespace: staging
+  creationTimestamp: "2024-01-15T10:45:00Z"
+spec:
+  kind: Deployment
+  name: backend-deployment
+  namespace: staging
+  details: "Deployment staging/backend-deployment has 1/3 replicas available"
+  error:
+    - "Desired replicas: 3"
+    - "Current replicas: 1"
+    - "Available replicas: 1"
+    - "2 pods are in Pending state due to insufficient CPU resources"
+    - "Solution: Check cluster resource availability using 'kubectl top nodes'. Consider scaling the cluster or reducing resource requests. Review pod resource requests and limits."
+  backend: openai
+
+---
+# Example 5: PVC Pending (Medium Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: data-postgres-pvc-0
+  namespace: database
+  creationTimestamp: "2024-01-15T10:50:00Z"
+spec:
+  kind: PersistentVolumeClaim
+  name: postgres-pvc-0
+  namespace: database
+  details: "PersistentVolumeClaim database/postgres-pvc-0 is in Pending state"
+  error:
+    - "PVC has been pending for 5 minutes"
+    - "Waiting for a volume to be created by the storage provisioner"
+    - "StorageClass: gp3"
+    - "Requested size: 100Gi"
+    - "Solution: Verify the StorageClass 'gp3' exists and is configured correctly. Check storage provisioner logs. Ensure the cluster has permission to create EBS volumes in AWS."
+  backend: openai
+
+---
+# Example 6: Node NotReady (High Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: ip-10-0-1-45-ec2-internal
+  namespace: kube-system
+  creationTimestamp: "2024-01-15T10:55:00Z"
+spec:
+  kind: Node
+  name: ip-10-0-1-45.ec2.internal
+  namespace: ""
+  details: "Node ip-10-0-1-45.ec2.internal is in NotReady state"
+  error:
+    - "Node condition: Ready=False"
+    - "Reason: KubeletNotReady"
+    - "Message: container runtime network not ready: NetworkReady=false"
+    - "Node has been NotReady for 3 minutes"
+    - "Solution: Check kubelet logs on the node. Verify network plugin (CNI) is functioning. Check node system resources (disk, memory). Consider cordoning and draining the node if issues persist."
+  backend: openai
+
+---
+# Example 7: Ingress Backend Error (Medium Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: production-api-ingress
+  namespace: production
+  creationTimestamp: "2024-01-15T11:00:00Z"
+spec:
+  kind: Ingress
+  name: api-ingress
+  namespace: production
+  details: "Ingress production/api-ingress has backend service errors"
+  error:
+    - "Backend service 'api-service' not found"
+    - "Ingress rule: api.example.com -> api-service:80"
+    - "Service 'api-service' does not exist in namespace 'production'"
+    - "Solution: Create the backend service 'api-service' or update the ingress to reference an existing service. Verify service name and namespace are correct."
+  backend: openai
+
+---
+# Example 8: StatefulSet Pod Management (Medium Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: database-postgresql-statefulset
+  namespace: database
+  creationTimestamp: "2024-01-15T11:05:00Z"
+spec:
+  kind: StatefulSet
+  name: postgresql
+  namespace: database
+  details: "StatefulSet database/postgresql has pod management issues"
+  error:
+    - "Pod postgresql-1 is stuck in Pending state"
+    - "Waiting for PVC 'data-postgresql-1' to be bound"
+    - "StatefulSet cannot proceed with rolling update"
+    - "Solution: Check PVC status for 'data-postgresql-1'. Verify storage provisioner is working. Ensure sufficient storage quota is available."
+  backend: openai
+
+---
+# Example 9: ConfigMap Missing (Low Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: default-app-deployment-config
+  namespace: default
+  creationTimestamp: "2024-01-15T11:10:00Z"
+spec:
+  kind: Pod
+  name: app-deployment-6c8d9f7b5a-q3r8t
+  namespace: default
+  details: "Pod default/app-deployment-6c8d9f7b5a-q3r8t references missing ConfigMap"
+  error:
+    - "Warning: ConfigMap 'app-config' not found"
+    - "Pod is using configMapRef in environment variables"
+    - "Pod will remain in Pending state until ConfigMap is created"
+    - "Solution: Create the ConfigMap 'app-config' in namespace 'default'. Use 'kubectl create configmap app-config --from-file=config.yaml' or apply a ConfigMap manifest."
+  backend: openai
+
+---
+# Example 10: Deprecated API Version (Low Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: default-old-deployment
+  namespace: default
+  creationTimestamp: "2024-01-15T11:15:00Z"
+spec:
+  kind: Deployment
+  name: old-deployment
+  namespace: default
+  details: "Deployment default/old-deployment uses deprecated API version"
+  error:
+    - "Warning: Using deprecated API version 'apps/v1beta1'"
+    - "This API version will be removed in Kubernetes 1.29"
+    - "Current cluster version: 1.28"
+    - "Solution: Update the deployment manifest to use 'apps/v1'. Change 'apiVersion: apps/v1beta1' to 'apiVersion: apps/v1'. Reapply the manifest."
+  backend: openai
+
+---
+# Example 11: HPA Unable to Scale (Medium Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: production-api-hpa
+  namespace: production
+  creationTimestamp: "2024-01-15T11:20:00Z"
+spec:
+  kind: HorizontalPodAutoscaler
+  name: api-hpa
+  namespace: production
+  details: "HorizontalPodAutoscaler production/api-hpa unable to get metrics"
+  error:
+    - "Unable to fetch metrics from metrics-server"
+    - "Error: unable to get metrics for resource cpu"
+    - "HPA cannot make scaling decisions without metrics"
+    - "Solution: Verify metrics-server is installed and running. Check metrics-server logs for errors. Ensure pods have resource requests defined (required for HPA)."
+  backend: openai
+
+---
+# Example 12: NetworkPolicy Blocking Traffic (Low Severity)
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: production-deny-all-policy
+  namespace: production
+  creationTimestamp: "2024-01-15T11:25:00Z"
+spec:
+  kind: NetworkPolicy
+  name: deny-all
+  namespace: production
+  details: "NetworkPolicy production/deny-all may be blocking legitimate traffic"
+  error:
+    - "Info: NetworkPolicy 'deny-all' denies all ingress traffic"
+    - "No ingress rules defined - all incoming traffic is blocked"
+    - "This may be intentional for security, but verify it's not blocking required traffic"
+    - "Solution: If traffic should be allowed, add ingress rules to the NetworkPolicy. Use 'kubectl describe networkpolicy deny-all' to review current rules."
+  backend: openai
