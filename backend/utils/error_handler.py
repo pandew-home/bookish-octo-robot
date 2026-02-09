@@ -3,7 +3,7 @@ Centralized error handling with user-friendly messages and comprehensive logging
 
 Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.7
 """
-from typing import Optional, Dict, Any, Callable, TypeVar
+from typing import Optional, Dict, Any, Callable, TypeVar, Awaitable, cast, TypedDict
 from fastapi import HTTPException
 from botocore.exceptions import ClientError, BotoCoreError
 from kubernetes.client.exceptions import ApiException
@@ -17,6 +17,11 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
+
+
+class ErrorInfo(TypedDict):
+    message: str
+    status: int
 
 # Import metrics (lazy import to avoid circular dependencies)
 _metrics = None
@@ -362,8 +367,8 @@ def retry_with_exponential_backoff(
     initial_delay: float = 1.0,
     max_delay: float = 60.0,
     exponential_base: float = 2.0,
-    exceptions: tuple = (Exception,),
-    on_retry: Optional[Callable] = None
+    exceptions: tuple[type[BaseException], ...] = (Exception,),
+    on_retry: Optional[Callable[[int, BaseException, float], None]] = None
 ):
     """
     Decorator to retry functions with exponential backoff.
@@ -388,11 +393,12 @@ def retry_with_exponential_backoff(
         @wraps(func)
         async def async_wrapper(*args, **kwargs) -> T:
             delay = initial_delay
-            last_exception = None
+            last_exception: Optional[BaseException] = None
             
             for attempt in range(max_retries + 1):
                 try:
-                    return await func(*args, **kwargs)
+                    result = func(*args, **kwargs)
+                    return await cast(Awaitable[T], result)
                 except exceptions as e:
                     last_exception = e
                     
@@ -424,12 +430,14 @@ def retry_with_exponential_backoff(
                         )
             
             # If we get here, all retries failed
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Retry failed without an exception")
         
         @wraps(func)
         def sync_wrapper(*args, **kwargs) -> T:
             delay = initial_delay
-            last_exception = None
+            last_exception: Optional[BaseException] = None
             
             for attempt in range(max_retries + 1):
                 try:
@@ -465,13 +473,14 @@ def retry_with_exponential_backoff(
                         )
             
             # If we get here, all retries failed
-            raise last_exception
+            if last_exception is not None:
+                raise last_exception
+            raise RuntimeError("Retry failed without an exception")
         
         # Return appropriate wrapper based on function type
         if asyncio.iscoroutinefunction(func):
-            return async_wrapper
-        else:
-            return sync_wrapper
+            return cast(Callable[..., T], async_wrapper)
+        return cast(Callable[..., T], sync_wrapper)
     
     return decorator
 
@@ -499,16 +508,6 @@ def k8s_api_retry(max_retries: int = 3, initial_delay: float = 1.0):
         exponential_base=2.0,
         exceptions=(ApiException, ConnectionError, TimeoutError, OSError)
     )
-
-
-class UserFriendlyError(Exception):
-    """Base exception for user-friendly errors."""
-    
-    def __init__(self, message: str, details: Optional[str] = None, status_code: int = 500):
-        self.message = message
-        self.details = details
-        self.status_code = status_code
-        super().__init__(self.message)
 
 
 def handle_aws_error(
@@ -543,7 +542,7 @@ def handle_aws_error(
         error_message = error.response.get('Error', {}).get('Message', str(error))
         
         # Map AWS error codes to user-friendly messages
-        error_map = {
+        error_map: Dict[str, ErrorInfo] = {
             'InvalidClientTokenId': {
                 'message': 'Invalid AWS access key. Please check your Kion credentials and try again.',
                 'status': 401
@@ -582,7 +581,7 @@ def handle_aws_error(
             }
         }
         
-        error_info = error_map.get(error_code, {
+        error_info: ErrorInfo = error_map.get(error_code, {
             'message': f'AWS error: {error_message}',
             'status': 500
         })

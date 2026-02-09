@@ -1,5 +1,5 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useWeather } from './useWeather';
+import { useWeather, UseWeatherState } from './useWeather';
 import apiClient from '../services/api';
 import { WeatherData } from '../types/weather';
 
@@ -11,6 +11,7 @@ const mockApiClient = apiClient as jest.Mocked<typeof apiClient>;
 describe('useWeather', () => {
   const selectedCluster = 'dev-cluster-1';
   const isAuthenticated = true;
+  type UseWeatherProps = { cluster: string | null; auth: boolean };
 
   const mockWeatherData: WeatherData = {
     state: 'partly-cloudy',
@@ -33,6 +34,8 @@ describe('useWeather', () => {
       {
         name: 'k8sgpt',
         version: '0.3.0',
+        category: 'observability',
+        status: 'healthy',
       },
     ],
     timestamp: '2024-01-01T00:00:00Z',

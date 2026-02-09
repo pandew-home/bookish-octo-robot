@@ -1,5 +1,3 @@
-import { K8sGPTResult } from './k8sgpt';
-
 /**
  * Weather state type representing cluster health
  */
@@ -26,6 +24,8 @@ export interface K8sGPTResultSummary {
   severity: 'low' | 'medium' | 'high';
   problem: string;
   solution?: string;
+  analyzer?: string;
+  timestamp?: string;
 }
 
 /**

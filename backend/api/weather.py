@@ -498,7 +498,7 @@ async def get_result_detail(
             )
         
         # Enrich with additional context
-        enrichment = {}
+        enrichment: Dict[str, Any] = {}
         
         try:
             core_api: CoreV1Api = k8s_clients['core']

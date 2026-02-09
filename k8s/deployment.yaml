@@ -19,7 +19,6 @@ spec:
       annotations:
         # Security profiles
         seccomp.security.alpha.kubernetes.io/pod: runtime/default
-        container.apparmor.security.beta.kubernetes.io/chatbot: runtime/default
     spec:
       serviceAccountName: devops-chatbot
       securityContext:
@@ -28,6 +27,33 @@ spec:
         fsGroup: 1000
         seccompProfile:
           type: RuntimeDefault
+      initContainers:
+      - name: setup-dirs
+        image: busybox:1.35
+        command: ['sh', '-c', 'mkdir -p /tmp/supervisor /var/log/supervisor /var/cache/nginx /var/run/supervisor']
+        resources:
+          requests:
+            cpu: 100m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: log
+          mountPath: /var/log
+        - name: cache
+          mountPath: /var/cache
+        - name: run
+          mountPath: /var/run
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsUser: 1000
+          runAsNonRoot: true
+          capabilities:
+            drop:
+            - ALL
       containers:
       - name: chatbot
         image: devops-chatbot:v2.0
@@ -52,6 +78,13 @@ spec:
             secretKeyRef:
               name: devops-chatbot-secrets
               key: llm-api-key
+        - name: OPENAI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: devops-chatbot-secrets
+              key: llm-api-key
+        - name: OPENAI_BASE_URL
+          value: "https://openrouter.ai/api/v1"
         - name: DEFAULT_REGION
           value: "us-east-1"
         - name: KB_SEEDING_ENABLED
@@ -70,6 +103,12 @@ spec:
           mountPath: /data
         - name: tmp
           mountPath: /tmp
+        - name: log
+          mountPath: /var/log
+        - name: cache
+          mountPath: /var/cache
+        - name: run
+          mountPath: /var/run
         livenessProbe:
           httpGet:
             path: /api/health
@@ -99,4 +138,10 @@ spec:
         persistentVolumeClaim:
           claimName: devops-chatbot-pvc
       - name: tmp
+        emptyDir: {}
+      - name: log
+        emptyDir: {}
+      - name: cache
+        emptyDir: {}
+      - name: run
         emptyDir: {}

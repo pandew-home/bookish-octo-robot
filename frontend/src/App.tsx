@@ -32,7 +32,7 @@ function App() {
   const chat = useChat(cluster.selectedCluster, credentials.isAuthenticated);
 
   // Weather monitoring hook (depends on authentication and cluster selection)
-  const weather = useWeather(cluster.selectedCluster, credentials.isAuthenticated);
+  useWeather(cluster.selectedCluster, credentials.isAuthenticated);
 
   // Create theme
   const theme = useMemo(() => {

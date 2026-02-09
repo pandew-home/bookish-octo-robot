@@ -1,0 +1,128 @@
+# Kubernetes manifest for Podman Desktop or kubectl
+# Generated from docker-compose.yaml - run: podman generate kube devops-chatbot > kubernetes-podman.yaml
+# Or deploy directly: kubectl apply -f kubernetes-podman.yaml
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: devops-chatbot-env
+  namespace: devops-chatbot
+data:
+  DEFAULT_REGION: "us-east-1"
+  LLM_PROVIDER: "openai"
+  LLM_MODEL: "gpt-4o-mini"
+  KB_SEEDING_ENABLED: "true"
+  PYTHONUNBUFFERED: "1"
+  PYTHONOPTIMIZE: "1"
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: devops-chatbot-secrets
+  namespace: devops-chatbot
+type: Opaque
+stringData:
+  LLM_API_KEY: "sk-your-api-key-here"
+
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devops-chatbot
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devops-chatbot
+  namespace: devops-chatbot
+  labels:
+    app: devops-chatbot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: devops-chatbot
+  template:
+    metadata:
+      labels:
+        app: devops-chatbot
+    spec:
+      containers:
+        - name: devops-chatbot
+          image: devops-chatbot:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 80
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: devops-chatbot-env
+            - secretRef:
+                name: devops-chatbot-secrets
+          volumeMounts:
+            - name: data-volume
+              mountPath: /data
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 80
+            initialDelaySeconds: 40
+            periodSeconds: 30
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+      volumes:
+        - name: data-volume
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devops-chatbot
+  namespace: devops-chatbot
+spec:
+  selector:
+    app: devops-chatbot
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+  type: NodePort
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devops-chatbot
+  namespace: devops-chatbot
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: localhost
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: devops-chatbot
+                port:
+                  number: 80

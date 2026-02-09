@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devops-chatbot-backend"
+version = "2.0.0"
+description = "DevOps Chatbot backend services"
+requires-python = ">=3.12"
+
+[tool.setuptools]
+packages = {find = {where = ["."], exclude = ["tests*", "venv*", "__pycache__*"]}}
+py-modules = [
+  "app",
+  "cluster_manager",
+  "conversation_history",
+  "credential_store",
+  "eks_auth",
+  "enrichment_engine",
+  "input_sanitizer",
+  "k8sgpt_reader",
+  "query_router",
+  "rag_integration",
+  "response_parser",
+  "solution_manager",
+  "startup_validator",
+  "template_engine",
+  "weather_calculator"
+]

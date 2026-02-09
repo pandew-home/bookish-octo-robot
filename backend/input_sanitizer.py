@@ -2,7 +2,7 @@
 Input validation and sanitization for user queries.
 """
 import re
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Dict, List
 import logging
 
 logger = logging.getLogger(__name__)
@@ -218,7 +218,7 @@ class InputSanitizer:
             - services: List of service names
             - namespaces: List of namespace names
         """
-        resources = {
+        resources: Dict[str, List[str]] = {
             'pods': [],
             'deployments': [],
             'services': [],

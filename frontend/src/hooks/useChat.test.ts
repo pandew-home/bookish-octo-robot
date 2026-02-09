@@ -1,5 +1,5 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useChat } from './useChat';
+import { useChat, UseChatState } from './useChat';
 import apiClient from '../services/api';
 import { ChatMessage, ConversationExport } from '../types/chat';
 
@@ -11,6 +11,7 @@ const mockApiClient = apiClient as jest.Mocked<typeof apiClient>;
 describe('useChat', () => {
   const selectedCluster = 'dev-cluster-1';
   const isAuthenticated = true;
+  type UseChatProps = { cluster: string | null; auth: boolean };
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -493,7 +494,7 @@ describe('useChat', () => {
         },
       });
 
-      const { result, rerender } = renderHook(
+      const { result, rerender } = renderHook<UseChatState, UseChatProps>(
         ({ cluster, auth }) => useChat(cluster, auth),
         {
           initialProps: {

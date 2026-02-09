@@ -167,14 +167,16 @@ const ClusterSelector: React.FC<ClusterSelectorProps> = ({
         onChange={handleChange}
         renderValue={renderSelectedValue}
         sx={{
-          '& .MuiOutlinedInput-notchedOutline': selectedCluster
+          ...(selectedCluster
             ? {
-                borderColor: ENVIRONMENT_COLORS[
-                  getClusterEnvironment(selectedCluster)
-                ].primary,
-                borderWidth: 2,
+                '& .MuiOutlinedInput-notchedOutline': {
+                  borderColor: ENVIRONMENT_COLORS[
+                    getClusterEnvironment(selectedCluster)
+                  ].primary,
+                  borderWidth: 2,
+                },
               }
-            : undefined,
+            : {}),
         }}
       >
         {clusters.map(renderClusterMenuItem)}

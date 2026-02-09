@@ -861,7 +861,7 @@ class EnrichmentEngine:
             
             # Get pod summary
             pods = core_v1.list_namespaced_pod(namespace, limit=50)
-            pod_phases = {}
+            pod_phases: Dict[str, int] = {}
             for pod in pods.items:
                 phase = pod.status.phase
                 pod_phases[phase] = pod_phases.get(phase, 0) + 1
@@ -906,7 +906,7 @@ class EnrichmentEngine:
             return {'error': "AWS credentials not available"}
         
         try:
-            aws_data = {}
+            aws_data: Dict[str, Any] = {}
             calls_made = 0
             
             # Determine priority based on query category
@@ -945,6 +945,8 @@ class EnrichmentEngine:
     
     async def _get_load_balancers(self) -> Optional[List[Dict[str, Any]]]:
         """Get load balancer information."""
+        if not self.aws_creds:
+            return None
         try:
             elb_client = boto3.client(
                 'elbv2',
@@ -974,6 +976,8 @@ class EnrichmentEngine:
     
     async def _get_security_groups(self) -> Optional[List[Dict[str, Any]]]:
         """Get security group information."""
+        if not self.aws_creds:
+            return None
         try:
             ec2_client = boto3.client(
                 'ec2',
@@ -1002,6 +1006,8 @@ class EnrichmentEngine:
     
     async def _get_ec2_instances(self) -> Optional[List[Dict[str, Any]]]:
         """Get EC2 instance information."""
+        if not self.aws_creds:
+            return None
         try:
             ec2_client = boto3.client(
                 'ec2',

@@ -138,17 +138,20 @@ async def select_cluster(
         
         # Check if switching to a different cluster
         current_cluster = _session_clusters.get(session_id)
-        is_switching = current_cluster is not None and current_cluster['name'] != request.cluster_name
+        current_cluster_name = current_cluster.get('name') if current_cluster else None
+        is_switching = current_cluster_name is not None and current_cluster_name != request.cluster_name
         
         if is_switching:
-            logger.info(f"Switching from cluster {current_cluster['name']} to {request.cluster_name} for session {session_id[:8]}...")
+            logger.info(
+                f"Switching from cluster {current_cluster_name} to {request.cluster_name} for session {session_id[:8]}..."
+            )
             
             # Clean up old K8s clients before switching
             old_clients = _session_k8s_clients.get(session_id)
             if old_clients:
                 from cluster_manager import cleanup_k8s_clients
                 cleanup_k8s_clients(old_clients)
-                logger.debug(f"Cleaned up K8s clients for old cluster {current_cluster['name']}")
+                logger.debug(f"Cleaned up K8s clients for old cluster {current_cluster_name}")
         
         # Get cluster list (from cache or discover)
         cached_clusters = cluster_cache.get(session_id)

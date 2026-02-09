@@ -30,6 +30,7 @@ MANIFEST
 node_modules/
 frontend/node_modules/
 */node_modules/
+frontend/build/
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -146,6 +147,7 @@ celerybeat.pid
 .venv
 env/
 venv/
+backend/venv/
 ENV/
 env.bak/
 venv.bak/
@@ -176,6 +178,9 @@ kubeconfig.*
 
 # mkdocs documentation
 /site
+
+# Data directories
+data/
 
 # mypy
 .mypy_cache/

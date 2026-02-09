@@ -357,7 +357,7 @@ class RAGIntegration:
         Returns:
             Formatted cluster context dictionary
         """
-        cluster_context = {}
+        cluster_context: Dict[str, Any] = {}
         
         # Add pod data
         if enriched_context.pod_data:

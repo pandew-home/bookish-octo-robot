@@ -10,12 +10,11 @@ spec:
     enabled: true
     # OpenAI Configuration (default)
     backend: openai
+    baseUrl: https://openrouter.ai/api/v1
     secret:
       name: k8sgpt-ai-secret
       key: openai-api-key
-    modelSecret:
-      name: k8sgpt-model-secret
-      key: model-name
+    model: x-ai/grok-4.1-fast
     
     # Alternative: Amazon Bedrock Configuration
     # Uncomment to use Bedrock instead of OpenAI
@@ -28,7 +27,7 @@ spec:
   
   # Scanning Configuration
   noCache: false
-  version: v0.3.31  # K8sGPT CLI version
+  version: v0.4.27  # K8sGPT CLI version
   
   # Resource Filters - What to analyze
   # Focused on high-impact, actionable issues
@@ -63,7 +62,13 @@ spec:
   # Namespace Configuration
   # Leave empty to scan all namespaces
   # Or specify specific namespaces to scan
-  # namespace: ""
+   namespace: ""
+  
+  # Results Namespace
+  # Results are namespaced; set where Result CRs are written.
+  # Scanning remains cluster-wide when no namespace filter is set.
+  # targetNamespace: k8sgpt-operator-system
+ 
   
   # Sink Configuration - Where to send results
   # Results are stored as K8sGPT Result CRDs by default

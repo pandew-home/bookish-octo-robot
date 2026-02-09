@@ -1,0 +1,10 @@
+[MASTER]
+ignore=venv,tests
+ignore-patterns=^test_.*\.py$,.*_test\.py$
+init-hook='import sys; sys.path.append("backend")'
+
+[MESSAGES CONTROL]
+disable=missing-module-docstring,missing-class-docstring,missing-function-docstring
+
+[FORMAT]
+max-line-length=100

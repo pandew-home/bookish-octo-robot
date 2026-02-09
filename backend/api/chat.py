@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, Field
 import asyncio
 
-from credential_store import get_credentials
+from api.credentials import get_credentials_for_session
 from cluster_manager import get_k8s_clients
 from query_router import QueryRouter
 from enrichment_engine import EnrichmentEngine
@@ -111,7 +111,7 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             )
         
         # Step 2: Validate credentials
-        creds = get_credentials(request.session_id)
+        creds = get_credentials_for_session(request.session_id)
         if not creds:
             raise HTTPException(
                 status_code=401,
@@ -228,7 +228,7 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                     }
                     for r in k8sgpt_results[:5]  # Top 5 findings
                 ],
-                safety_warnings=parsed_response.get('safety_warnings', []),
+                safety_warnings=parsed_response.safety_notices,
                 enrichment_plan={
                     'categories': [c.value for c in enrichment_plan.categories],
                     'resource_names': enrichment_plan.resource_names,

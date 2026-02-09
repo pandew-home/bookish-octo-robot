@@ -10,7 +10,7 @@ WORKDIR /app/frontend
 COPY frontend/package*.json ./
 
 # Install dependencies (including devDependencies for build)
-RUN npm ci --prefer-offline --no-audit
+RUN npm install --prefer-offline --no-audit
 
 # Copy frontend source
 COPY frontend/ ./
@@ -28,34 +28,32 @@ FROM python:3.11-slim AS python-builder
 
 WORKDIR /app
 
-# Install build dependencies in a single layer
+# Install build dependencies required to compile wheels
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     g++ \
-    && rm -rf /var/lib/apt/lists/*
+  && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements and install to a virtual environment
-COPY backend/requirements.txt ./backend/
-RUN python -m venv /opt/venv && \
-    /opt/venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    # Install with minimal dependencies
-    /opt/venv/bin/pip install --no-cache-dir --no-deps -r backend/requirements.txt && \
-    /opt/venv/bin/pip install --no-cache-dir -r backend/requirements.txt && \
-    # Remove unnecessary files from packages
-    find /opt/venv -type d -name "tests" -exec rm -rf {} + 2>/dev/null || true && \
-    find /opt/venv -type d -name "test" -exec rm -rf {} + 2>/dev/null || true && \
-    find /opt/venv -type f -name "*.pyc" -delete && \
-    find /opt/venv -type f -name "*.pyo" -delete && \
+ENV PATH="/opt/venv/bin:$PATH"
+
+RUN python -m venv /opt/venv
+
+# Install backend requirements once and keep the resulting venv for the final stage
+COPY backend/requirements.txt ./backend/requirements.txt
+RUN /opt/venv/bin/pip install --upgrade pip setuptools wheel && \
+    /opt/venv/bin/pip install -r backend/requirements.txt && \
+    /opt/venv/bin/pip list | grep uvicorn && \
+    find /opt/venv -type d \( -name "tests" -o -name "test" \) -prune -exec rm -rf {} + 2>/dev/null || true && \
+    find /opt/venv -type f \( -name "*.pyc" -o -name "*.pyo" \) -delete && \
     find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
-# Copy and install shared libraries
+# Copy and install shared libraries using editable installs so they can stay slim
 COPY libs/ ./libs/
 RUN for lib in libs/*/; do \
     if [ -f "$lib/setup.py" ]; then \
-        /opt/venv/bin/pip install --no-cache-dir -e "$lib"; \
+        /opt/venv/bin/pip install -e "$lib"; \
     fi; \
     done && \
-    # Clean up after library installation
     find /opt/venv -type f -name "*.pyc" -delete && \
     find /opt/venv -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
@@ -65,12 +63,11 @@ FROM nginx:1.25-alpine AS nginx-minimal
 # Stage 4: Production image
 FROM python:3.11-slim
 
-# Install only essential runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     supervisor \
     curl \
     ca-certificates \
-    libpcre3 \
+    libpcre2-8-0 \
     zlib1g \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean \
@@ -102,7 +99,6 @@ COPY --chown=chatbot:chatbot backend/*.py ./backend/
 COPY --chown=chatbot:chatbot backend/api ./backend/api/
 COPY --chown=chatbot:chatbot backend/middleware ./backend/middleware/
 COPY --chown=chatbot:chatbot backend/utils ./backend/utils/
-COPY --chown=chatbot:chatbot backend/core ./backend/core/
 
 # Copy shared libraries (only necessary files)
 COPY --chown=chatbot:chatbot libs/ ./libs/

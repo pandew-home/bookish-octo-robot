@@ -96,7 +96,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   // Use external messages if provided, otherwise use internal state
   const messages = externalMessages || internalMessages;
-  const setMessages = onMessagesChange || setInternalMessages;
 
   // Auto-scroll to bottom when new messages arrive
   useEffect(() => {

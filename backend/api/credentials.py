@@ -96,7 +96,7 @@ async def submit_aws_credentials(credentials: KionCredentials):
             region=credentials.region
         )
         
-        if not success:
+        if not success or creds is None:
             logger.warning(f"Credential validation failed: {error}")
             raise HTTPException(status_code=401, detail=error)
         

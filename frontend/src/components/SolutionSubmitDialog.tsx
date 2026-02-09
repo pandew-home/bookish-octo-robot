@@ -18,7 +18,6 @@ import {
 import {
   Save as SaveIcon,
   Close as CloseIcon,
-  Add as AddIcon,
   Timer as TimerIcon,
   Link as LinkIcon,
   Code as CodeIcon,
@@ -97,15 +96,6 @@ export const SolutionSubmitDialog: React.FC<SolutionSubmitDialogProps> = ({
     // Clear error for this field
     if (errors[field as keyof SolutionValidationErrors]) {
       setErrors(prev => ({ ...prev, [field]: undefined }));
-    }
-  };
-
-  // Handle tag addition
-  const handleAddTag = (tag: string) => {
-    const trimmedTag = tag.trim().toLowerCase();
-    if (trimmedTag && !solution.tags?.includes(trimmedTag)) {
-      handleChange('tags', [...(solution.tags || []), trimmedTag]);
-      setTagInput('');
     }
   };
 

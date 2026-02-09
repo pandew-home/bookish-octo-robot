@@ -65,7 +65,7 @@ describe('useCredentials', () => {
 
       const { result } = renderHook(() => useCredentials());
 
-      let caughtError: Error | null = null;
+      let caughtErrorMessage: string | null = null;
       
       await act(async () => {
         try {
@@ -76,12 +76,15 @@ describe('useCredentials', () => {
             region: 'us-east-1',
           });
         } catch (error: any) {
-          caughtError = error;
+          caughtErrorMessage = error?.message ?? String(error);
         }
       });
 
-      expect(caughtError).not.toBeNull();
-      expect(caughtError?.message).toBe(errorMessage);
+      if (!caughtErrorMessage) {
+        throw new Error('Expected login to throw');
+      }
+
+      expect(caughtErrorMessage).toBe(errorMessage);
     });
 
     it('should set loading state during authentication', async () => {
@@ -134,18 +137,21 @@ describe('useCredentials', () => {
 
       const { result } = renderHook(() => useCredentials());
 
-      let caughtError: Error | null = null;
+      let caughtErrorMessage: string | null = null;
       
       await act(async () => {
         try {
           await result.current.logout();
         } catch (error: any) {
-          caughtError = error;
+          caughtErrorMessage = error?.message ?? String(error);
         }
       });
 
-      expect(caughtError).not.toBeNull();
-      expect(caughtError?.message).toBe(errorMessage);
+      if (!caughtErrorMessage) {
+        throw new Error('Expected logout to throw');
+      }
+
+      expect(caughtErrorMessage).toBe(errorMessage);
     });
   });
 

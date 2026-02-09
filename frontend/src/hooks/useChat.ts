@@ -2,8 +2,6 @@ import { useState, useCallback, useEffect } from 'react';
 import { ChatMessage, ConversationExport } from '../types/chat';
 import apiClient from '../services/api';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || '';
-
 export interface UseChatState {
   messages: ChatMessage[];
   isLoading: boolean;

@@ -15,13 +15,12 @@ A Kubernetes-native troubleshooting assistant that provides real-time cluster he
 ## Quick Start
 
 ### Prerequisites
-
 1. **Kion Access**: AWS credential management system providing temporary credentials
 2. **EKS Clusters**: One or more EKS clusters to monitor and troubleshoot
 3. **K8sGPT Operator**: Deployed per monitored cluster (see [K8sGPT Setup](docs/k8sgpt-setup.md))
-4. **LLM API Key**: OpenAI, Anthropic, or Ollama endpoint
-5. **Kubernetes Cluster**: For deploying the chatbot application (can be one of the monitored clusters)
-
+4. **LLM API Key**: OpenAI, Anthropic, or Ollama endpoint (stored as secret)
+5. **LLM Model**: Model name/identifier (stored as secret)
+6. **Kubernetes Cluster**: For deploying the chatbot application (can be one of the monitored clusters)
 ### Local Development
 
 ```bash

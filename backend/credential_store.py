@@ -22,6 +22,10 @@ class StoredCredentials:
     expires_at: datetime
     created_at: datetime
 
+    def is_expiring_soon(self, threshold_seconds: int = 600) -> bool:
+        """Check if credentials expire within the given threshold."""
+        return (self.expires_at - datetime.now()).total_seconds() <= threshold_seconds
+
 
 class CredentialStore:
     """

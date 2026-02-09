@@ -175,18 +175,21 @@ describe('useCluster', () => {
         expect(result.current.clusters).toHaveLength(3);
       });
 
-      let caughtError: Error | null = null;
+      let caughtErrorMessage: string | null = null;
 
       await act(async () => {
         try {
           await result.current.selectCluster('dev-cluster-1');
         } catch (error: any) {
-          caughtError = error;
+          caughtErrorMessage = error?.message ?? String(error);
         }
       });
 
-      expect(caughtError).not.toBeNull();
-      expect(caughtError?.message).toBe('Failed to generate bearer token');
+      if (!caughtErrorMessage) {
+        throw new Error('Expected selectCluster to throw');
+      }
+
+      expect(caughtErrorMessage).toBe('Failed to generate bearer token');
       expect(result.current.selectedCluster).toBeNull();
     });
 

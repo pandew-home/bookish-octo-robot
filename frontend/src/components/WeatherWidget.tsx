@@ -71,6 +71,8 @@ interface K8sGPTResultSummary {
   severity: 'low' | 'medium' | 'high';
   problem: string;
   solution?: string;
+  analyzer?: string;
+  timestamp?: string;
 }
 
 // Weather data interface

@@ -1,0 +1,3 @@
+DevOps: K8s/Helm/Argo/Python/AWS
+Brief responses. Diffs only. Skip K8s/Python basics.
+Security: Vault secrets, Kyverno, nonRoot containers.
