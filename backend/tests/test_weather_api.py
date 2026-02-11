@@ -52,11 +52,11 @@ def mock_cluster():
 def mock_k8s_clients():
     """Mock Kubernetes API clients."""
     return {
-        'core': Mock(),
-        'apps': Mock(),
-        'custom': Mock(),
-        'networking': Mock(),
-        'rbac': Mock()
+        'core_v1': Mock(),
+        'apps_v1': Mock(),
+        'custom_objects': Mock(),
+        'networking_v1': Mock(),
+        'rbac_v1': Mock()
     }
 
 
@@ -131,14 +131,14 @@ class TestWeatherEndpoint:
         mock_node.metadata.name = 'node-1'
         mock_nodes = Mock()
         mock_nodes.items = [mock_node]
-        mock_k8s_clients['core'].list_node.return_value = mock_nodes
+        mock_k8s_clients['core_v1'].list_node.return_value = mock_nodes
         
         # Mock pod list
         mock_pod = Mock()
         mock_pod.status.phase = 'Running'
         mock_pods = Mock()
         mock_pods.items = [mock_pod, mock_pod, mock_pod]
-        mock_k8s_clients['core'].list_pod_for_all_namespaces.return_value = mock_pods
+        mock_k8s_clients['core_v1'].list_pod_for_all_namespaces.return_value = mock_pods
         
         # Make request
         response = client.get(
@@ -185,12 +185,12 @@ class TestWeatherEndpoint:
         # Mock node list
         mock_nodes = Mock()
         mock_nodes.items = []
-        mock_k8s_clients['core'].list_node.return_value = mock_nodes
+        mock_k8s_clients['core_v1'].list_node.return_value = mock_nodes
         
         # Mock pod list
         mock_pods = Mock()
         mock_pods.items = []
-        mock_k8s_clients['core'].list_pod_for_all_namespaces.return_value = mock_pods
+        mock_k8s_clients['core_v1'].list_pod_for_all_namespaces.return_value = mock_pods
         
         # Make request
         response = client.get(
@@ -244,8 +244,8 @@ class TestWeatherEndpoint:
         mock_reader_class.return_value = mock_reader
         
         # Mock node and pod lists
-        mock_k8s_clients['core'].list_node.return_value = Mock(items=[])
-        mock_k8s_clients['core'].list_pod_for_all_namespaces.return_value = Mock(items=[])
+        mock_k8s_clients['core_v1'].list_node.return_value = Mock(items=[])
+        mock_k8s_clients['core_v1'].list_pod_for_all_namespaces.return_value = Mock(items=[])
         
         # Make request
         response = client.get(
@@ -297,12 +297,12 @@ class TestWeatherDetailsEndpoint:
         mock_node.status.conditions = [mock_condition]
         mock_nodes = Mock()
         mock_nodes.items = [mock_node]
-        mock_k8s_clients['core'].list_node.return_value = mock_nodes
+        mock_k8s_clients['core_v1'].list_node.return_value = mock_nodes
         
         # Mock namespace list
         mock_namespaces = Mock()
         mock_namespaces.items = [Mock(), Mock(), Mock()]
-        mock_k8s_clients['core'].list_namespace.return_value = mock_namespaces
+        mock_k8s_clients['core_v1'].list_namespace.return_value = mock_namespaces
         
         # Make request
         response = client.get(
@@ -525,12 +525,12 @@ class TestResultDetailEndpoint:
         mock_pod.status.phase = 'Running'
         mock_pod.status.conditions = []
         mock_pod.status.container_statuses = []
-        mock_k8s_clients['core'].read_namespaced_pod.return_value = mock_pod
+        mock_k8s_clients['core_v1'].read_namespaced_pod.return_value = mock_pod
         
         # Mock events
         mock_events = Mock()
         mock_events.items = []
-        mock_k8s_clients['core'].list_namespaced_event.return_value = mock_events
+        mock_k8s_clients['core_v1'].list_namespaced_event.return_value = mock_events
         
         # Make request
         result_id = 'pod-issue-1'
@@ -588,7 +588,7 @@ class TestResultDetailEndpoint:
         mock_container_status.state = 'waiting'
         mock_pod.status.container_statuses = [mock_container_status]
         
-        mock_k8s_clients['core'].read_namespaced_pod.return_value = mock_pod
+        mock_k8s_clients['core_v1'].read_namespaced_pod.return_value = mock_pod
         
         # Mock events
         mock_event = Mock()
@@ -598,7 +598,7 @@ class TestResultDetailEndpoint:
         mock_event.last_timestamp = datetime.utcnow()
         mock_events = Mock()
         mock_events.items = [mock_event]
-        mock_k8s_clients['core'].list_namespaced_event.return_value = mock_events
+        mock_k8s_clients['core_v1'].list_namespaced_event.return_value = mock_events
         
         # Make request
         result_id = 'pod-issue-1'
@@ -687,8 +687,8 @@ class TestMetadataInclusion:
         mock_reader_class.return_value = mock_reader
         
         # Mock K8s API calls
-        mock_k8s_clients['core'].list_node.return_value = Mock(items=[Mock()])
-        mock_k8s_clients['core'].list_pod_for_all_namespaces.return_value = Mock(items=[])
+        mock_k8s_clients['core_v1'].list_node.return_value = Mock(items=[Mock()])
+        mock_k8s_clients['core_v1'].list_pod_for_all_namespaces.return_value = Mock(items=[])
         
         # Make request
         response = client.get(
@@ -736,10 +736,10 @@ class TestMetadataInclusion:
         mock_reader_class.return_value = mock_reader
         
         # Mock K8s API calls
-        mock_k8s_clients['core'].read_namespaced_pod.return_value = Mock(
+        mock_k8s_clients['core_v1'].read_namespaced_pod.return_value = Mock(
             status=Mock(phase='Running', conditions=[], container_statuses=[])
         )
-        mock_k8s_clients['core'].list_namespaced_event.return_value = Mock(items=[])
+        mock_k8s_clients['core_v1'].list_namespaced_event.return_value = Mock(items=[])
         
         # Make request
         result_id = 'pod-issue-1'

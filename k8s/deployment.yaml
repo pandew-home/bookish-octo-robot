@@ -30,7 +30,7 @@ spec:
       initContainers:
       - name: setup-dirs
         image: busybox:1.35
-        command: ['sh', '-c', 'mkdir -p /tmp/supervisor /var/log/supervisor /var/cache/nginx /var/run/supervisor']
+        command: ['sh', '-c', 'mkdir -p /tmp/supervisor /tmp/envoy /var/log/supervisor /var/run/supervisor']
         resources:
           requests:
             cpu: 100m
@@ -43,8 +43,6 @@ spec:
           mountPath: /tmp
         - name: log
           mountPath: /var/log
-        - name: cache
-          mountPath: /var/cache
         - name: run
           mountPath: /var/run
         securityContext:
@@ -56,10 +54,10 @@ spec:
             - ALL
       containers:
       - name: chatbot
-        image: devops-chatbot:v2.0
+        image: devops-chatbot:latest
         imagePullPolicy: IfNotPresent
         ports:
-        - containerPort: 80
+        - containerPort: 8080
           name: http
           protocol: TCP
         env:
@@ -105,14 +103,12 @@ spec:
           mountPath: /tmp
         - name: log
           mountPath: /var/log
-        - name: cache
-          mountPath: /var/cache
         - name: run
           mountPath: /var/run
         livenessProbe:
           httpGet:
             path: /api/health
-            port: 80
+            port: 8080
           initialDelaySeconds: 30
           periodSeconds: 10
           timeoutSeconds: 5
@@ -120,8 +116,8 @@ spec:
         readinessProbe:
           httpGet:
             path: /api/health/ready
-            port: 80
-          initialDelaySeconds: 10
+            port: 8080
+          initialDelaySeconds: 90
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3
@@ -140,8 +136,6 @@ spec:
       - name: tmp
         emptyDir: {}
       - name: log
-        emptyDir: {}
-      - name: cache
         emptyDir: {}
       - name: run
         emptyDir: {}

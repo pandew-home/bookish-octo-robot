@@ -275,3 +275,4 @@ subjects:
   - kind: ServiceAccount
     name: k8sgpt-operator
     namespace: k8sgpt-operator-system
+

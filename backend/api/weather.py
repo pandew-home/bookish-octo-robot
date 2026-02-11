@@ -102,7 +102,7 @@ async def get_weather(session_id: str = Depends(get_session_id)):
         logger.info(f"Calculating weather for cluster {cluster_name}")
         
         # Read K8sGPT Result CRDs
-        custom_api = k8s_clients['custom']
+        custom_api = k8s_clients['custom_objects']
         k8sgpt_reader = K8sGPTReader(custom_api)
         
         try:
@@ -123,7 +123,7 @@ async def get_weather(session_id: str = Depends(get_session_id)):
                 )
         
         # Get lightweight cluster metadata
-        core_api: CoreV1Api = k8s_clients['core']
+        core_api: CoreV1Api = k8s_clients['core_v1']
         
         # Get node count
         node_count = 0
@@ -151,7 +151,7 @@ async def get_weather(session_id: str = Depends(get_session_id)):
         cluster_tools = []
         try:
             # Try to get K8sGPT operator deployment
-            apps_api = k8s_clients['apps']
+            apps_api = k8s_clients['apps_v1']
             deployments = apps_api.list_namespaced_deployment(namespace='k8sgpt-operator-system')
             for deployment in deployments.items:
                 if 'k8sgpt' in deployment.metadata.name.lower():
@@ -227,7 +227,7 @@ async def get_weather_details(session_id: str = Depends(get_session_id)):
         logger.info(f"Getting detailed weather for cluster {cluster_name}")
         
         # Read K8sGPT Result CRDs
-        custom_api = k8s_clients['custom']
+        custom_api = k8s_clients['custom_objects']
         k8sgpt_reader = K8sGPTReader(custom_api)
         
         try:
@@ -247,7 +247,7 @@ async def get_weather_details(session_id: str = Depends(get_session_id)):
                 )
         
         # Get cluster metadata
-        core_api: CoreV1Api = k8s_clients['core']
+        core_api: CoreV1Api = k8s_clients['core_v1']
         
         cluster_metadata = {
             'name': cluster_name,
@@ -288,7 +288,7 @@ async def get_weather_details(session_id: str = Depends(get_session_id)):
         # Get K8sGPT version
         cluster_tools = []
         try:
-            apps_api = k8s_clients['apps']
+            apps_api = k8s_clients['apps_v1']
             deployments = apps_api.list_namespaced_deployment(namespace='k8sgpt-operator-system')
             for deployment in deployments.items:
                 if 'k8sgpt' in deployment.metadata.name.lower():
@@ -376,7 +376,7 @@ async def list_results(
         logger.info(f"Listing K8sGPT Results for cluster {cluster_name}")
         
         # Read K8sGPT Result CRDs
-        custom_api = k8s_clients['custom']
+        custom_api = k8s_clients['custom_objects']
         k8sgpt_reader = K8sGPTReader(custom_api)
         
         try:
@@ -465,7 +465,7 @@ async def get_result_detail(
         logger.info(f"Getting K8sGPT Result {result_id} from cluster {cluster_name}")
         
         # Read all results and find the specific one
-        custom_api = k8s_clients['custom']
+        custom_api = k8s_clients['custom_objects']
         k8sgpt_reader = K8sGPTReader(custom_api)
         
         try:
@@ -501,7 +501,7 @@ async def get_result_detail(
         enrichment: Dict[str, Any] = {}
         
         try:
-            core_api: CoreV1Api = k8s_clients['core']
+            core_api: CoreV1Api = k8s_clients['core_v1']
             
             # Get resource details based on kind
             resource_name = result.details.get('resource_name', '')

@@ -149,7 +149,7 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
         
         try:
             # Step 4: Read K8sGPT Result CRDs
-            k8sgpt_reader = K8sGPTReader(k8s_clients)
+            k8sgpt_reader = K8sGPTReader(k8s_clients['custom_objects'])
             k8sgpt_results = await k8sgpt_reader.read_results()
             logger.info(f"Found {len(k8sgpt_results)} K8sGPT results")
             

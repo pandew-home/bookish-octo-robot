@@ -8,8 +8,10 @@ Requirements: 15.2, 16.6, 16.7, 17.5
 """
 import logging
 import sys
+from pathlib import Path
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 # Import startup validator
 from startup_validator import get_validator, validate_startup
@@ -34,6 +36,9 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+STATIC_ROOT = Path("/var/www/html")
+STATIC_ROOT_RESOLVED = STATIC_ROOT.resolve()
 
 # Create FastAPI app
 logger.info("Creating FastAPI application...")
@@ -173,6 +178,25 @@ async def shutdown_event():
     # - Flush logs
     
     logger.info("Shutdown complete")
+
+
+@app.get("/{full_path:path}")
+async def spa_fallback(full_path: str):
+    if not STATIC_ROOT.exists():
+        return Response(status_code=404)
+
+    requested_path = (STATIC_ROOT / full_path).resolve()
+    if not str(requested_path).startswith(str(STATIC_ROOT_RESOLVED)):
+        return Response(status_code=404)
+
+    if requested_path.is_file():
+        return FileResponse(requested_path)
+
+    index_path = STATIC_ROOT / "index.html"
+    if index_path.is_file():
+        return FileResponse(index_path)
+
+    return Response(status_code=404)
 
 
 if __name__ == "__main__":

@@ -11,7 +11,9 @@ The Docker configuration has been optimized to produce a production-ready image 
 **3-Stage Build Process:**
 - **Stage 1 (Frontend):** node:20-alpine → Build React app → ~3MB output
 - **Stage 2 (Python):** python:3.11-slim → Build dependencies → ~200MB venv
-- **Stage 3 (Production):** python:3.11-slim + nginx-alpine → Final image
+- **Stage 3 (Production):** python:3.11-slim + Envoy proxy → Final image
+
+Envoy serves the React build and proxies `/api` calls to the uvicorn process; the Kubernetes NodePort service (port 30080) simply routes traffic to Envoy so the same port exposes both static assets and FastAPI endpoints.
 
 **Benefits:**
 - No build tools in final image
@@ -26,7 +28,7 @@ The Docker configuration has been optimized to produce a production-ready image 
 | Remove test files | ~20-30MB |
 | Remove __pycache__ | ~5-10MB |
 | Pre-compress assets | ~2-3MB |
-| Minimal nginx binary | ~40MB |
+| Minimal Envoy proxy | ~40MB |
 | Clean apt cache | ~10-20MB |
 | Remove pip cache | ~50-100MB |
 | **Total Savings** | **~130-210MB** |
@@ -71,20 +73,15 @@ find build -type f \( -name "*.js" -o -name "*.css" -o -name "*.html" \) \
 
 **Result:** 2-5MB frontend bundle (gzipped)
 
-### 5. Nginx Optimizations ✅
+### 5. Envoy Proxy ✅
 
 **Size:**
-- Copy from nginx:alpine instead of apt install (saves ~40MB)
-- Minimal modules only
+- Copy the `envoy` binary from the official `envoyproxy/envoy` image instead of installing via packages (~28MB) and keep only the HTTP connection manager filter chain.
 
-**Performance:**
-```nginx
-worker_processes auto;
-worker_connections 2048;
-keepalive 32;                    # Backend connection pooling
-gzip_static on;                  # Serve pre-compressed files
-open_file_cache max=1000;        # Cache file descriptors
-```
+**Routing:**
+- Single listener on 0.0.0.0:8080 that serves pre-built React files from `/var/www/html` and proxies `/api` (and other backend routes) to `http://127.0.0.1:8000`.
+- HTTP connection manager enables retries, timeouts, and TLS termination later if needed, while the admin interface on port 9901 exposes stats and health.
+- Kubernetes NodePort 30080 directs traffic straight into Envoy, so front-end users hit the same externally exposed port as internal services.
 
 ### 6. .dockerignore Configuration ✅
 
@@ -130,7 +127,7 @@ minprocs=200
 ```
 Base Image (python:3.11-slim)     130 MB
 Python Dependencies               200 MB
-Nginx Binary                       10 MB
+Envoy Proxy                         10 MB
 Backend Code                        5 MB
 Frontend Build                      3 MB
 Supervisor + Utilities              5 MB
@@ -233,8 +230,7 @@ FROM gcr.io/distroless/python3-debian11
 # No shell, minimal attack surface
 ```
 
-### Option 3: Split Images
-- Frontend: nginx:alpine + React (~80MB)
+- Frontend: Envoy + React (~80MB)
 - Backend: python:3.11-slim + FastAPI (~300MB)
 - Total: ~380MB (but 2 containers)
 
@@ -258,7 +254,7 @@ The optimizations also improve security:
 - [x] No test files in image
 - [x] Python cache removed
 - [x] Frontend pre-compressed
-- [x] Nginx optimized
+- [x] Envoy configured
 - [x] Uvicorn performance tuned
 - [x] Non-root user
 - [x] Health checks configured
@@ -294,7 +290,7 @@ The optimizations also improve security:
 ## References
 
 - [Dockerfile](../Dockerfile)
-- [nginx.conf](nginx.conf)
+- [envoy.yaml](envoy.yaml)
 - [supervisord.conf](supervisord.conf)
 - [.dockerignore](../.dockerignore)
 - [BUILD_OPTIMIZATION.md](BUILD_OPTIMIZATION.md)

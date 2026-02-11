@@ -27,12 +27,16 @@ def mock_k8s_clients():
 @pytest.fixture
 def mock_aws_creds():
     """Create mock AWS credentials."""
+    now = datetime.now()
     return StoredCredentials(
         access_key='AKIATEST',
         secret_key='secret',
         session_token='token',
         region='us-east-1',
-        expiration=datetime.now() + timedelta(hours=1)
+        user_arn='arn:aws:iam::123456789012:user/test',
+        account_id='123456789012',
+        expires_at=now + timedelta(hours=1),
+        created_at=now
     )
 
 
