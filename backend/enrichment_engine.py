@@ -138,8 +138,17 @@ class EnrichmentEngine:
             tasks.append(self._enrich_aws(plan))
         
         # Execute all tasks in parallel with timeout protection
+        timeout_seconds = getattr(self, 'timeout', 10)
         try:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=timeout_seconds
+            )
+        except asyncio.TimeoutError:
+            logger.error(f"Enrichment tasks timed out after {timeout_seconds}s")
+            context = EnrichedContext()
+            context.errors.append(f"Enrichment timed out after {timeout_seconds} seconds. Partial data may be missing.")
+            return context
         except Exception as e:
             logger.error(f"Error executing enrichment tasks: {e}")
             results = []

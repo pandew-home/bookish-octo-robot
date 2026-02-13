@@ -49,6 +49,8 @@ interface K8sGPTFinding {
   problem: string;
 }
 
+type ChatErrorType = 'auth_error' | 'cluster_unreachable' | 'rate_limited' | 'timeout' | 'connection_error' | 'rbac_forbidden';
+
 interface ChatMessage {
   id: string;
   role: 'user' | 'assistant';
@@ -61,6 +63,7 @@ interface ChatMessage {
   queryType?: string;
   loading?: boolean;
   cluster?: string;
+  errorType?: ChatErrorType;
 }
 
 // Props interface
@@ -436,6 +439,32 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     </Box>
                   ) : (
                     formatMessageContent(message.content, message.id)
+                  )}
+
+                  {/* Error Alert */}
+                  {message.errorType && (
+                    <Alert
+                      severity="warning"
+                      icon={<WarningIcon />}
+                      sx={{
+                        mt: 2,
+                        bgcolor: 'rgba(255, 152, 0, 0.15)',
+                        borderColor: '#ff9800',
+                        border: '1px solid',
+                        '& .MuiAlert-icon': {
+                          color: '#ffb74d'
+                        }
+                      }}
+                    >
+                      <Typography variant="body2">
+                        {message.errorType === 'auth_error' && 'Authentication failed. Please check your credentials and try again.'}
+                        {message.errorType === 'cluster_unreachable' && 'Cluster is not responding. Please verify the cluster is accessible and try again.'}
+                        {message.errorType === 'rate_limited' && 'Rate limit exceeded. Please wait a moment and try again.'}
+                        {message.errorType === 'timeout' && 'Request timed out. The operation took too long to complete.'}
+                        {message.errorType === 'connection_error' && 'Connection failed. Please check your network and cluster connectivity.'}
+                        {message.errorType === 'rbac_forbidden' && 'Permission denied. You may not have the required RBAC permissions for this operation.'}
+                      </Typography>
+                    </Alert>
                   )}
 
                   {/* Safety Notice */}

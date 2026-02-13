@@ -34,32 +34,73 @@ function App() {
   // Weather monitoring hook (depends on authentication and cluster selection)
   useWeather(cluster.selectedCluster, credentials.isAuthenticated);
 
-  // Create theme
+  // Create theme - Deep Space / Obsidian dark theme
   const theme = useMemo(() => {
     return createTheme({
       palette: {
-        mode: 'light',
+        mode: 'dark',
         primary: {
-          main: '#1976d2',
-          light: '#42a5f5',
-          dark: '#1565c0',
+          main: '#66a16e',
+          light: '#88c490',
+          dark: '#4e8055',
+          contrastText: '#ffffff',
         },
         secondary: {
-          main: '#dc004e',
+          main: '#4fc3f7',
         },
         background: {
-          default: '#f5f5f5',
-          paper: '#ffffff',
+          default: '#0a1214',
+          paper: '#121d20',
+        },
+        text: {
+          primary: '#ffffff',
+          secondary: '#a0b0b5',
+        },
+        divider: '#1e2e32',
+        error: { main: '#f44336' },
+        warning: { main: '#ff9800' },
+        info: { main: '#4fc3f7' },
+        success: { main: '#66bb6a' },
+      },
+      components: {
+        MuiCard: {
+          styleOverrides: {
+            root: {
+              backgroundImage: 'none',
+              border: '1px solid #1e2e32',
+            },
+          },
+        },
+        MuiAppBar: {
+          styleOverrides: {
+            root: {
+              backgroundColor: '#0d1618',
+              backgroundImage: 'none',
+            },
+          },
+        },
+        MuiButton: {
+          styleOverrides: {
+            containedPrimary: {
+              '&:hover': { backgroundColor: '#4e8055' },
+            },
+          },
+        },
+        MuiTextField: {
+          styleOverrides: {
+            root: {
+              '& .MuiOutlinedInput-root': {
+                '& fieldset': { borderColor: '#1e2e32' },
+                '&:hover fieldset': { borderColor: '#66a16e' },
+              },
+            },
+          },
         },
       },
       typography: {
-        fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
-        h4: {
-          fontWeight: 600,
-        },
-        h6: {
-          fontWeight: 500,
-        },
+        fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+        h4: { fontWeight: 600 },
+        h6: { fontWeight: 500 },
       },
     });
   }, []);

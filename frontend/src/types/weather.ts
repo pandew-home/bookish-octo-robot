@@ -29,6 +29,11 @@ export interface K8sGPTResultSummary {
 }
 
 /**
+ * K8sGPT status type
+ */
+export type K8sGPTStatus = 'available' | 'not_installed' | 'unreachable';
+
+/**
  * Weather data interface
  * Represents cluster health status derived from K8sGPT Results
  */
@@ -40,6 +45,9 @@ export interface WeatherData {
   topIssues?: K8sGPTResultSummary[];
   clusterTools: ClusterToolInfo[];
   timestamp: string;
+  // K8sGPT status fields
+  k8sgptStatus?: K8sGPTStatus;
+  k8sgptMessage?: string;
 }
 
 /**

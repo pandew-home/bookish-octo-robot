@@ -1,5 +1,5 @@
 """
-Cluster discovery and Kubernetes client factory for EKS clusters.
+Cluster discovery and Kubernetes client factory for both EKS (AWS) and local (kubeconfig) clusters.
 """
 import boto3
 import base64
@@ -14,6 +14,7 @@ import logging
 
 from credential_store import StoredCredentials
 from eks_auth import get_eks_bearer_token
+from local_k8s_auth import get_local_k8s_client
 from utils.error_handler import handle_aws_error, handle_k8s_error, k8s_api_retry
 
 logger = logging.getLogger(__name__)

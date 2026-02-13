@@ -22,6 +22,11 @@ export interface K8sGPTFinding {
 }
 
 /**
+ * Chat error types for styling
+ */
+export type ChatErrorType = 'auth_error' | 'cluster_unreachable' | 'rate_limited' | 'timeout' | 'connection_error' | 'rbac_forbidden';
+
+/**
  * Chat message interface
  */
 export interface ChatMessage {
@@ -36,6 +41,7 @@ export interface ChatMessage {
   queryType?: string;
   loading?: boolean;
   cluster?: string;
+  errorType?: ChatErrorType;
 }
 
 /**

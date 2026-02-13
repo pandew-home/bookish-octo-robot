@@ -1,5 +1,5 @@
 """
-API endpoints for cluster management.
+API endpoints for cluster management (AWS EKS + local kubeconfig).
 """
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
@@ -8,6 +8,7 @@ import logging
 
 from api.credentials import get_session_id, get_credentials_for_session
 from cluster_manager import discover_clusters, get_k8s_clients, cluster_cache
+from local_k8s_auth import discover_local_clusters, get_local_k8s_client
 from utils.error_handler import handle_aws_error, handle_k8s_error, handle_generic_error
 
 logger = logging.getLogger(__name__)
@@ -49,9 +50,12 @@ class ClusterSelectResponse(BaseModel):
 @router.get("", response_model=ClusterListResponse)
 async def list_clusters(session_id: str = Depends(get_session_id)):
     """
-    Discover and list available EKS clusters.
+    Discover and list available clusters (EKS or local kubeconfig).
     
-    Uses the user's AWS credentials to discover clusters via EKS ListClusters API.
+    Delegates based on auth_mode:
+    - "aws": Uses AWS credentials to discover EKS clusters via ListClusters API
+    - "kubeconfig": Uses kubeconfig file to list available contexts
+    
     Results are cached for 300 seconds to minimize API calls.
     
     Args:
@@ -76,9 +80,13 @@ async def list_clusters(session_id: str = Depends(get_session_id)):
                 count=len(cached_clusters)
             )
         
-        # Discover clusters
-        logger.info(f"Discovering clusters for session {session_id[:8]}...")
-        clusters = await discover_clusters(creds)
+        # Delegate based on auth mode
+        logger.info(f"Discovering clusters for session {session_id[:8]}... (auth_mode={creds.auth_mode})")
+        
+        if creds.auth_mode == "kubeconfig":
+            clusters = _discover_kubeconfig_clusters(creds)
+        else:
+            clusters = await discover_clusters(creds)
         
         # Cache results
         cluster_cache.set(session_id, clusters)
@@ -99,6 +107,63 @@ async def list_clusters(session_id: str = Depends(get_session_id)):
             "discovering clusters",
             "Unable to discover clusters. Please verify your credentials and network connection."
         )
+
+
+def _discover_kubeconfig_clusters(creds) -> List[Dict[str, Any]]:
+    """
+    Discover clusters from kubeconfig contexts.
+    
+    Args:
+        creds: StoredCredentials with kubeconfig_path and kubeconfig_contexts
+        
+    Returns:
+        List of cluster metadata dictionaries
+    """
+    clusters = []
+    for context_name, cluster_name in creds.kubeconfig_contexts.items():
+        clusters.append({
+            'name': context_name,  # Use context name as display name
+            'endpoint': 'local',   # Local clusters don't have a fixed endpoint
+            'version': 'unknown',  # Version discovered on connect
+            'status': 'available',
+            'region': 'local',
+            'cluster_name': cluster_name,  # Actual cluster name
+            'context_name': context_name
+        })
+    return clusters
+
+
+def _get_kubeconfig_k8s_clients(creds, cluster: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Create Kubernetes API clients using kubeconfig.
+    
+    Args:
+        creds: StoredCredentials with kubeconfig_path
+        cluster: Cluster metadata with context_name
+        
+    Returns:
+        Dictionary of K8s API clients
+    """
+    from kubernetes import client as k8s_client
+    
+    context_name = cluster.get('context_name', cluster['name'])
+    
+    # Load kubeconfig and create client
+    core_v1 = get_local_k8s_client(creds.kubeconfig_path, context_name)
+    
+    # Create additional clients using the same config
+    from kubernetes import config
+    config.load_kube_config(config_file=creds.kubeconfig_path, context=context_name)
+    
+    return {
+        'core_v1': core_v1,
+        'apps_v1': k8s_client.AppsV1Api(),
+        'custom_objects': k8s_client.CustomObjectsApi(),
+        'networking_v1': k8s_client.NetworkingV1Api(),
+        'rbac_v1': k8s_client.RbacAuthorizationV1Api(),
+        '_api_client': None,  # No explicit cleanup needed for kubeconfig
+        '_ca_cert_path': None
+    }
 
 
 @router.post("/select", response_model=ClusterSelectResponse)
@@ -157,7 +222,10 @@ async def select_cluster(
         cached_clusters = cluster_cache.get(session_id)
         if cached_clusters is None:
             logger.info(f"Discovering clusters for selection (session {session_id[:8]}...)")
-            cached_clusters = await discover_clusters(creds)
+            if creds.auth_mode == "kubeconfig":
+                cached_clusters = _discover_kubeconfig_clusters(creds)
+            else:
+                cached_clusters = await discover_clusters(creds)
             cluster_cache.set(session_id, cached_clusters)
         
         # Find the selected cluster
@@ -173,9 +241,12 @@ async def select_cluster(
                 detail=f"Cluster '{request.cluster_name}' not found"
             )
         
-        # Generate new bearer token and create K8s clients for the new cluster
-        logger.info(f"Creating K8s clients for cluster {request.cluster_name}")
-        k8s_clients = get_k8s_clients(creds, selected_cluster)
+        # Create K8s clients based on auth mode
+        logger.info(f"Creating K8s clients for cluster {request.cluster_name} (auth_mode={creds.auth_mode})")
+        if creds.auth_mode == "kubeconfig":
+            k8s_clients = _get_kubeconfig_k8s_clients(creds, selected_cluster)
+        else:
+            k8s_clients = get_k8s_clients(creds, selected_cluster)
         
         # Store in session
         _session_clusters[session_id] = selected_cluster

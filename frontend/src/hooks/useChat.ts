@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from 'react';
-import { ChatMessage, ConversationExport } from '../types/chat';
+import { ChatMessage, ConversationExport, ChatErrorType } from '../types/chat';
 import apiClient from '../services/api';
 
 export interface UseChatState {
@@ -85,15 +85,29 @@ export const useChat = (
       setMessages(prev => prev.slice(0, -1).concat(assistantMessage));
     } catch (err: any) {
       let errorMessage = 'Failed to get response. Please try again.';
+      let errorType: ChatErrorType | undefined;
 
       if (err.response?.status === 401) {
-        errorMessage = 'Authentication required. Please log in with Kion credentials.';
+        errorMessage = 'Authentication required. Please log in again.';
+        errorType = 'auth_error';
+      } else if (err.response?.status === 403) {
+        errorMessage = err.response.data?.detail || 'Access denied. Check your RBAC permissions.';
+        errorType = 'rbac_forbidden';
+      } else if (err.response?.status === 503) {
+        errorMessage = 'Cluster not responding. Please verify the cluster is accessible.';
+        errorType = 'cluster_unreachable';
       } else if (err.response?.status === 429) {
         errorMessage = err.response.data?.detail || 'Rate limit exceeded. Please try again later.';
+        errorType = 'rate_limited';
       } else if (err.response?.status === 400) {
         errorMessage = err.response.data?.detail || 'Invalid request. Please check your query.';
       } else if (err.message) {
         errorMessage = err.message;
+      }
+
+      // Check for error_type in response metadata
+      if (err.response?.data?.metadata?.error_type) {
+        errorType = err.response.data.metadata.error_type as ChatErrorType;
       }
 
       const errorMsg: ChatMessage = {
@@ -101,6 +115,7 @@ export const useChat = (
         role: 'assistant',
         content: errorMessage,
         timestamp: new Date().toISOString(),
+        errorType,
       };
 
       // Replace loading message with error

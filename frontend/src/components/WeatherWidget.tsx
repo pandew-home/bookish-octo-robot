@@ -75,6 +75,9 @@ interface K8sGPTResultSummary {
   timestamp?: string;
 }
 
+// K8sGPT status type
+type K8sGPTStatus = 'available' | 'not_installed' | 'unreachable';
+
 // Weather data interface
 interface WeatherData {
   state: WeatherState;
@@ -84,6 +87,8 @@ interface WeatherData {
   topIssues?: K8sGPTResultSummary[];
   clusterTools: ClusterToolInfo[];
   timestamp: string;
+  k8sgptStatus?: K8sGPTStatus;
+  k8sgptMessage?: string;
 }
 
 // Props interface
@@ -161,6 +166,8 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
           status: tool.status,
         })) || [],
         timestamp: rawData.timestamp,
+        k8sgptStatus: rawData.k8sgpt_status,
+        k8sgptMessage: rawData.k8sgpt_message,
       };
 
       // Only update if data actually changed
@@ -343,6 +350,20 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
         )}
 
         <CardContent sx={{ textAlign: 'center', py: 3 }}>
+          {/* K8sGPT Status Banner */}
+          {displayData.k8sgptStatus && displayData.k8sgptStatus !== 'available' && (
+            <Alert
+              severity={displayData.k8sgptStatus === 'not_installed' ? 'info' : 'warning'}
+              sx={{ mb: 2, textAlign: 'left' }}
+            >
+              {displayData.k8sgptStatus === 'not_installed' ? (
+                <>K8sGPT operator is not installed on this cluster. Weather data may be incomplete.</>
+              ) : (
+                <>{displayData.k8sgptMessage || 'Unable to reach K8sGPT. Some data may be unavailable.'}</>
+              )}
+            </Alert>
+          )}
+
           {/* Cluster Name */}
           <Typography variant="h5" component="h2" gutterBottom sx={{ fontWeight: 600 }}>
             {displayData.clusterName}

@@ -763,3 +763,261 @@ class TestMetadataInclusion:
         assert result['analyzer'] == 'PodAnalyzer'
         assert result['severity'] == 'high'
         assert result['timestamp'] is not None
+
+
+class TestK8sGPTStatusScenarios:
+    """Tests for k8sgpt_status field in weather responses."""
+
+    @patch('api.weather.get_selected_cluster')
+    @patch('api.weather.get_k8s_clients_for_session')
+    @patch('api.weather.K8sGPTReader')
+    async def test_k8sgpt_status_available(
+        self,
+        mock_reader_class,
+        mock_get_clients,
+        mock_get_cluster,
+        mock_cluster,
+        mock_k8s_clients,
+        sample_k8sgpt_results,
+        mock_session_id
+    ):
+        """Test k8sgpt_status is 'available' when K8sGPT is working."""
+        # Setup mocks
+        mock_get_cluster.return_value = mock_cluster
+        mock_get_clients.return_value = mock_k8s_clients
+        
+        mock_reader = Mock()
+        mock_reader.read_results = AsyncMock(return_value=sample_k8sgpt_results)
+        mock_reader_class.return_value = mock_reader
+        
+        # Mock K8s API calls
+        mock_k8s_clients['core_v1'].list_node.return_value = Mock(items=[Mock()])
+        mock_k8s_clients['core_v1'].list_pod_for_all_namespaces.return_value = Mock(items=[])
+        
+        # Make request
+        response = client.get(
+            "/api/weather",
+            headers={"X-Session-Id": mock_session_id}
+        )
+        
+        # Assertions
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data['k8sgpt_status'] == 'available'
+        assert data['k8sgpt_result_count'] == 3
+        assert 'k8sgpt_message' not in data or data.get('k8sgpt_message') is None
+
+    @patch('api.weather.get_selected_cluster')
+    @patch('api.weather.get_k8s_clients_for_session')
+    @patch('api.weather.K8sGPTReader')
+    async def test_k8sgpt_status_not_installed(
+        self,
+        mock_reader_class,
+        mock_get_clients,
+        mock_get_cluster,
+        mock_cluster,
+        mock_k8s_clients,
+        mock_session_id
+    ):
+        """Test k8sgpt_status is 'not_installed' when CRD is missing (404)."""
+        # Setup mocks
+        mock_get_cluster.return_value = mock_cluster
+        mock_get_clients.return_value = mock_k8s_clients
+        
+        # Mock K8sGPT reader to raise 404
+        mock_reader = Mock()
+        api_exception = ApiException(status=404, reason="Not Found")
+        mock_reader.read_results = AsyncMock(side_effect=api_exception)
+        mock_reader_class.return_value = mock_reader
+        
+        # Mock K8s API calls
+        mock_k8s_clients['core_v1'].list_node.return_value = Mock(items=[])
+        mock_k8s_clients['core_v1'].list_pod_for_all_namespaces.return_value = Mock(items=[])
+        
+        # Make request
+        response = client.get(
+            "/api/weather",
+            headers={"X-Session-Id": mock_session_id}
+        )
+        
+        # Assertions
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data['k8sgpt_status'] == 'not_installed'
+        assert data['k8sgpt_result_count'] == 0
+        assert 'k8sgpt_message' in data
+        assert 'not installed' in data['k8sgpt_message'].lower()
+
+    @patch('api.weather.get_selected_cluster')
+    @patch('api.weather.get_k8s_clients_for_session')
+    @patch('api.weather.K8sGPTReader')
+    async def test_k8sgpt_status_unreachable_connection_error(
+        self,
+        mock_reader_class,
+        mock_get_clients,
+        mock_get_cluster,
+        mock_cluster,
+        mock_k8s_clients,
+        mock_session_id
+    ):
+        """Test k8sgpt_status is 'unreachable' on connection error."""
+        # Setup mocks
+        mock_get_cluster.return_value = mock_cluster
+        mock_get_clients.return_value = mock_k8s_clients
+        
+        # Mock K8sGPT reader to raise connection error
+        mock_reader = Mock()
+        mock_reader.read_results = AsyncMock(side_effect=ConnectionError("Cannot connect to cluster"))
+        mock_reader_class.return_value = mock_reader
+        
+        # Mock K8s API calls
+        mock_k8s_clients['core_v1'].list_node.return_value = Mock(items=[])
+        mock_k8s_clients['core_v1'].list_pod_for_all_namespaces.return_value = Mock(items=[])
+        
+        # Make request
+        response = client.get(
+            "/api/weather",
+            headers={"X-Session-Id": mock_session_id}
+        )
+        
+        # Assertions
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data['k8sgpt_status'] == 'unreachable'
+        assert data['k8sgpt_result_count'] == 0
+        assert 'k8sgpt_message' in data
+        assert 'unreachable' in data['k8sgpt_message'].lower() or 'connect' in data['k8sgpt_message'].lower()
+
+    @patch('api.weather.get_selected_cluster')
+    @patch('api.weather.get_k8s_clients_for_session')
+    @patch('api.weather.K8sGPTReader')
+    async def test_k8sgpt_status_unreachable_timeout(
+        self,
+        mock_reader_class,
+        mock_get_clients,
+        mock_get_cluster,
+        mock_cluster,
+        mock_k8s_clients,
+        mock_session_id
+    ):
+        """Test k8sgpt_status is 'unreachable' on timeout error."""
+        # Setup mocks
+        mock_get_cluster.return_value = mock_cluster
+        mock_get_clients.return_value = mock_k8s_clients
+        
+        # Mock K8sGPT reader to raise timeout
+        mock_reader = Mock()
+        import asyncio
+        mock_reader.read_results = AsyncMock(side_effect=asyncio.TimeoutError("Request timed out"))
+        mock_reader_class.return_value = mock_reader
+        
+        # Mock K8s API calls
+        mock_k8s_clients['core_v1'].list_node.return_value = Mock(items=[])
+        mock_k8s_clients['core_v1'].list_pod_for_all_namespaces.return_value = Mock(items=[])
+        
+        # Make request
+        response = client.get(
+            "/api/weather",
+            headers={"X-Session-Id": mock_session_id}
+        )
+        
+        # Assertions
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data['k8sgpt_status'] == 'unreachable'
+        assert data['k8sgpt_result_count'] == 0
+
+    @patch('api.weather.get_selected_cluster')
+    @patch('api.weather.get_k8s_clients_for_session')
+    @patch('api.weather.K8sGPTReader')
+    async def test_k8sgpt_status_unreachable_generic_error(
+        self,
+        mock_reader_class,
+        mock_get_clients,
+        mock_get_cluster,
+        mock_cluster,
+        mock_k8s_clients,
+        mock_session_id
+    ):
+        """Test k8sgpt_status is 'unreachable' on generic errors."""
+        # Setup mocks
+        mock_get_cluster.return_value = mock_cluster
+        mock_get_clients.return_value = mock_k8s_clients
+        
+        # Mock K8sGPT reader to raise generic exception
+        mock_reader = Mock()
+        mock_reader.read_results = AsyncMock(side_effect=Exception("Something went wrong"))
+        mock_reader_class.return_value = mock_reader
+        
+        # Mock K8s API calls
+        mock_k8s_clients['core_v1'].list_node.return_value = Mock(items=[])
+        mock_k8s_clients['core_v1'].list_pod_for_all_namespaces.return_value = Mock(items=[])
+        
+        # Make request
+        response = client.get(
+            "/api/weather",
+            headers={"X-Session-Id": mock_session_id}
+        )
+        
+        # Assertions
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data['k8sgpt_status'] == 'unreachable'
+        assert data['k8sgpt_result_count'] == 0
+
+    @patch('api.weather.get_selected_cluster')
+    @patch('api.weather.get_k8s_clients_for_session')
+    @patch('api.weather.K8sGPTReader')
+    async def test_weather_details_includes_k8sgpt_status(
+        self,
+        mock_reader_class,
+        mock_get_clients,
+        mock_get_cluster,
+        mock_cluster,
+        mock_k8s_clients,
+        sample_k8sgpt_results,
+        mock_session_id
+    ):
+        """Test weather/details endpoint also includes k8sgpt_status."""
+        # Setup mocks
+        mock_get_cluster.return_value = mock_cluster
+        mock_get_clients.return_value = mock_k8s_clients
+        
+        mock_reader = Mock()
+        mock_reader.read_results = AsyncMock(return_value=sample_k8sgpt_results)
+        mock_reader_class.return_value = mock_reader
+        
+        # Mock node list with conditions
+        mock_node = Mock()
+        mock_node.metadata.name = 'node-1'
+        mock_node.status.node_info.kubelet_version = 'v1.28.0'
+        mock_condition = Mock()
+        mock_condition.type = 'Ready'
+        mock_condition.status = 'True'
+        mock_node.status.conditions = [mock_condition]
+        mock_nodes = Mock()
+        mock_nodes.items = [mock_node]
+        mock_k8s_clients['core_v1'].list_node.return_value = mock_nodes
+        
+        # Mock namespace list
+        mock_namespaces = Mock()
+        mock_namespaces.items = []
+        mock_k8s_clients['core_v1'].list_namespace.return_value = mock_namespaces
+        
+        # Make request
+        response = client.get(
+            "/api/weather/details",
+            headers={"X-Session-Id": mock_session_id}
+        )
+        
+        # Assertions
+        assert response.status_code == 200
+        data = response.json()
+        
+        assert data['k8sgpt_status'] == 'available'
+        assert data['k8sgpt_result_count'] == 3

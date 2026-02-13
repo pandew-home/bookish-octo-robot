@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { KionCredentials } from '../types/credentials';
+import { KionCredentials, KubeconfigCredentials } from '../types/credentials';
 import { authApi } from '../services/api';
 import { useCredentialStatus } from './useCredentialStatus';
 
@@ -12,6 +12,7 @@ export interface UseCredentialsState {
   expiresAt?: string;
   timeRemaining: number | null;
   login: (credentials: KionCredentials) => Promise<void>;
+  loginKubeconfig: (credentials: KubeconfigCredentials) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -62,6 +63,38 @@ export const useCredentials = (): UseCredentialsState => {
   }, [refresh]);
 
   /**
+   * Submit kubeconfig for local cluster authentication
+   */
+  const loginKubeconfig = useCallback(async (credentials: KubeconfigCredentials) => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      console.log('[useCredentials] loginKubeconfig called with path:', credentials.kubeconfigPath);
+      const response = await authApi.loginKubeconfig(credentials);
+      console.log('[useCredentials] loginKubeconfig response:', response);
+      
+      if (!response.success) {
+        console.error('[useCredentials] loginKubeconfig failed - success=false');
+        throw new Error('Kubeconfig authentication failed');
+      }
+
+      console.log('[useCredentials] loginKubeconfig successful, refreshing status...');
+      // Refresh status after successful login
+      await refresh();
+    } catch (err: any) {
+      console.error('[useCredentials] loginKubeconfig error:', err);
+      console.error('[useCredentials] Error response:', err.response);
+      console.error('[useCredentials] Error message:', err.message);
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to authenticate with kubeconfig';
+      setError(errorMessage);
+      throw new Error(errorMessage);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [refresh]);
+
+  /**
    * Remove credentials from backend (logout)
    */
   const logout = useCallback(async () => {
@@ -94,6 +127,7 @@ export const useCredentials = (): UseCredentialsState => {
     expiresAt: status?.expires_at,
     timeRemaining,
     login,
+    loginKubeconfig,
     logout,
     refresh,
   };

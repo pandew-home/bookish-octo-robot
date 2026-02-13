@@ -37,6 +37,9 @@ class WeatherResponseModel(BaseModel):
     timestamp: str
     node_count: Optional[int] = None
     pod_summary: Optional[Dict[str, int]] = None
+    # K8sGPT status fields
+    k8sgpt_status: str = "available"  # "available", "not_installed", "unreachable"
+    k8sgpt_message: Optional[str] = None
 
 
 class WeatherDetailsResponse(BaseModel):
@@ -49,6 +52,9 @@ class WeatherDetailsResponse(BaseModel):
     cluster_tools: List[Dict[str, Any]]
     timestamp: str
     cluster_metadata: Dict[str, Any]
+    # K8sGPT status fields
+    k8sgpt_status: str = "available"
+    k8sgpt_message: Optional[str] = None
 
 
 class ResultListResponse(BaseModel):
@@ -105,22 +111,38 @@ async def get_weather(session_id: str = Depends(get_session_id)):
         custom_api = k8s_clients['custom_objects']
         k8sgpt_reader = K8sGPTReader(custom_api)
         
+        # Track K8sGPT status
+        k8sgpt_status = "available"
+        k8sgpt_message = None
+        
         try:
             results = await k8sgpt_reader.read_results()
             logger.info(f"Read {len(results)} K8sGPT Results from cluster {cluster_name}")
         except ApiException as e:
             if e.status == 404:
-                # K8sGPT CRD not installed - return sunny weather
-                logger.info(f"K8sGPT CRD not found in cluster {cluster_name} - assuming healthy")
+                # K8sGPT CRD not installed
+                k8sgpt_status = "not_installed"
+                k8sgpt_message = "K8sGPT operator is not installed on this cluster"
+                logger.info(f"K8sGPT CRD not found in cluster {cluster_name}")
+                results = []
+            elif e.status == 403:
+                # RBAC denied
+                k8sgpt_status = "unreachable"
+                k8sgpt_message = "Access denied. Check RBAC permissions for K8sGPT Results."
+                logger.warning(f"RBAC denied reading K8sGPT Results in cluster {cluster_name}")
                 results = []
             else:
                 # Other API errors
-                error_msg = handle_k8s_error(e, "read K8sGPT Results")
-                logger.error(f"Failed to read K8sGPT Results: {error_msg}")
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Unable to read K8sGPT Results: {error_msg}"
-                )
+                k8sgpt_status = "unreachable"
+                k8sgpt_message = f"Error accessing K8sGPT: {handle_k8s_error(e, 'read K8sGPT Results')}"
+                logger.error(f"Failed to read K8sGPT Results: {k8sgpt_message}")
+                results = []
+        except Exception as e:
+            # Connection errors, timeouts, etc.
+            k8sgpt_status = "unreachable"
+            k8sgpt_message = f"Unable to connect to K8sGPT: {str(e)}"
+            logger.error(f"K8sGPT connection error: {e}")
+            results = []
         
         # Get lightweight cluster metadata
         core_api: CoreV1Api = k8s_clients['core_v1']
@@ -165,6 +187,12 @@ async def get_weather(session_id: str = Depends(get_session_id)):
                             version=version,
                             status='running' if deployment.status.ready_replicas else 'degraded'
                         ))
+        except ApiException as e:
+            if e.status == 404:
+                # Namespace not found - K8sGPT operator not installed
+                logger.debug(f"K8sGPT operator namespace not found in cluster {cluster_name}")
+            else:
+                logger.debug(f"Could not get K8sGPT operator info: {e}")
         except Exception as e:
             logger.debug(f"Could not get K8sGPT operator info: {e}")
         
@@ -181,8 +209,10 @@ async def get_weather(session_id: str = Depends(get_session_id)):
         response_dict = weather_response.to_dict()
         response_dict['node_count'] = node_count
         response_dict['pod_summary'] = pod_summary
+        response_dict['k8sgpt_status'] = k8sgpt_status
+        response_dict['k8sgpt_message'] = k8sgpt_message
         
-        logger.info(f"Weather calculated for {cluster_name}: {weather_response.weather_state.value}")
+        logger.info(f"Weather calculated for {cluster_name}: {weather_response.weather_state.value} (k8sgpt: {k8sgpt_status})")
         
         return WeatherResponseModel(**response_dict)
         

@@ -129,9 +129,14 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 detail="No cluster selected. Please select a cluster first."
             )
         
-        # Get K8s clients for target cluster
-        from cluster_manager import discover_clusters
-        clusters = await discover_clusters(creds)
+        # Get K8s clients for target cluster (delegate based on auth_mode)
+        from api.clusters import _discover_kubeconfig_clusters, _get_kubeconfig_k8s_clients
+        
+        if creds.auth_mode == "kubeconfig":
+            clusters = _discover_kubeconfig_clusters(creds)
+        else:
+            from cluster_manager import discover_clusters
+            clusters = await discover_clusters(creds)
         
         target_cluster = None
         for cluster in clusters:
@@ -145,7 +150,11 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 detail=f"Cluster '{request.cluster_name}' not found or not accessible"
             )
         
-        k8s_clients = get_k8s_clients(creds, target_cluster)
+        # Create K8s clients based on auth mode
+        if creds.auth_mode == "kubeconfig":
+            k8s_clients = _get_kubeconfig_k8s_clients(creds, target_cluster)
+        else:
+            k8s_clients = get_k8s_clients(creds, target_cluster)
         
         try:
             # Step 4: Read K8sGPT Result CRDs
@@ -252,18 +261,43 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             return response
             
         finally:
-            # Cleanup K8s clients
-            from cluster_manager import cleanup_k8s_clients
-            cleanup_k8s_clients(k8s_clients)
+            # Cleanup K8s clients (only for AWS mode which uses temp files)
+            if creds.auth_mode == "aws":
+                from cluster_manager import cleanup_k8s_clients
+                cleanup_k8s_clients(k8s_clients)
     
     except HTTPException:
         # Re-raise HTTP exceptions
         raise
+    except ConnectionError as e:
+        # Cluster unreachable
+        logger.error(f"Cluster connection error: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail="Cluster not responding. Please verify the cluster is accessible and try again.",
+            headers={"X-Error-Code": "cluster_unreachable"}
+        )
     except ValueError as e:
         # Input validation errors
         logger.warning(f"Validation error: {e}")
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
+        # Check for Kubernetes API auth errors
+        error_str = str(e).lower()
+        if '401' in error_str or 'unauthorized' in error_str:
+            logger.warning(f"Auth error: {e}")
+            raise HTTPException(
+                status_code=401,
+                detail="Authentication failed. Please re-authenticate.",
+                headers={"X-Error-Code": "cluster_auth_failed"}
+            )
+        if '403' in error_str or 'forbidden' in error_str:
+            logger.warning(f"RBAC error: {e}")
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied. Check your RBAC permissions.",
+                headers={"X-Error-Code": "rbac_forbidden"}
+            )
         # Unexpected errors
         logger.error(f"Error processing chat query: {e}", exc_info=True)
         raise handle_generic_error(

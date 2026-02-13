@@ -1,5 +1,5 @@
 import axios, { AxiosInstance } from 'axios';
-import { KionCredentials } from '../types/credentials';
+import { KionCredentials, KubeconfigCredentials, KubeconfigUpload, KubeconfigParseResponse, KubeconfigAuthRequest } from '../types/credentials';
 
 /**
  * Base API URL - defaults to /api for production, can be overridden for development
@@ -52,6 +52,69 @@ export const authApi = {
       region: credentials.region,
     });
     return response.data;
+  },
+
+  /**
+   * Submit kubeconfig for local cluster authentication
+   * @param credentials - Kubeconfig credentials
+   * @returns Promise with authentication response
+   */
+  async loginKubeconfig(credentials: KubeconfigCredentials): Promise<{ success: boolean; sessionId: string }> {
+    console.log('[authApi] loginKubeconfig called with:', credentials);
+    try {
+      const response = await apiClient.post('/credentials/kubeconfig', {
+        kubeconfig_path: credentials.kubeconfigPath,
+      });
+      console.log('[authApi] loginKubeconfig response status:', response.status);
+      console.log('[authApi] loginKubeconfig response data:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('[authApi] loginKubeconfig error:', error);
+      console.error('[authApi] Error config:', error.config);
+      console.error('[authApi] Error response:', error.response);
+      throw error;
+    }
+  },
+
+  /**
+   * Parse kubeconfig content to get available contexts
+   * @param upload - Kubeconfig upload with raw YAML content
+   * @returns Promise with parsed contexts
+   */
+  async parseKubeconfig(upload: KubeconfigUpload): Promise<KubeconfigParseResponse> {
+    console.log('[authApi] parseKubeconfig called');
+    try {
+      const response = await apiClient.post('/credentials/kubeconfig/parse', {
+        content: upload.content,
+      });
+      console.log('[authApi] parseKubeconfig response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('[authApi] parseKubeconfig error:', error);
+      console.error('[authApi] Error response:', error.response);
+      throw error;
+    }
+  },
+
+  /**
+   * Authenticate with kubeconfig content and selected context
+   * @param request - Kubeconfig auth request with content and selected context
+   * @returns Promise with authentication response
+   */
+  async authKubeconfig(request: KubeconfigAuthRequest): Promise<{ success: boolean; sessionId: string }> {
+    console.log('[authApi] authKubeconfig called with context:', request.context);
+    try {
+      const response = await apiClient.post('/credentials/kubeconfig/auth', {
+        content: request.content,
+        context: request.context,
+      });
+      console.log('[authApi] authKubeconfig response:', response.data);
+      return response.data;
+    } catch (error: any) {
+      console.error('[authApi] authKubeconfig error:', error);
+      console.error('[authApi] Error response:', error.response);
+      throw error;
+    }
   },
 
   /**

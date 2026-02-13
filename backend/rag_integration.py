@@ -325,16 +325,23 @@ class RAGIntegration:
         except Exception as e:
             logger.error(f"Error processing query with RAG: {e}")
             
+            # Determine error type for frontend styling
+            error_type = "unknown"
+            
             # Provide user-friendly error messages based on error type
             error_message = "I encountered an error processing your query. "
             
             if "rate limit" in str(e).lower() or "quota" in str(e).lower():
+                error_type = "rate_limited"
                 error_message += "The LLM service is currently rate-limited. Please wait a moment and try again."
             elif "timeout" in str(e).lower():
+                error_type = "timeout"
                 error_message += "The request timed out. The cluster may be slow to respond. Please try again."
             elif "api_key" in str(e).lower() or "authentication" in str(e).lower():
+                error_type = "auth_error"
                 error_message += "There's an issue with the LLM API authentication. Please contact your administrator."
             elif "connection" in str(e).lower() or "network" in str(e).lower():
+                error_type = "connection_error"
                 error_message += "Unable to connect to the LLM service. Please check your network connection."
             else:
                 error_message += "Please try rephrasing your question or contact support if the issue persists."
@@ -344,7 +351,10 @@ class RAGIntegration:
                 'response': error_message,
                 'citations': [],
                 'errors': [{'type': 'rag_processing', 'message': str(e), 'severity': 'error'}],
-                'metadata': {'error_handled': True}
+                'metadata': {
+                    'error_handled': True,
+                    'error_type': error_type
+                }
             }
     
     def _format_cluster_context(self, enriched_context: EnrichedContext) -> Dict[str, Any]:

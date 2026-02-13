@@ -1,14 +1,22 @@
 """
-API endpoints for AWS credential management.
+API endpoints for credential management (AWS + Kubeconfig).
 """
 from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import Optional, Dict, List
 import uuid
 import logging
+from datetime import datetime, timedelta
 
 from credential_store import CredentialStore, StoredCredentials
 from eks_auth import validate_credentials, get_credential_expiration_info
+from local_k8s_auth import (
+    validate_kubeconfig, 
+    discover_local_clusters,
+    validate_kubeconfig_content,
+    parse_kubeconfig_content,
+    get_k8s_client_from_content
+)
 from middleware.auth_middleware import check_credential_expiration_soon
 from utils.error_handler import handle_aws_error, handle_generic_error
 
@@ -28,6 +36,34 @@ class KionCredentials(BaseModel):
     region: str = Field(..., description="AWS region")
 
 
+class KubeconfigCredentials(BaseModel):
+    """Request model for kubeconfig credentials (legacy - file path based)."""
+    kubeconfig_path: str = Field(..., description="Path to kubeconfig file")
+
+
+class KubeconfigContentRequest(BaseModel):
+    """Request model for kubeconfig content parsing."""
+    content: str = Field(..., description="Raw YAML content of kubeconfig")
+
+
+class KubeconfigAuthRequest(BaseModel):
+    """Request model for kubeconfig authentication with context selection."""
+    content: str = Field(..., description="Raw YAML content of kubeconfig")
+    context: str = Field(..., description="Selected context name")
+
+
+class KubeconfigContextInfo(BaseModel):
+    """Model for a single kubeconfig context."""
+    name: str
+    cluster: str
+
+
+class KubeconfigParseResponse(BaseModel):
+    """Response model for kubeconfig parsing."""
+    contexts: List[KubeconfigContextInfo]
+    currentContext: Optional[str] = None  # camelCase for frontend compatibility
+
+
 class CredentialResponse(BaseModel):
     """Response model for credential submission."""
     success: bool
@@ -40,11 +76,13 @@ class CredentialResponse(BaseModel):
 class CredentialStatusResponse(BaseModel):
     """Response model for credential status."""
     status: str  # "no_credentials", "active", "expiring_soon", "expired"
+    auth_mode: Optional[str] = None  # "aws" or "kubeconfig"
     expires_at: Optional[str] = None
     time_remaining_seconds: Optional[int] = None
     user_arn: Optional[str] = None
     account_id: Optional[str] = None
     region: Optional[str] = None
+    kubeconfig_contexts: Optional[Dict[str, str]] = None
     warning: Optional[dict] = None  # Warning info if expiring soon
 
 
@@ -73,7 +111,7 @@ async def submit_aws_credentials(credentials: KionCredentials):
     
     This endpoint:
     1. Validates credentials via STS GetCallerIdentity
-    2. Stores them in the credential store with TTL
+    2. Stores them in the credential store with TTL (auth_mode="aws")
     3. Returns a session ID for subsequent requests
     
     Args:
@@ -100,13 +138,16 @@ async def submit_aws_credentials(credentials: KionCredentials):
             logger.warning(f"Credential validation failed: {error}")
             raise HTTPException(status_code=401, detail=error)
         
+        # Set auth mode
+        creds.auth_mode = "aws"
+        
         # Generate session ID
         session_id = str(uuid.uuid4())
         
         # Store credentials
         credential_store.store(session_id, creds)
         
-        logger.info(f"Stored credentials for user {creds.user_arn} with session {session_id[:8]}...")
+        logger.info(f"Stored AWS credentials for user {creds.user_arn} with session {session_id[:8]}...")
         
         return CredentialResponse(
             success=True,
@@ -127,10 +168,230 @@ async def submit_aws_credentials(credentials: KionCredentials):
         )
 
 
-@router.get("/aws/status", response_model=CredentialStatusResponse)
+@router.post("/kubeconfig", response_model=CredentialResponse)
+async def submit_kubeconfig_credentials(credentials: KubeconfigCredentials):
+    """
+    Submit and validate kubeconfig credentials.
+    
+    This endpoint:
+    1. Validates the kubeconfig file
+    2. Discovers available clusters/contexts
+    3. Stores them in the credential store with TTL (auth_mode="kubeconfig")
+    4. Returns a session ID for subsequent requests
+    
+    Args:
+        credentials: Kubeconfig credentials
+        
+    Returns:
+        CredentialResponse with session ID
+        
+    Raises:
+        HTTPException: If kubeconfig is invalid
+    """
+    try:
+        logger.info(f"=== Kubeconfig authentication request ===")
+        logger.info(f"Received kubeconfig path: {credentials.kubeconfig_path}")
+        
+        # Validate kubeconfig
+        logger.info("Calling validate_kubeconfig...")
+        is_valid = validate_kubeconfig(credentials.kubeconfig_path)
+        logger.info(f"validate_kubeconfig returned: {is_valid}")
+        
+        if not is_valid:
+            logger.warning(f"Kubeconfig validation failed for: {credentials.kubeconfig_path}")
+            raise HTTPException(status_code=400, detail="Invalid kubeconfig file")
+        
+        # Discover clusters from kubeconfig
+        kubeconfig_contexts = discover_local_clusters(credentials.kubeconfig_path)
+        
+        if not kubeconfig_contexts:
+            raise HTTPException(status_code=400, detail="No contexts found in kubeconfig")
+        
+        # Create stored credentials
+        now = datetime.now()
+        creds = StoredCredentials(
+            auth_mode="kubeconfig",
+            kubeconfig_path=credentials.kubeconfig_path,
+            kubeconfig_contexts=kubeconfig_contexts,
+            created_at=now,
+            expires_at=now + timedelta(hours=1)  # 1 hour TTL
+        )
+        
+        # Generate session ID
+        session_id = str(uuid.uuid4())
+        
+        # Store credentials
+        credential_store.store(session_id, creds)
+        
+        logger.info(f"Stored kubeconfig credentials with {len(kubeconfig_contexts)} contexts, session {session_id[:8]}...")
+        
+        return CredentialResponse(
+            success=True,
+            session_id=session_id,
+            message=f"Kubeconfig validated successfully. Found {len(kubeconfig_contexts)} contexts.",
+            user_arn=None,
+            account_id=None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error submitting kubeconfig: {e}")
+        raise handle_generic_error(
+            e,
+            "validating your kubeconfig",
+            "Unable to validate kubeconfig. Please check the file path and permissions."
+        )
+
+
+@router.post("/kubeconfig/parse", response_model=KubeconfigParseResponse)
+async def parse_kubeconfig(request: KubeconfigContentRequest):
+    """
+    Parse kubeconfig content and return available contexts.
+    
+    This endpoint allows the frontend to upload kubeconfig content
+    (via file upload or paste) and get a list of available contexts
+    for the user to select from.
+    
+    Args:
+        request: Kubeconfig content request with raw YAML
+        
+    Returns:
+        KubeconfigParseResponse with list of contexts
+        
+    Raises:
+        HTTPException: If kubeconfig content is invalid
+    """
+    try:
+        logger.info("=== Parsing kubeconfig content ===")
+        logger.info(f"Content length: {len(request.content)} characters")
+        
+        # Parse kubeconfig content
+        parsed_data, error = parse_kubeconfig_content(request.content)
+        
+        if error:
+            logger.warning(f"Kubeconfig parse error: {error}")
+            raise HTTPException(status_code=400, detail=error)
+        
+        if not parsed_data or not parsed_data.get('contexts'):
+            raise HTTPException(status_code=400, detail="No contexts found in kubeconfig")
+        
+        # Build response
+        contexts = [
+            KubeconfigContextInfo(
+                name=ctx['name'],
+                cluster=ctx['cluster']
+            )
+            for ctx in parsed_data['contexts']
+        ]
+        
+        logger.info(f"Found {len(contexts)} contexts, current={parsed_data.get('current_context')}")
+        
+        return KubeconfigParseResponse(
+            contexts=contexts,
+            currentContext=parsed_data.get('current_context')
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error parsing kubeconfig: {e}")
+        raise handle_generic_error(
+            e,
+            "parsing kubeconfig",
+            "Unable to parse kubeconfig. Please check the content format."
+        )
+
+
+@router.post("/kubeconfig/auth", response_model=CredentialResponse)
+async def auth_kubeconfig_content(request: KubeconfigAuthRequest):
+    """
+    Authenticate with kubeconfig content and selected context.
+    
+    This endpoint accepts the kubeconfig content (streamed from browser)
+    and the user-selected context, validates them, and creates a session.
+    
+    Args:
+        request: Kubeconfig auth request with content and selected context
+        
+    Returns:
+        CredentialResponse with session ID
+        
+    Raises:
+        HTTPException: If kubeconfig or context is invalid
+    """
+    try:
+        logger.info("=== Kubeconfig content authentication ===")
+        logger.info(f"Content length: {len(request.content)} characters")
+        logger.info(f"Selected context: {request.context}")
+        
+        # Validate kubeconfig content
+        is_valid, error = validate_kubeconfig_content(request.content)
+        if not is_valid:
+            logger.warning(f"Kubeconfig validation failed: {error}")
+            raise HTTPException(status_code=400, detail=error)
+        
+        # Parse to get contexts
+        parsed_data, error = parse_kubeconfig_content(request.content)
+        if error or not parsed_data:
+            raise HTTPException(status_code=400, detail=error or "Failed to parse kubeconfig")
+        
+        # Verify selected context exists
+        context_names = [ctx['name'] for ctx in parsed_data.get('contexts', [])]
+        if request.context not in context_names:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Context '{request.context}' not found. Available: {context_names}"
+            )
+        
+        # Build contexts dict for storage
+        kubeconfig_contexts = {
+            ctx['name']: ctx['cluster'] 
+            for ctx in parsed_data.get('contexts', [])
+        }
+        
+        # Create stored credentials
+        now = datetime.now()
+        creds = StoredCredentials(
+            auth_mode="kubeconfig",
+            kubeconfig_content=request.content,  # Store content for later use
+            kubeconfig_contexts=kubeconfig_contexts,
+            selected_context=request.context,
+            created_at=now,
+            expires_at=now + timedelta(hours=1)  # 1 hour TTL
+        )
+        
+        # Generate session ID
+        session_id = str(uuid.uuid4())
+        
+        # Store credentials
+        credential_store.store(session_id, creds)
+        
+        logger.info(f"Stored kubeconfig credentials with context '{request.context}', session {session_id[:8]}...")
+        
+        return CredentialResponse(
+            success=True,
+            session_id=session_id,
+            message=f"Authenticated with context '{request.context}' successfully.",
+            user_arn=None,
+            account_id=None
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error authenticating kubeconfig: {e}")
+        raise handle_generic_error(
+            e,
+            "authenticating with kubeconfig",
+            "Unable to authenticate with kubeconfig. Please check the content and selected context."
+        )
+
+
+@router.get("/status", response_model=CredentialStatusResponse)
 async def get_credential_status(session_id: str = Depends(get_session_id)):
     """
-    Get status of stored AWS credentials.
+    Get status of stored credentials (AWS or kubeconfig).
     
     Args:
         session_id: Session ID from header
@@ -145,6 +406,7 @@ async def get_credential_status(session_id: str = Depends(get_session_id)):
         if creds is None:
             return CredentialStatusResponse(
                 status="no_credentials",
+                auth_mode=None,
                 expires_at=None,
                 time_remaining_seconds=None
             )
@@ -155,15 +417,23 @@ async def get_credential_status(session_id: str = Depends(get_session_id)):
         # Check for expiration warnings
         warning = check_credential_expiration_soon(info['time_remaining_seconds'])
         
-        return CredentialStatusResponse(
+        # Build response based on auth mode
+        response = CredentialStatusResponse(
             status=info['status'],
+            auth_mode=creds.auth_mode,
             expires_at=info['expires_at'],
             time_remaining_seconds=info['time_remaining_seconds'],
-            user_arn=info['user_arn'],
-            account_id=info['account_id'],
-            region=info['region'],
             warning=warning if warning else None
         )
+        
+        if creds.auth_mode == "aws":
+            response.user_arn = info['user_arn']
+            response.account_id = info['account_id']
+            response.region = info['region']
+        elif creds.auth_mode == "kubeconfig":
+            response.kubeconfig_contexts = creds.kubeconfig_contexts
+            
+        return response
         
     except Exception as e:
         logger.error(f"Error getting credential status: {e}")
@@ -174,10 +444,10 @@ async def get_credential_status(session_id: str = Depends(get_session_id)):
         )
 
 
-@router.delete("/aws")
+@router.delete("/")
 async def delete_credentials(session_id: str = Depends(get_session_id)):
     """
-    Delete stored AWS credentials.
+    Delete stored credentials (AWS or kubeconfig).
     
     Args:
         session_id: Session ID from header

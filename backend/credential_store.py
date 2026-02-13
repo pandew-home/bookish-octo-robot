@@ -12,15 +12,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class StoredCredentials:
-    """AWS credentials with metadata."""
-    access_key: str
-    secret_key: str
-    session_token: str
-    region: str
-    user_arn: str
-    account_id: str
+    """Credentials with metadata (supports both AWS and kubeconfig auth)."""
+    # Auth mode: "aws" or "kubeconfig"
+    auth_mode: str
     expires_at: datetime
     created_at: datetime
+    
+    # AWS-specific fields (optional)
+    access_key: Optional[str] = None
+    secret_key: Optional[str] = None
+    session_token: Optional[str] = None
+    region: Optional[str] = None
+    user_arn: Optional[str] = None
+    account_id: Optional[str] = None
+    
+    # Kubeconfig-specific fields (optional)
+    kubeconfig_path: Optional[str] = None
+    kubeconfig_content: Optional[str] = None  # Raw YAML content for streaming auth
+    kubeconfig_contexts: Optional[Dict[str, str]] = None  # context_name -> cluster_name
+    selected_context: Optional[str] = None  # User-selected context
 
     def is_expiring_soon(self, threshold_seconds: int = 600) -> bool:
         """Check if credentials expire within the given threshold."""
