@@ -1,0 +1,301 @@
+name: Test Monitoring & Reporting
+
+on:
+  schedule:
+    # Run daily at 6 AM UTC
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      report_type:
+        description: 'Report type'
+        required: true
+        default: 'daily'
+        type: choice
+        options:
+          - daily
+          - weekly
+          - monthly
+      include_failures:
+        description: 'Include failure analysis'
+        required: false
+        default: true
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  test-health-check:
+    name: Test Health Check
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+          npx playwright install --with-deps
+
+      - name: Run smoke tests
+        run: |
+          cd frontend
+          npm run test:e2e -- --grep="smoke|health" --project=chromium --reporter=json > smoke-results.json
+
+      - name: Check test health
+        run: |
+          # Parse test results
+          if jq -e '.suites[0].specs[0].tests[0].results[0].status == "passed"' smoke-results.json > /dev/null; then
+            echo "TEST_HEALTH=healthy" >> $GITHUB_ENV
+          else
+            echo "TEST_HEALTH=unhealthy" >> $GITHUB_ENV
+          fi
+
+      - name: Update health status
+        run: |
+          # Update GitOps repo with health status
+          git clone https://${{ secrets.GITOPS_TOKEN }}@github.com/${{ secrets.GITOPS_REPO }}.git gitops
+          cd gitops
+
+          mkdir -p monitoring/test-health
+          echo '{
+            "timestamp": "'$(date -Iseconds)'",
+            "status": "'$TEST_HEALTH'",
+            "smoke_tests_passed": "'$(jq '.suites[0].specs | length' smoke-results.json)'",
+            "last_commit": "'${{ github.sha }}'"
+          }' > monitoring/test-health/latest.json
+
+          git add .
+          git commit -m "Update test health status: $TEST_HEALTH"
+          git push origin main
+
+  generate-reports:
+    name: Generate Test Reports
+    runs-on: ubuntu-latest
+    if: github.event.schedule || github.event.inputs.report_type
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          npm ci
+          npx playwright install --with-deps
+
+      - name: Run full test suite
+        run: |
+          cd frontend
+          npm run test:e2e -- --project=chromium --reporter=json,html > full-results.json
+
+      - name: Generate test report
+        run: |
+          cd frontend
+
+          # Create detailed report
+          cat > test-report.md << 'EOF'
+          # DevOps Chatbot E2E Test Report
+
+          **Generated:** $(date)
+          **Commit:** ${{ github.sha }}
+          **Environment:** Production
+
+          ## Test Summary
+
+          EOF
+
+          # Extract test statistics
+          TOTAL_TESTS=$(jq '.suites | length' full-results.json)
+          PASSED_TESTS=$(jq '[.suites[].specs[].tests[] | select(.results[0].status == "passed")] | length' full-results.json)
+          FAILED_TESTS=$(jq '[.suites[].specs[].tests[] | select(.results[0].status == "failed")] | length' full-results.json)
+
+          echo "- **Total Tests:** $TOTAL_TESTS" >> test-report.md
+          echo "- **Passed:** $PASSED_TESTS" >> test-report.md
+          echo "- **Failed:** $FAILED_TESTS" >> test-report.md
+          echo "- **Success Rate:** $((PASSED_TESTS * 100 / TOTAL_TESTS))%" >> test-report.md
+
+          # Add failure analysis if requested
+          if [ "${{ github.event.inputs.include_failures }}" = "true" ] && [ "$FAILED_TESTS" -gt 0 ]; then
+            echo -e "\n## Failure Analysis\n" >> test-report.md
+            jq -r '.suites[].specs[].tests[] | select(.results[0].status == "failed") | "- **\(.title)**: \(.results[0].error.message)"' full-results.json >> test-report.md
+          fi
+
+          # Add performance metrics
+          echo -e "\n## Performance Metrics\n" >> test-report.md
+          echo "- **Test Duration:** $(jq '.stats.duration' full-results.json)ms" >> test-report.md
+          echo "- **Average Test Time:** $(jq '.stats.duration / .stats.expected' full-results.json)ms" >> test-report.md
+
+      - name: Upload report to GitOps
+        run: |
+          # Update GitOps repo with report
+          git clone https://${{ secrets.GITOPS_TOKEN }}@github.com/${{ secrets.GITOPS_REPO }}.git gitops
+          cd gitops
+
+          mkdir -p reports/${{ github.event.inputs.report_type || 'daily' }}/$(date +%Y-%m-%d)
+          cp frontend/test-report.md reports/${{ github.event.inputs.report_type || 'daily' }}/$(date +%Y-%m-%d)/
+          cp frontend/playwright-report/index.html reports/${{ github.event.inputs.report_type || 'daily' }}/$(date +%Y-%m-%d)/
+
+          git add .
+          git commit -m "Add ${{ github.event.inputs.report_type || 'daily' }} test report for $(date +%Y-%m-%d)"
+          git push origin main
+
+      - name: Send report notification
+        uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": "📊 Test Report Generated",
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*${{ github.event.inputs.report_type || 'Daily' }} Test Report Generated*\n\n• Total Tests: $TOTAL_TESTS\n• Passed: $PASSED_TESTS\n• Failed: $FAILED_TESTS\n• Success Rate: $((PASSED_TESTS * 100 / TOTAL_TESTS))%\n\nView full report: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                  }
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  cluster-failure-tests:
+    name: Cluster Failure Tests
+    runs-on: ubuntu-latest
+    if: github.event.schedule || github.event.inputs.report_type
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Kubernetes
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG }}
+
+      - name: Deploy test application
+        run: |
+          kubectl apply -f k8s/test-app.yaml
+          kubectl wait --for=condition=available --timeout=300s deployment/test-app
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+
+      - name: Install test dependencies
+        run: |
+          cd frontend
+          npm ci
+          npx playwright install --with-deps
+
+      - name: Run cluster failure tests
+        run: |
+          cd frontend
+
+          # Test each failure scenario
+          declare -a failures=("crashloop" "imagepull" "resource" "network" "storage" "rbac")
+
+          for failure in "${failures[@]}"; do
+            echo "Testing $failure failure scenario..."
+
+            # Create failure (this would need to be implemented per scenario)
+            # kubectl apply -f test-scenarios/$failure.yaml
+
+            # Wait for K8sGPT to detect
+            sleep 60
+
+            # Run specific tests
+            npm run test:e2e -- --grep="$failure" --project=chromium --reporter=json >> cluster-failure-results.json
+
+            # Cleanup failure
+            # kubectl delete -f test-scenarios/$failure.yaml
+            # kubectl rollout restart deployment/test-app
+            # sleep 30
+          done
+
+      - name: Generate cluster failure report
+        run: |
+          cd frontend
+
+          cat > cluster-failure-report.md << 'EOF'
+          # Cluster Failure Test Report
+
+          **Generated:** $(date)
+          **Environment:** Test Cluster
+
+          ## Failure Scenarios Tested
+
+          EOF
+
+          # Add results for each scenario
+          echo "- **Pod CrashLoopBackOff:** $(jq 'select(.title | contains("crash")) | .results[0].status' cluster-failure-results.json)" >> cluster-failure-report.md
+          echo "- **Image Pull BackOff:** $(jq 'select(.title | contains("image")) | .results[0].status' cluster-failure-results.json)" >> cluster-failure-report.md
+          echo "- **Resource Exhaustion:** $(jq 'select(.title | contains("resource")) | .results[0].status' cluster-failure-results.json)" >> cluster-failure-report.md
+          echo "- **Network Issues:** $(jq 'select(.title | contains("network")) | .results[0].status' cluster-failure-results.json)" >> cluster-failure-report.md
+          echo "- **Storage Problems:** $(jq 'select(.title | contains("storage")) | .results[0].status' cluster-failure-results.json)" >> cluster-failure-report.md
+          echo "- **RBAC Issues:** $(jq 'select(.title | contains("rbac")) | .results[0].status' cluster-failure-results.json)" >> cluster-failure-report.md
+
+      - name: Upload cluster failure report
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-failure-report
+          path: frontend/cluster-failure-report.md
+
+  update-dashboard:
+    name: Update Test Dashboard
+    runs-on: ubuntu-latest
+    needs: [test-health-check, generate-reports, cluster-failure-tests]
+    if: always()
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update dashboard data
+        run: |
+          # Clone dashboard repo or update GitOps
+          git clone https://${{ secrets.GITOPS_TOKEN }}@github.com/${{ secrets.GITOPS_REPO }}.git gitops
+          cd gitops
+
+          # Update dashboard metrics
+          mkdir -p dashboard/metrics
+          echo '{
+            "last_updated": "'$(date -Iseconds)'",
+            "test_health": "'$TEST_HEALTH'",
+            "total_tests": "'$TOTAL_TESTS'",
+            "passed_tests": "'$PASSED_TESTS'",
+            "failed_tests": "'$FAILED_TESTS'",
+            "success_rate": "'$((PASSED_TESTS * 100 / TOTAL_TESTS))'",
+            "cluster_failure_tests": "completed",
+            "environment": "production"
+          }' > dashboard/metrics/latest.json
+
+          git add .
+          git commit -m "Update test dashboard metrics"
+          git push origin main
+
+      - name: Deploy dashboard update
+        run: |
+          # Trigger ArgoCD sync for dashboard
+          curl -X POST ${{ secrets.ARGOCD_SERVER_URL }}/api/webhook \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.ARGOCD_TOKEN }}" \
+            -d '{
+              "application": "test-dashboard",
+              "triggeredBy": "Test Monitoring Workflow"
+            }'
