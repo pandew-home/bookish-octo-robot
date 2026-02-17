@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Box,
   Button,
@@ -50,6 +50,14 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
   const [errors, setErrors] = useState<CredentialValidationErrors>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const input = fileInputRef.current;
+    if (!input) return;
+    input.removeAttribute('webkitdirectory');
+    input.removeAttribute('directory');
+    input.removeAttribute('mozdirectory');
+  }, [authMode, kubeconfigStep]);
 
   const handleAuthModeChange = (_event: React.SyntheticEvent, newMode: AuthMode) => {
     setAuthMode(newMode);
@@ -383,7 +391,8 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
                     {/* File Upload */}
                     <input
                       type="file"
-                      accept=".kubeconfig,.yaml,.yml,.config"
+                      accept="*/*"
+                      multiple={false}
                       style={{ display: 'none' }}
                       ref={fileInputRef}
                       onChange={handleFileUpload}

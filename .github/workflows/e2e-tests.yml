@@ -49,7 +49,7 @@ jobs:
     services:
       # Backend API for testing
       backend:
-        image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:latest
+        image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
         ports:
           - 8000:8000
         env:

@@ -1,0 +1,17 @@
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: example-pod-crashloop-test
+  namespace: k8sgpt-operator-system
+  labels:
+    app: test
+spec:
+  kind: Pod
+  name: nginx-broken
+  error:
+    - text: "Back-off restarting failed container nginx-broken. Container exited with code 1."
+  details: "Container nginx-broken is crash looping. Review logs with: kubectl logs nginx-broken -n default"
+  backend: openai
+  parentObject: "Pod"
+  autoRemediationStatus:
+    phase: 0

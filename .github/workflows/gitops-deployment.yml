@@ -33,8 +33,7 @@ jobs:
     name: Build and Test
     runs-on: ubuntu-latest
     outputs:
-      backend-image: ${{ steps.build-backend.outputs.image }}
-      frontend-image: ${{ steps.build-frontend.outputs.image }}
+      image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
       test-results: ${{ steps.test-results.outputs.results }}
 
     steps:
@@ -51,34 +50,21 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build backend image
-        id: build-backend
+      - name: Build image
+        id: build
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
           tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:latest
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
-
-      - name: Build frontend image
-        id: build-frontend
-        uses: docker/build-push-action@v5
-        with:
-          context: ./frontend
-          file: ./frontend/Dockerfile
-          push: true
-          tags: |
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.sha }}
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:latest
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
 
       - name: Run unit tests
         run: |
@@ -106,7 +92,7 @@ jobs:
             -e ENVIRONMENT=test \
             -e LLM_API_KEY=${{ secrets.LLM_API_KEY }} \
             -p 8000:8000 \
-            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
 
           # Wait for backend
           timeout 300 bash -c 'until curl -f http://localhost:8000/api/health/ready; do sleep 5; done'
@@ -142,8 +128,8 @@ jobs:
           cd gitops
 
           # Update staging manifests
-          sed -i 's|image: .*/backend:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.sha }}|' k8s/staging/backend-deployment.yaml
-          sed -i 's|image: .*/frontend:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.sha }}|' k8s/staging/frontend-deployment.yaml
+          sed -i 's|image: .*|image: ${{ needs.build-and-test.outputs.image }}|' k8s/staging/backend-deployment.yaml
+          sed -i 's|image: .*|image: ${{ needs.build-and-test.outputs.image }}|' k8s/staging/frontend-deployment.yaml
 
           # Update test status
           mkdir -p test-results/staging/${{ github.sha }}
@@ -152,10 +138,7 @@ jobs:
             "environment": "staging",
             "timestamp": "'$(date -Iseconds)'",
             "commit": "${{ github.sha }}",
-            "images": {
-              "backend": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.sha }}",
-              "frontend": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.sha }}"
-            },
+            "image": "${{ needs.build-and-test.outputs.image }}",
             "test_results": "${{ needs.build-and-test.outputs.test-results }}"
           }' > test-results/staging/${{ github.sha }}/deployment.json
 
@@ -212,8 +195,8 @@ jobs:
           cd gitops
 
           # Update production manifests
-          sed -i 's|image: .*/backend:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.sha }}|' k8s/production/backend-deployment.yaml
-          sed -i 's|image: .*/frontend:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.sha }}|' k8s/production/frontend-deployment.yaml
+          sed -i 's|image: .*|image: ${{ needs.build-and-test.outputs.image }}|' k8s/production/backend-deployment.yaml
+          sed -i 's|image: .*|image: ${{ needs.build-and-test.outputs.image }}|' k8s/production/frontend-deployment.yaml
 
           # Update test status
           mkdir -p test-results/production/${{ github.sha }}
@@ -222,10 +205,7 @@ jobs:
             "environment": "production",
             "timestamp": "'$(date -Iseconds)'",
             "commit": "${{ github.sha }}",
-            "images": {
-              "backend": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/backend:${{ github.sha }}",
-              "frontend": "${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}/frontend:${{ github.sha }}"
-            },
+            "image": "${{ needs.build-and-test.outputs.image }}",
             "test_results": "${{ needs.build-and-test.outputs.test-results }}",
             "staging_validation": "passed"
           }' > test-results/production/${{ github.sha }}/deployment.json
