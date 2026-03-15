@@ -43,7 +43,7 @@ spec:
         metrics:
           enabled: true
           serviceMonitor:
-            enabled: false  # Enable if Prometheus Operator is installed
+            enabled: true  # kube-prometheus-stack provides Prometheus Operator
   
   destination:
     server: https://kubernetes.default.svc

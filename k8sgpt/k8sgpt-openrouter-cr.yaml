@@ -5,6 +5,13 @@ metadata:
   namespace: k8sgpt-operator-system
 spec:
   version: v0.4.27
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
   ai:
     enabled: true
     backend: openai
@@ -16,4 +23,17 @@ spec:
     # This enables the masking of sensitive cluster data
     anonymized: true
   analysis:
-    interval: 5m
+    interval: 2m
+  noCache: false
+  # Filters: list of analyzer kinds to run. Empty = run all built-in analyzers.
+  # Explicitly list to ensure HorizontalPodAutoscaler and Node are included.
+  filters:
+    - Pod
+    - Deployment
+    - ReplicaSet
+    - StatefulSet
+    - Node
+    - HorizontalPodAutoscaler
+    - PersistentVolumeClaim
+    - Service
+    - Ingress

@@ -1,0 +1,63 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: k8sgpt-result-cleanup
+  namespace: monitoring
+spec:
+  # Run every hour
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: alloy-k8sgpt
+          restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65534
+          containers:
+            - name: cleanup
+              image: bitnami/kubectl:latest
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "100m"
+                  memory: "128Mi"
+              env:
+                - name: RETENTION_HOURS
+                  value: "24"
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -e
+                  CUTOFF=$(date -u -d "${RETENTION_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-${RETENTION_HOURS}H +%Y-%m-%dT%H:%M:%SZ)
+                  echo "Deleting K8sGPT Results older than ${RETENTION_HOURS}h (before ${CUTOFF})"
+
+                  kubectl get results.core.k8sgpt.ai --all-namespaces -o json | \
+                  kubectl version --client -o json > /dev/null
+
+                  DELETED=0
+                  while IFS= read -r line; do
+                    NAME=$(echo "$line" | cut -d'|' -f1)
+                    NS=$(echo "$line" | cut -d'|' -f2)
+                    CREATED=$(echo "$line" | cut -d'|' -f3)
+                    if [ "$CREATED" \< "$CUTOFF" ]; then
+                      echo "Deleting Result ${NS}/${NAME} (created ${CREATED})"
+                      kubectl delete result.core.k8sgpt.ai "$NAME" -n "$NS" --ignore-not-found && DELETED=$((DELETED + 1))
+                    fi
+                  done < <(kubectl get results.core.k8sgpt.ai --all-namespaces \
+                    -o custom-columns='NAME:.metadata.name,NS:.metadata.namespace,CREATED:.metadata.creationTimestamp' \
+                    --no-headers | awk '{print $1"|"$2"|"$3}')
+
+                  echo "Cleanup complete. Deleted ${DELETED} Result(s)."

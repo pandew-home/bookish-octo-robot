@@ -1,0 +1,16 @@
+spec:
+  template:
+    spec:
+      containers:
+        - name: alloy
+          env:
+            - name: CLUSTER_NAME
+              value: docker-desktop
+            - name: LOKI_URL
+              value: http://loki.monitoring.svc:3100/loki/api/v1/push
+            - name: PROMETHEUS_URL
+              value: http://kube-prometheus-stack-prometheus.monitoring.svc:9090/api/v1/write
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true

@@ -1,94 +1,100 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: alloy-k8sgpt-scripts
-  namespace: monitoring  # Adjust to your Alloy namespace
-  labels:
-    app: alloy
-    component: k8sgpt-integration
+  name: alloy
+  namespace: monitoring
 data:
-  k8sgpt-cleanup.sh: |
-    #!/bin/bash
-    # K8sGPT Result CRD Cleanup Script for Grafana Alloy
-    # This script is called by Alloy's prometheus.exporter.script component
-    # It deletes Result CRDs older than the retention period and exports metrics
+  config.alloy: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
 
-    set -e
+    // ============================================================================
+    // Original Alloy Discovery Config
+    // ============================================================================
 
-    # Configuration
-    RETENTION_HOURS=${RETENTION_HOURS:-24}
-    CUTOFF_TIME=$(date -u -d "${RETENTION_HOURS} hours ago" '+%Y-%m-%dT%H:%M:%SZ')
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
 
-    # Initialize counters
-    TOTAL=0
-    DELETED=0
-    ERRORS=0
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
 
-    # Fetch all K8sGPT Result CRDs
-    RESULTS=$(kubectl get results.core.k8sgpt.ai --all-namespaces -o json 2>/dev/null || echo '{"items":[]}')
+    discovery.kubernetes "services" {
+      role = "service"
+    }
 
-    # Count total results
-    TOTAL=$(echo "$RESULTS" | jq '.items | length')
+    discovery.kubernetes "endpoints" {
+      role = "endpoints"
+    }
 
-    # Delete old results
-    echo "$RESULTS" | jq -r --arg cutoff "$CUTOFF_TIME" \
-      '.items[] | select(.metadata.creationTimestamp < $cutoff) | "\(.metadata.namespace) \(.metadata.name)"' | \
-    while read -r namespace name; do
-      if [ -n "$namespace" ] && [ -n "$name" ]; then
-        if kubectl delete result "$name" -n "$namespace" --ignore-not-found=true 2>/dev/null; then
-          DELETED=$((DELETED + 1))
-        else
-          ERRORS=$((ERRORS + 1))
-        fi
-      fi
-    done
+    discovery.kubernetes "endpointslices" {
+      role = "endpointslice"
+    }
 
-    # Calculate remaining results
-    REMAINING=$((TOTAL - DELETED))
+    discovery.kubernetes "ingresses" {
+      role = "ingress"
+    }
 
-    # Export Prometheus metrics
-    cat <<EOF
-    # HELP k8sgpt_results_total Total number of K8sGPT Result CRDs found
-    # TYPE k8sgpt_results_total gauge
-    k8sgpt_results_total $TOTAL
+    // ============================================================================
+    // K8sGPT Integration - Watch operator pod logs and send to Loki
+    // ============================================================================
 
-    # HELP k8sgpt_results_deleted_total Total number of K8sGPT Result CRDs deleted
-    # TYPE k8sgpt_results_deleted_total counter
-    k8sgpt_results_deleted_total $DELETED
+    // Discover pods in k8sgpt-operator-system namespace
+    discovery.kubernetes "k8sgpt_pods" {
+      role = "pod"
+      namespaces {
+        names = ["k8sgpt-operator-system"]
+      }
+    }
 
-    # HELP k8sgpt_results_remaining Total number of K8sGPT Result CRDs remaining
-    # TYPE k8sgpt_results_remaining gauge
-    k8sgpt_results_remaining $REMAINING
+    // Collect logs from k8sgpt-operator pods
+    loki.source.kubernetes "k8sgpt_results" {
+      targets    = discovery.kubernetes.k8sgpt_pods.targets
+      forward_to = [loki.process.k8sgpt_results.receiver]
+    }
 
-    # HELP k8sgpt_cleanup_errors_total Total number of errors during cleanup
-    # TYPE k8sgpt_cleanup_errors_total counter
-    k8sgpt_cleanup_errors_total $ERRORS
+    // Process and structure K8sGPT result logs
+    loki.process "k8sgpt_results" {
+      forward_to = [loki.write.default.receiver]
 
-    # HELP k8sgpt_cleanup_last_run_timestamp_seconds Timestamp of last cleanup run
-    # TYPE k8sgpt_cleanup_last_run_timestamp_seconds gauge
-    k8sgpt_cleanup_last_run_timestamp_seconds $(date +%s)
+      // Add static label so logs are queryable by source
+      stage.static_labels {
+        values = {
+          source = "k8sgpt",
+        }
+      }
 
-    # HELP k8sgpt_cleanup_retention_hours Configured retention period in hours
-    # TYPE k8sgpt_cleanup_retention_hours gauge
-    k8sgpt_cleanup_retention_hours $RETENTION_HOURS
-    EOF
+      // Attempt to extract fields from JSON log lines
+      stage.json {
+        expressions = {
+          kind          = "kind",
+          error_text    = "spec.error[0].text",
+          details       = "spec.details",
+          parent_object = "spec.parentObject",
+          severity      = "spec.error[0].severity",
+        }
+      }
 
-    # Log to stderr for Alloy logs
-    echo "[$(date -u +%Y-%m-%dT%H:%M:%SZ)] K8sGPT cleanup: Total=$TOTAL, Deleted=$DELETED, Remaining=$REMAINING, Errors=$ERRORS" >&2
+      // Promote extracted fields as labels if non-empty
+      stage.labels {
+        values = {
+          kind     = "kind",
+          severity = "severity",
+        }
+      }
+    }
 
-    exit 0
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: alloy-k8sgpt-config
-  namespace: monitoring  # Adjust to your Alloy namespace
-  labels:
-    app: alloy
-    component: k8sgpt-integration
-data:
-  # Add the Alloy configuration from alloy-k8sgpt-integration.yaml here
-  # Or include it in your main Alloy ConfigMap
-  k8sgpt-integration.alloy: |
-    # See alloy-k8sgpt-integration.yaml for the full configuration
-    # This is a placeholder - copy the content from that file
+    // Write to Loki
+    loki.write "default" {
+      endpoint {
+        url = env("LOKI_URL")
+      }
+
+      external_labels = {
+        cluster = env("CLUSTER_NAME"),
+        source  = "k8sgpt",
+      }
+    }

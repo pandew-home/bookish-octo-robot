@@ -1,0 +1,18 @@
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: Result
+metadata:
+  name: hpa-scaling-limited-test
+  namespace: k8sgpt-operator-system
+  labels:
+    app: test
+    analyzer: HpaAnalyzer
+spec:
+  kind: HorizontalPodAutoscaler
+  name: frontend-hpa
+  error:
+    - text: "HPA frontend-hpa is ScalingLimited: desired replica count (10) exceeds maxReplicas (5). Increase spec.maxReplicas or reduce load."
+  details: "HPA frontend-hpa in namespace default is blocked at maxReplicas=5. Current CPU utilization is 320% of target. Consider increasing maxReplicas or reviewing resource requests."
+  backend: openrouter
+  parentObject: "HorizontalPodAutoscaler/default/frontend-hpa"
+  autoRemediationStatus:
+    phase: 0
