@@ -10,18 +10,89 @@ data:
     {
       "title": "K8sGPT Results",
       "uid": "k8sgpt-results",
-      "tags": ["k8sgpt", "scaling"],
+      "tags": [
+        "k8sgpt",
+        "scaling"
+      ],
       "schemaVersion": 38,
       "version": 1,
       "refresh": "30s",
-      "time": { "from": "now-1h", "to": "now" },
+      "time": {
+        "from": "now-1h",
+        "to": "now"
+      },
+      "templating": {
+        "list": [
+          {
+            "name": "severity",
+            "label": "Error Severity",
+            "description": "Filter the Error Conditions panel by severity keyword",
+            "type": "custom",
+            "query": "error,warning,critical,failed,timeout,backoff",
+            "current": {
+              "value": "error",
+              "text": "Error"
+            },
+            "options": [
+              { "value": "error",    "text": "Error" },
+              { "value": "warning",  "text": "Warning" },
+              { "value": "critical", "text": "Critical" },
+              { "value": "failed",   "text": "Failed" },
+              { "value": "timeout",  "text": "Timeout" },
+              { "value": "backoff",  "text": "Backoff" }
+            ],
+            "hide": 0,
+            "includeAll": false,
+            "multi": false,
+            "refresh": 0,
+            "sort": 0
+          },
+          {
+            "name": "kind",
+            "label": "Resource Kind",
+            "description": "Filter findings by the Kubernetes resource type K8sGPT analysed",
+            "type": "custom",
+            "query": "Pod,Deployment,ReplicaSet,StatefulSet,Node,HorizontalPodAutoscaler,PersistentVolumeClaim,Service,Ingress",
+            "current": {
+              "value": "Pod",
+              "text": "Pod"
+            },
+            "options": [
+              { "value": "Pod",                    "text": "Pod" },
+              { "value": "Deployment",             "text": "Deployment" },
+              { "value": "ReplicaSet",             "text": "ReplicaSet" },
+              { "value": "StatefulSet",            "text": "StatefulSet" },
+              { "value": "Node",                   "text": "Node" },
+              { "value": "HorizontalPodAutoscaler","text": "HorizontalPodAutoscaler" },
+              { "value": "PersistentVolumeClaim",  "text": "PersistentVolumeClaim" },
+              { "value": "Service",                "text": "Service" },
+              { "value": "Ingress",                "text": "Ingress" }
+            ],
+            "hide": 0,
+            "includeAll": false,
+            "multi": false,
+            "refresh": 0,
+            "sort": 0
+          }
+        ]
+      },
       "panels": [
+
         {
           "id": 1,
           "title": "K8sGPT Operator Logs",
+          "description": "Live log stream from the K8sGPT operator, tagged source=k8sgpt by Alloy",
           "type": "logs",
-          "gridPos": { "x": 0, "y": 0, "w": 24, "h": 8 },
-          "datasource": { "type": "loki", "uid": "loki" },
+          "gridPos": {
+            "x": 0,
+            "y": 0,
+            "w": 24,
+            "h": 8
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "options": {
             "dedupStrategy": "none",
             "showLabels": true,
@@ -31,40 +102,70 @@ data:
           },
           "targets": [
             {
-              "datasource": { "type": "loki", "uid": "loki" },
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
               "expr": "{source=\"k8sgpt\"}",
               "legendFormat": "",
               "queryType": "range"
             }
           ]
         },
+
         {
           "id": 2,
           "title": "K8sGPT Analysis Activity (requests/min)",
+          "description": "Rate of analysis cycles completed by the K8sGPT operator over time",
           "type": "timeseries",
-          "gridPos": { "x": 0, "y": 8, "w": 12, "h": 8 },
-          "datasource": { "type": "loki", "uid": "loki" },
+          "gridPos": {
+            "x": 0,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "fieldConfig": {
             "defaults": {
-              "color": { "mode": "palette-classic" },
-              "custom": { "lineWidth": 2 }
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "lineWidth": 2
+              }
             }
           },
           "targets": [
             {
-              "datasource": { "type": "loki", "uid": "loki" },
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
               "expr": "sum(count_over_time({source=\"k8sgpt\"} |= \"request completed\" [1m]))",
               "legendFormat": "Analyses/min",
               "queryType": "range"
             }
           ]
         },
+
         {
           "id": 3,
           "title": "HPA & Scaling Issues",
+          "description": "Logs filtered for HorizontalPodAutoscaler, scaling, and replica-related findings",
           "type": "logs",
-          "gridPos": { "x": 12, "y": 8, "w": 12, "h": 8 },
-          "datasource": { "type": "loki", "uid": "loki" },
+          "gridPos": {
+            "x": 12,
+            "y": 8,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "options": {
             "dedupStrategy": "none",
             "showLabels": true,
@@ -74,19 +175,32 @@ data:
           },
           "targets": [
             {
-              "datasource": { "type": "loki", "uid": "loki" },
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
               "expr": "{source=\"k8sgpt\"} |= \"HorizontalPodAutoscaler\" or {source=\"k8sgpt\"} |= \"scaling\" or {source=\"k8sgpt\"} |= \"replica\"",
               "legendFormat": "",
               "queryType": "range"
             }
           ]
         },
+
         {
-          "id": 4,
-          "title": "All K8sGPT Findings (last 1h)",
+          "id": 5,
+          "title": "Error Conditions",
+          "description": "Logs filtered by the Error Severity variable — select error, warning, critical, failed, timeout, or backoff from the dropdown above",
           "type": "logs",
-          "gridPos": { "x": 0, "y": 16, "w": 24, "h": 10 },
-          "datasource": { "type": "loki", "uid": "loki" },
+          "gridPos": {
+            "x": 0,
+            "y": 26,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
           "options": {
             "dedupStrategy": "signature",
             "showLabels": true,
@@ -96,12 +210,86 @@ data:
           },
           "targets": [
             {
-              "datasource": { "type": "loki", "uid": "loki" },
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{source=\"k8sgpt\"} |~ \"(?i)${severity}\"",
+              "legendFormat": "",
+              "queryType": "range"
+            }
+          ]
+        },
+
+        {
+          "id": 6,
+          "title": "Findings by Resource Kind",
+          "description": "Logs filtered by the Resource Kind variable — select Pod, Deployment, HPA, etc. to see findings for that resource type only",
+          "type": "logs",
+          "gridPos": {
+            "x": 12,
+            "y": 26,
+            "w": 12,
+            "h": 8
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "options": {
+            "dedupStrategy": "none",
+            "showLabels": true,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{source=\"k8sgpt\"} |= \"${kind}\"",
+              "legendFormat": "",
+              "queryType": "range"
+            }
+          ]
+        },
+
+        {
+          "id": 4,
+          "title": "All K8sGPT Findings (last 1h)",
+          "description": "Full log view for the k8sgpt-operator-system namespace — deduplicated by signature",
+          "type": "logs",
+          "gridPos": {
+            "x": 0,
+            "y": 34,
+            "w": 24,
+            "h": 10
+          },
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "options": {
+            "dedupStrategy": "signature",
+            "showLabels": true,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
               "expr": "{namespace=\"k8sgpt-operator-system\"}",
               "legendFormat": "",
               "queryType": "range"
             }
           ]
         }
+
       ]
     }

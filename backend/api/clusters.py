@@ -145,15 +145,17 @@ def _get_kubeconfig_k8s_clients(creds, cluster: Dict[str, Any]) -> Dict[str, Any
         Dictionary of K8s API clients
     """
     from kubernetes import client as k8s_client
-    
+    from local_k8s_auth import get_k8s_client_from_content
+
     context_name = cluster.get('context_name', cluster['name'])
-    
-    # Load kubeconfig and create client
-    core_v1 = get_local_k8s_client(creds.kubeconfig_path, context_name)
-    
-    # Create additional clients using the same config
-    from kubernetes import config
-    config.load_kube_config(config_file=creds.kubeconfig_path, context=context_name)
+
+    # Use kubeconfig content (from upload auth) or path (from file auth)
+    if creds.kubeconfig_content:
+        core_v1 = get_k8s_client_from_content(creds.kubeconfig_content, context_name)
+    else:
+        core_v1 = get_local_k8s_client(creds.kubeconfig_path, context_name)
+        from kubernetes import config
+        config.load_kube_config(config_file=creds.kubeconfig_path, context=context_name)
     
     return {
         'core_v1': core_v1,

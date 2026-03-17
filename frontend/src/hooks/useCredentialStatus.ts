@@ -31,9 +31,11 @@ export const useCredentialStatus = (): CredentialStatusState => {
 
   const fetchStatus = useCallback(async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/api/credentials/aws/status`, {
+      const sessionId = localStorage.getItem('sessionId');
+      const response = await fetch(`${API_BASE_URL}/api/credentials/status`, {
         method: 'GET',
         credentials: 'include',
+        headers: sessionId ? { 'x-session-id': sessionId } : {},
       });
 
       if (!response.ok) {

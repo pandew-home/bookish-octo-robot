@@ -19,6 +19,17 @@ const apiClient: AxiosInstance = axios.create({
 });
 
 /**
+ * Request interceptor — attach session ID from localStorage as x-session-id header
+ */
+apiClient.interceptors.request.use((config) => {
+  const sessionId = localStorage.getItem('sessionId');
+  if (sessionId) {
+    config.headers['x-session-id'] = sessionId;
+  }
+  return config;
+});
+
+/**
  * Response interceptor for handling common errors
  */
 apiClient.interceptors.response.use(
@@ -150,7 +161,7 @@ export const clusterApi = {
    */
   async getClusters(): Promise<any[]> {
     const response = await apiClient.get('/clusters');
-    return response.data;
+    return response.data.clusters ?? response.data;
   },
 
   /**
