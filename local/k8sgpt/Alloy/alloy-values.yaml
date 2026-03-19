@@ -1,0 +1,84 @@
+alloy:
+  configMap:
+    create: true
+    content: |
+      logging {
+        level  = "info"
+        format = "logfmt"
+      }
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.kubernetes "nodes" {
+        role = "node"
+      }
+
+      discovery.kubernetes "services" {
+        role = "service"
+      }
+
+      // Discover pods in k8sgpt-operator-system namespace
+      discovery.kubernetes "k8sgpt_pods" {
+        role = "pod"
+        namespaces {
+          names = ["k8sgpt-operator-system"]
+        }
+      }
+
+      // Collect logs from k8sgpt-operator pods
+      loki.source.kubernetes "k8sgpt_results" {
+        targets    = discovery.kubernetes.k8sgpt_pods.targets
+        forward_to = [loki.process.k8sgpt_results.receiver]
+      }
+
+      // Process and structure K8sGPT result logs
+      loki.process "k8sgpt_results" {
+        forward_to = [loki.write.default.receiver]
+
+        stage.static_labels {
+          values = {
+            source = "k8sgpt",
+          }
+        }
+
+        stage.json {
+          expressions = {
+            kind          = "kind",
+            error_text    = "spec.error[0].text",
+            details       = "spec.details",
+            parent_object = "spec.parentObject",
+            severity      = "spec.error[0].severity",
+          }
+        }
+
+        stage.labels {
+          values = {
+            kind     = "kind",
+            severity = "severity",
+          }
+        }
+      }
+
+      // Write to Loki
+      loki.write "default" {
+        endpoint {
+          url = "http://loki.loki.svc:3100/loki/api/v1/push"
+        }
+
+        external_labels = {
+          cluster = "bookish-octo-robot",
+          source  = "k8sgpt",
+        }
+      }
+
+  extraEnv:
+    - name: CLUSTER_NAME
+      value: bookish-octo-robot
+
+serviceAccount:
+  create: true
+
+rbac:
+  create: true

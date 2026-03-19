@@ -1,0 +1,207 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'frontend/**'
+      - 'libs/**'
+      - 'k8s/**'
+      - 'Dockerfile'
+      - 'docker/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch:
+    inputs:
+      skip_deploy:
+        description: 'Build only, skip deploy'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  CLUSTER_NAME: bookish-octo-robot
+  NAMESPACE: devops-chatbot
+
+jobs:
+  build:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ github.sha }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Backend tests
+        run: |
+          cd backend
+          pip install -r requirements.txt
+          pip install -e ../libs/devops-k8s -e ../libs/devops-kb -e ../libs/devops-prompts -e ../libs/devops-rag
+          python -m pytest --tb=short -q
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Frontend tests
+        run: |
+          cd frontend
+          npm ci
+          npm test -- --watchAll=false
+
+  deploy:
+    name: Deploy to bookish-octo
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    if: success() && github.event.inputs.skip_deploy != 'true'
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Civo CLI
+        run: |
+          curl -sL https://github.com/civo/cli/releases/latest/download/civo-linux-amd64.tar.gz | tar xz -C /usr/local/bin/
+          civo version
+
+      - name: Configure Civo + kubectl
+        run: |
+          civo apikey save deploy-key ${{ secrets.CIVO }}
+          civo kubernetes config ${{ env.CLUSTER_NAME }} --save --merge
+          kubectl config use-context ${{ env.CLUSTER_NAME }}
+
+      - name: Verify cluster access
+        run: kubectl get nodes
+
+      - name: Update image tag in manifests
+        run: |
+          sed -i "s|image: .*ghcr.io/.*/bookish-octo-robot:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}|" k8s/deployment.yaml
+          sed -i "s|git-sha: .*|git-sha: \"${{ needs.build.outputs.image_tag }}\"|g" k8s/deployment.yaml
+
+      - name: Create pull secret (if needed)
+        run: |
+          kubectl create secret docker-registry ghcr-pull-secret \
+            --docker-server=ghcr.io \
+            --docker-username=${{ github.actor }} \
+            --docker-password=${{ secrets.GITHUB_TOKEN }} \
+            -n ${{ env.NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy manifests
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/serviceaccount.yaml
+          kubectl apply -f k8s/pvc.yaml
+          kubectl apply -f k8s/deployment.yaml
+          kubectl apply -f k8s/service.yaml
+          kubectl apply -f k8s/pdb.yaml
+          kubectl apply -f k8s/resourcequota.yaml
+
+      - name: Wait for rollout
+        run: |
+          kubectl rollout status deployment/devops-chatbot \
+            -n ${{ env.NAMESPACE }} \
+            --timeout=300s
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n ${{ env.NAMESPACE }}
+          kubectl get svc -n ${{ env.NAMESPACE }}
+
+      - name: Post-deploy health check
+        run: |
+          POD=$(kubectl get pod -n ${{ env.NAMESPACE }} -l app=devops-chatbot -o jsonpath='{.items[0].metadata.name}')
+          kubectl exec -n ${{ env.NAMESPACE }} $POD -- curl -sf http://localhost:8080/api/health || echo "Health check pending (pod may still be starting)"
+
+  smoke-test:
+    name: Post-Deploy Smoke Tests
+    runs-on: ubuntu-latest
+    needs: deploy
+    if: success()
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Civo CLI
+        run: |
+          curl -sL https://github.com/civo/cli/releases/latest/download/civo-linux-amd64.tar.gz | tar xz -C /usr/local/bin/
+
+      - name: Configure Civo + kubectl
+        run: |
+          civo apikey save deploy-key ${{ secrets.CIVO }}
+          civo kubernetes config ${{ env.CLUSTER_NAME }} --save --merge
+          kubectl config use-context ${{ env.CLUSTER_NAME }}
+
+      - name: Port-forward and run health checks
+        run: |
+          kubectl port-forward -n ${{ env.NAMESPACE }} svc/devops-chatbot 8080:80 &
+          PF_PID=$!
+          sleep 5
+
+          # Health endpoints
+          echo "=== Liveness ==="
+          curl -sf http://localhost:8080/api/health | jq .
+
+          echo "=== Readiness ==="
+          curl -sf http://localhost:8080/api/health/ready | jq .
+
+          kill $PF_PID
+
+      - name: Verify K8s resources
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods -n ${{ env.NAMESPACE }} -o wide
+
+          echo "=== Events (last 10min) ==="
+          kubectl get events -n ${{ env.NAMESPACE }} --sort-by='.lastTimestamp' | tail -20
+
+          echo "=== Pod logs (last 50 lines) ==="
+          kubectl logs -n ${{ env.NAMESPACE }} deployment/devops-chatbot --tail=50

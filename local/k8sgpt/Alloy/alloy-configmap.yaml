@@ -1,0 +1,100 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: alloy
+  namespace: monitoring
+data:
+  config.alloy: |
+    logging {
+      level  = "info"
+      format = "logfmt"
+    }
+
+    // ============================================================================
+    // Original Alloy Discovery Config
+    // ============================================================================
+
+    discovery.kubernetes "pods" {
+      role = "pod"
+    }
+
+    discovery.kubernetes "nodes" {
+      role = "node"
+    }
+
+    discovery.kubernetes "services" {
+      role = "service"
+    }
+
+    discovery.kubernetes "endpoints" {
+      role = "endpoints"
+    }
+
+    discovery.kubernetes "endpointslices" {
+      role = "endpointslice"
+    }
+
+    discovery.kubernetes "ingresses" {
+      role = "ingress"
+    }
+
+    // ============================================================================
+    // K8sGPT Integration - Watch operator pod logs and send to Loki
+    // ============================================================================
+
+    // Discover pods in k8sgpt-operator-system namespace
+    discovery.kubernetes "k8sgpt_pods" {
+      role = "pod"
+      namespaces {
+        names = ["k8sgpt-operator-system"]
+      }
+    }
+
+    // Collect logs from k8sgpt-operator pods
+    loki.source.kubernetes "k8sgpt_results" {
+      targets    = discovery.kubernetes.k8sgpt_pods.targets
+      forward_to = [loki.process.k8sgpt_results.receiver]
+    }
+
+    // Process and structure K8sGPT result logs
+    loki.process "k8sgpt_results" {
+      forward_to = [loki.write.default.receiver]
+
+      // Add static label so logs are queryable by source
+      stage.static_labels {
+        values = {
+          source = "k8sgpt",
+        }
+      }
+
+      // Attempt to extract fields from JSON log lines
+      stage.json {
+        expressions = {
+          kind          = "kind",
+          error_text    = "spec.error[0].text",
+          details       = "spec.details",
+          parent_object = "spec.parentObject",
+          severity      = "spec.error[0].severity",
+        }
+      }
+
+      // Promote extracted fields as labels if non-empty
+      stage.labels {
+        values = {
+          kind     = "kind",
+          severity = "severity",
+        }
+      }
+    }
+
+    // Write to Loki
+    loki.write "default" {
+      endpoint {
+        url = env("LOKI_URL")
+      }
+
+      external_labels = {
+        cluster = env("CLUSTER_NAME"),
+        source  = "k8sgpt",
+      }
+    }
