@@ -70,7 +70,7 @@ export const useCredentialStatus = (): CredentialStatusState => {
       }
 
       const mapped: CredentialStatus = {
-        present: data.present !== false,
+        present: data.present === true || (data.status !== undefined && data.status !== 'no_credentials' && data.status !== 'expired'),
         expired,
         account_id: data.account_id,
         user_arn: data.user_arn,

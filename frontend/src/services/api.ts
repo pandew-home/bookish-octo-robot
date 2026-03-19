@@ -120,7 +120,12 @@ export const authApi = {
         context: request.context,
       });
       console.log('[authApi] authKubeconfig response:', response.data);
-      return response.data;
+      // Backend returns snake_case session_id; normalize to camelCase
+      const data = response.data;
+      return {
+        success: data.success,
+        sessionId: data.session_id ?? data.sessionId,
+      };
     } catch (error: any) {
       console.error('[authApi] authKubeconfig error:', error);
       console.error('[authApi] Error response:', error.response);
@@ -207,7 +212,8 @@ export const resultsApi = {
     const url = queryString ? `/results?${queryString}` : '/results';
     
     const response = await apiClient.get(url);
-    return response.data;
+    // Backend returns { results: [...], count: N } — extract the array
+    return response.data.results ?? response.data;
   },
 
   /**

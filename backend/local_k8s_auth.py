@@ -112,18 +112,20 @@ def get_k8s_client_from_content(content: str, context_name: Optional[str] = None
     """
     Create a Kubernetes API client from kubeconfig content.
     
-    This writes the content to a temporary file and loads it, since the Kubernetes
-    client library requires a file path.
+    This filters the kubeconfig to only include the selected context, its cluster,
+    and its user before writing to a temporary file. This prevents the Kubernetes
+    client from validating unused contexts that may have invalid paths.
     
     Args:
         content: Raw YAML content of kubeconfig
-        context_name: Optional context name to use
+        context_name: Optional context name to use. If not provided, uses current-context.
         
     Returns:
         Kubernetes CoreV1Api client instance
         
     Raises:
         ConfigException: If there's an error loading the kubeconfig
+        ValueError: If the specified context is not found
         Exception: For other errors
     """
     temp_file = None
@@ -133,25 +135,93 @@ def get_k8s_client_from_content(content: str, context_name: Optional[str] = None
         if not is_valid:
             raise ValueError(f"Invalid kubeconfig: {error}")
         
-        # Write to temporary file
+        # Parse kubeconfig to filter it
+        kubeconfig_data = yaml.safe_load(content)
+        
+        # Determine which context to use
+        if context_name is None:
+            context_name = kubeconfig_data.get('current-context')
+            logger.info(f"No context specified, using current-context: {context_name}")
+        
+        if not context_name:
+            raise ValueError("No context specified and kubeconfig has no current-context")
+        
+        # Find the selected context and get referenced cluster/user
+        selected_context = None
+        referenced_cluster = None
+        referenced_user = None
+        
+        for ctx in kubeconfig_data.get('contexts', []):
+            if ctx.get('name') == context_name:
+                selected_context = ctx
+                referenced_cluster = ctx.get('context', {}).get('cluster')
+                referenced_user = ctx.get('context', {}).get('user')
+                break
+        
+        if not selected_context:
+            available_contexts = [ctx.get('name') for ctx in kubeconfig_data.get('contexts', [])]
+            raise ValueError(
+                f"Context '{context_name}' not found in kubeconfig. "
+                f"Available contexts: {available_contexts}"
+            )
+        
+        logger.info(
+            f"Filtering kubeconfig for context '{context_name}': "
+            f"cluster={referenced_cluster}, user={referenced_user}"
+        )
+        
+        # Build filtered kubeconfig with only the selected context, cluster, and user
+        filtered_kubeconfig = {
+            'apiVersion': kubeconfig_data.get('apiVersion'),
+            'kind': 'Config',
+            'current-context': context_name,
+            'contexts': [selected_context],
+            'clusters': [],
+            'users': []
+        }
+        
+        # Filter clusters to only include the referenced cluster
+        if referenced_cluster:
+            for cluster in kubeconfig_data.get('clusters', []):
+                if cluster.get('name') == referenced_cluster:
+                    filtered_kubeconfig['clusters'].append(cluster)
+                    break
+        
+        # Filter users to only include the referenced user
+        if referenced_user:
+            for user in kubeconfig_data.get('users', []):
+                if user.get('name') == referenced_user:
+                    filtered_kubeconfig['users'].append(user)
+                    break
+        
+        logger.debug(
+            f"Filtered kubeconfig: {len(filtered_kubeconfig['contexts'])} context(s), "
+            f"{len(filtered_kubeconfig['clusters'])} cluster(s), "
+            f"{len(filtered_kubeconfig['users'])} user(s)"
+        )
+        
+        # Write filtered kubeconfig to temporary file
         temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.kubeconfig', delete=False)
-        temp_file.write(content)
+        yaml.dump(filtered_kubeconfig, temp_file, default_flow_style=False)
         temp_file.close()
         
-        logger.info(f"Created temporary kubeconfig file: {temp_file.name}")
+        logger.info(f"Created filtered temporary kubeconfig file: {temp_file.name}")
         
-        # Load kubeconfig from temp file
-        config.load_kube_config(config_file=temp_file.name, context=context_name)
+        # Load kubeconfig from temp file (no context needed since it's already filtered)
+        config.load_kube_config(config_file=temp_file.name)
         
         # Create CoreV1Api client
         v1 = client.CoreV1Api()
         
-        logger.info(f"Successfully created Kubernetes client for context: {context_name or 'default'}")
+        logger.info(f"Successfully created Kubernetes client for context: {context_name}")
         
         return v1
         
     except ConfigException as e:
         logger.error(f"ConfigException when creating Kubernetes client: {e}")
+        raise
+    except ValueError:
+        # Re-raise ValueError for context not found
         raise
     except Exception as e:
         logger.error(f"Error creating Kubernetes client: {e}")

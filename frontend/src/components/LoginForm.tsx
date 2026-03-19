@@ -23,6 +23,7 @@ import { authApi } from '../services/api';
 
 interface LoginFormProps {
   onLogin: (credentials: KionCredentials) => Promise<void>;
+  onKubeconfigLogin?: () => Promise<void>;
 }
 
 /**
@@ -30,7 +31,7 @@ interface LoginFormProps {
  */
 type KubeconfigStep = 'upload' | 'selectContext' | 'authenticating';
 
-const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
+const LoginForm: React.FC<LoginFormProps> = ({ onLogin, onKubeconfigLogin }) => {
   const [authMode, setAuthMode] = useState<AuthMode>('aws');
   const [credentials, setCredentials] = useState<KionCredentials>({
     accessKeyId: '',
@@ -188,8 +189,10 @@ const LoginForm: React.FC<LoginFormProps> = ({ onLogin }) => {
       if (response.success) {
         // Store session ID for subsequent requests
         localStorage.setItem('sessionId', response.sessionId);
-        // Reload to trigger authentication state update
-        window.location.reload();
+        // Notify parent to refresh auth state (no page reload needed)
+        if (onKubeconfigLogin) {
+          await onKubeconfigLogin();
+        }
       } else {
         setSubmitError('Authentication failed');
         setKubeconfigStep('selectContext');

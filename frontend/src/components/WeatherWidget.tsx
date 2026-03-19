@@ -133,9 +133,11 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
         setIsRefreshing(true);
       }
 
+      const sessionId = localStorage.getItem('sessionId');
       const response = await fetch(`${API_BASE_URL}/api/weather`, {
         method: 'GET',
         credentials: 'include',
+        headers: sessionId ? { 'x-session-id': sessionId } : {},
       });
 
       if (!response.ok) {
@@ -146,7 +148,7 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
 
       // Convert snake_case to camelCase
       const data: WeatherData = {
-        state: rawData.state,
+        state: rawData.weather_state || rawData.state,
         clusterName: rawData.cluster_name,
         clusterVersion: rawData.cluster_version,
         k8sgptResultCount: rawData.k8sgpt_result_count || 0,

@@ -128,7 +128,7 @@ function App() {
                 Kubernetes Troubleshooting Assistant
               </Typography>
             </Box>
-            <LoginForm onLogin={credentials.login} />
+            <LoginForm onLogin={credentials.login} onKubeconfigLogin={credentials.refresh} />
           </Container>
         </Box>
       </ThemeProvider>

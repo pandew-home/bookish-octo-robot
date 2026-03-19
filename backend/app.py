@@ -7,6 +7,7 @@ It initializes the FastAPI application and registers all API routers.
 Requirements: 15.2, 16.6, 16.7, 17.5
 """
 import logging
+import os
 import sys
 from pathlib import Path
 from fastapi import FastAPI, Response
@@ -83,6 +84,7 @@ async def health_check():
     Returns:
         Simple health status
     """
+    logger.info("Health check endpoint called - returning healthy")
     return {"status": "healthy", "service": "devops-chatbot-v2"}
 
 
@@ -102,10 +104,12 @@ async def readiness_check():
     from fastapi import Response
     from fastapi.responses import JSONResponse
     
+    logger.info("Readiness check endpoint called")
     validator = get_validator()
     
     if not validator.is_ready():
         status = validator.get_status()
+        logger.warning(f"Readiness check returning 503 - not ready: {status['errors']}")
         return JSONResponse(
             content={
                 "status": "not_ready",
@@ -117,6 +121,7 @@ async def readiness_check():
             status_code=503
         )
     
+    logger.info("Readiness check returning 200 - ready")
     return {
         "status": "ready",
         "service": "devops-chatbot-v2",
@@ -154,9 +159,28 @@ async def startup_event():
     logger.info("DevOps Chatbot v2.0 - Starting up")
     logger.info("=" * 80)
     
+    # Debug: Log all environment variables (masked for security)
+    logger.info("DEBUG: Environment variables check:")
+    for key in ['LLM_API_KEY', 'OPENAI_API_KEY', 'LLM_PROVIDER', 'LLM_MODEL', 'DEFAULT_REGION']:
+        value = os.getenv(key)
+        if value:
+            masked = value[:8] + "..." if len(value) > 8 else "***"
+            logger.info(f"  {key}: {masked}")
+        else:
+            logger.warning(f"  {key}: NOT SET")
+    
     # Run startup validation
     # This will exit with code 1 if validation fails
-    validate_startup()
+    logger.info("DEBUG: About to call validate_startup()")
+    try:
+        validate_startup()
+        logger.info("DEBUG: validate_startup() completed successfully")
+    except SystemExit as e:
+        logger.error(f"DEBUG: validate_startup() called sys.exit({e.code})")
+        raise
+    except Exception as e:
+        logger.error(f"DEBUG: validate_startup() raised exception: {e}")
+        raise
     
     logger.info("Startup complete - ready to accept requests")
 
