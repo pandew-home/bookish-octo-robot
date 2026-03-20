@@ -128,6 +128,11 @@ jobs:
           sed -i "s|image: .*ghcr.io/.*/bookish-octo-robot:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}|" k8s/deployment.yaml
           sed -i "s|git-sha: .*|git-sha: \"${{ needs.build.outputs.image_tag }}\"|g" k8s/deployment.yaml
 
+      - name: Deploy namespace and service account
+        run: |
+          kubectl apply -f k8s/namespace.yaml
+          kubectl apply -f k8s/serviceaccount.yaml
+
       - name: Create pull secret (if needed)
         run: |
           kubectl create secret docker-registry ghcr-pull-secret \
@@ -139,8 +144,6 @@ jobs:
 
       - name: Deploy manifests
         run: |
-          kubectl apply -f k8s/namespace.yaml
-          kubectl apply -f k8s/serviceaccount.yaml
           kubectl apply -f k8s/pvc.yaml
           kubectl apply -f k8s/deployment.yaml
           kubectl apply -f k8s/service.yaml
