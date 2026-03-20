@@ -118,7 +118,7 @@ jobs:
 
       - name: Configure Civo + kubectl
         run: |
-          civo apikey save deploy-key ${{ secrets.CIVO }}
+          civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
 
@@ -184,7 +184,7 @@ jobs:
 
       - name: Configure Civo + kubectl
         run: |
-          civo apikey save deploy-key ${{ secrets.CIVO }}
+          civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
 
