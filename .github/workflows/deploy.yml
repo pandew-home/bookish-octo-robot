@@ -113,12 +113,13 @@ jobs:
 
       - name: Install Civo CLI
         run: |
-          curl -sL https://github.com/civo/cli/releases/latest/download/civo-linux-amd64.tar.gz | tar xz -C /usr/local/bin/
+          curl -sL https://civo.com/get | sh
           civo version
 
       - name: Configure Civo + kubectl
         run: |
           civo apikey save deploy-key ${{ secrets.CIVO }}
+          civo apikey current deploy-key
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
 
       - name: Verify cluster access
@@ -179,11 +180,12 @@ jobs:
 
       - name: Install Civo CLI
         run: |
-          curl -sL https://github.com/civo/cli/releases/latest/download/civo-linux-amd64.tar.gz | tar xz -C /usr/local/bin/
+          curl -sL https://civo.com/get | sh
 
       - name: Configure Civo + kubectl
         run: |
           civo apikey save deploy-key ${{ secrets.CIVO }}
+          civo apikey current deploy-key
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
 
       - name: Port-forward and run health checks
