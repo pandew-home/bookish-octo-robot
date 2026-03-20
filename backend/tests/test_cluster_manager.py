@@ -20,6 +20,7 @@ def sample_credentials():
     """Create sample credentials for testing."""
     now = datetime.now()
     return StoredCredentials(
+        auth_mode="aws",
         access_key="AKIAIOSFODNN7EXAMPLE",
         secret_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
         session_token="FwoGZXIvYXdzEBQaDH...",

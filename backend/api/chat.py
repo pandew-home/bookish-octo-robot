@@ -10,7 +10,7 @@ Integrates all components:
 """
 import logging
 from typing import Optional, List
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel, Field
 import asyncio
 
@@ -339,13 +339,17 @@ async def chat_health() -> dict:
         }
 
 
+class FeedbackRequest(BaseModel):
+    """Feedback submission model."""
+    query: str
+    response: str
+    rating: int = Field(..., ge=1, le=5)
+    comment: Optional[str] = None
+    session_id: str
+
+
 @router.post("/feedback")
-async def submit_feedback(
-    query: str,
-    response: str,
-    rating: int = Field(..., ge=1, le=5),
-    comment: Optional[str] = None,
-    session_id: str = Field(...)
+async def submit_feedback(feedback: FeedbackRequest
 ) -> dict:
     """
     Submit feedback on a chat response.
@@ -361,15 +365,15 @@ async def submit_feedback(
         Confirmation message
     """
     try:
-        logger.info(f"Feedback received: rating={rating}, session={session_id[:8]}")
-        
+        logger.info(f"Feedback received: rating={feedback.rating}, session={feedback.session_id[:8]}")
+
         # TODO: Store feedback in database or logging system
         # For now, just log it
-        logger.info(f"Query: {query[:100]}...")
-        logger.info(f"Response: {response[:100]}...")
-        logger.info(f"Rating: {rating}/5")
-        if comment:
-            logger.info(f"Comment: {comment}")
+        logger.info(f"Query: {feedback.query[:100]}...")
+        logger.info(f"Response: {feedback.response[:100]}...")
+        logger.info(f"Rating: {feedback.rating}/5")
+        if feedback.comment:
+            logger.info(f"Comment: {feedback.comment}")
         
         return {
             'status': 'success',
@@ -385,9 +389,9 @@ async def submit_feedback(
 
 @router.get("/history")
 async def get_chat_history(
-    user_id: str = Field(..., description="User ID"),
-    cluster_name: str = Field(..., description="Target cluster name"),
-    limit: int = Field(50, ge=1, le=50, description="Maximum number of messages to return")
+    user_id: str = Query(..., description="User ID"),
+    cluster_name: str = Query(..., description="Target cluster name"),
+    limit: int = Query(50, ge=1, le=50, description="Maximum number of messages to return")
 ) -> dict:
     """
     Get conversation history for user and selected cluster.
@@ -447,11 +451,15 @@ async def get_chat_history(
         )
 
 
-@router.post("/export")
-async def export_conversation(
-    user_id: str = Field(..., description="User ID"),
-    cluster_name: str = Field(..., description="Target cluster name"),
+class ExportRequest(BaseModel):
+    """Conversation export request model."""
+    user_id: str = Field(..., description="User ID")
+    cluster_name: str = Field(..., description="Target cluster name")
     conversation_id: Optional[str] = Field(None, description="Specific conversation ID to export (optional)")
+
+
+@router.post("/export")
+async def export_conversation(export: ExportRequest
 ) -> dict:
     """
     Generate LLM summary of conversation and export as markdown.
@@ -476,25 +484,25 @@ async def export_conversation(
         Markdown-formatted conversation summary
     """
     try:
-        logger.info(f"Exporting conversation for user {user_id} on cluster {cluster_name}")
-        
+        logger.info(f"Exporting conversation for user {export.user_id} on cluster {export.cluster_name}")
+
         # Get conversation(s) to export from the specific cluster
-        if conversation_id:
-            conversation = conversation_history.get_conversation(user_id, conversation_id, cluster_name)
+        if export.conversation_id:
+            conversation = conversation_history.get_conversation(export.user_id, export.conversation_id, export.cluster_name)
             if not conversation:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Conversation {conversation_id} not found on cluster {cluster_name}"
+                    detail=f"Conversation {export.conversation_id} not found on cluster {export.cluster_name}"
                 )
             conversations = [conversation]
         else:
             # Get all recent conversations for the user on this cluster
-            conversations = conversation_history.get_user_conversations(user_id, cluster_name)
+            conversations = conversation_history.get_user_conversations(export.user_id, export.cluster_name)
         
         if not conversations:
             raise HTTPException(
                 status_code=404,
-                detail=f"No conversations found for export on cluster {cluster_name}"
+                detail=f"No conversations found for export on cluster {export.cluster_name}"
             )
         
         # Collect all messages from conversations
@@ -614,8 +622,8 @@ To verify the solution:
 @router.get("/conversations/{user_id}")
 async def get_conversation_list(
     user_id: str,
-    cluster_name: Optional[str] = Field(None, description="Optional cluster name to filter conversations"),
-    limit: int = Field(10, ge=1, le=50, description="Number of conversations to return")
+    cluster_name: Optional[str] = Query(None, description="Optional cluster name to filter conversations"),
+    limit: int = Query(10, ge=1, le=50, description="Number of conversations to return")
 ) -> dict:
     """
     Get list of conversations for a user.
@@ -665,7 +673,7 @@ async def get_conversation_list(
 async def get_conversation(
     user_id: str,
     conversation_id: str,
-    cluster_name: Optional[str] = Field(None, description="Optional cluster name for per-cluster isolation")
+    cluster_name: Optional[str] = Query(None, description="Optional cluster name for per-cluster isolation")
 ) -> dict:
     """
     Get a specific conversation with all messages.

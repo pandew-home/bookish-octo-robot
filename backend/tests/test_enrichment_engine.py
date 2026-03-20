@@ -29,6 +29,7 @@ def mock_aws_creds():
     """Create mock AWS credentials."""
     now = datetime.now()
     return StoredCredentials(
+        auth_mode="aws",
         access_key='AKIATEST',
         secret_key='secret',
         session_token='token',

@@ -19,6 +19,7 @@ def sample_credentials():
     """Create sample credentials for testing."""
     now = datetime.now()
     return StoredCredentials(
+        auth_mode="aws",
         access_key="AKIAIOSFODNN7EXAMPLE",
         secret_key="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
         session_token="FwoGZXIvYXdzEBQaDH...",
@@ -95,6 +96,7 @@ class TestCredentialStore:
         
         for i in range(3):
             creds = StoredCredentials(
+                auth_mode="aws",
                 access_key=f"KEY{i}",
                 secret_key="secret",
                 session_token="token",
@@ -105,9 +107,10 @@ class TestCredentialStore:
                 created_at=now
             )
             credential_store.store(f"session-{i}", creds)
-        
+
         # Add one non-expired credential
         valid_creds = StoredCredentials(
+            auth_mode="aws",
             access_key="VALID_KEY",
             secret_key="secret",
             session_token="token",
@@ -130,6 +133,7 @@ class TestCredentialStore:
         # Fill the store to capacity
         for i in range(10):
             creds = StoredCredentials(
+                auth_mode="aws",
                 access_key=f"KEY{i}",
                 secret_key="secret",
                 session_token="token",
@@ -179,6 +183,7 @@ class TestCredentialStore:
         # Add active credentials
         for i in range(3):
             creds = StoredCredentials(
+                auth_mode="aws",
                 access_key=f"KEY{i}",
                 secret_key="secret",
                 session_token="token",
@@ -189,10 +194,11 @@ class TestCredentialStore:
                 created_at=now
             )
             credential_store.store(f"active-{i}", creds)
-        
+
         # Add expired credentials
         for i in range(2):
             creds = StoredCredentials(
+                auth_mode="aws",
                 access_key=f"EXPIRED{i}",
                 secret_key="secret",
                 session_token="token",
@@ -216,6 +222,7 @@ class TestCredentialStore:
         now = datetime.now()
         
         creds1 = StoredCredentials(
+            auth_mode="aws",
             access_key="KEY1",
             secret_key="secret1",
             session_token="token1",
@@ -225,8 +232,9 @@ class TestCredentialStore:
             expires_at=now + timedelta(hours=1),
             created_at=now
         )
-        
+
         creds2 = StoredCredentials(
+            auth_mode="aws",
             access_key="KEY2",
             secret_key="secret2",
             session_token="token2",

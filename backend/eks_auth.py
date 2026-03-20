@@ -129,6 +129,7 @@ def validate_credentials(
         # Create StoredCredentials object
         now = datetime.now()
         creds = StoredCredentials(
+            auth_mode="aws",
             access_key=access_key,
             secret_key=secret_key,
             session_token=session_token,
