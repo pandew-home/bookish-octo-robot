@@ -25,6 +25,10 @@ env:
   CLUSTER_NAME: bookish-octo-robot
   NAMESPACE: devops-chatbot
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   build:
     name: Build & Push Image
