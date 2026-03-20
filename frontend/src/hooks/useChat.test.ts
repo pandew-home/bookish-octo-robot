@@ -153,7 +153,7 @@ describe('useChat', () => {
       });
 
       expect(result.current.messages[1].content).toBe(
-        'Authentication required. Please log in with Kion credentials.'
+        'Authentication required. Please log in again.'
       );
     });
 

@@ -101,7 +101,9 @@ describe('WeatherWidget', () => {
     }, { timeout: 3000 });
 
     // Should show some error message
-    expect(screen.getByText(/Network error|Failed to fetch/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/Network error|Failed to fetch/i)).toBeInTheDocument();
+    });
   });
 
   it('should open details dialog when View Details is clicked', async () => {
