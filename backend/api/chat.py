@@ -9,6 +9,7 @@ Integrates all components:
 - K8sGPT Result integration
 """
 
+import os
 import logging
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
@@ -203,8 +204,9 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
 
             # Step 7: Generate response with RAG
             logger.info(f"[STEP_7] Initializing RAG engine...")
+            llm_provider = os.getenv("LLM_PROVIDER", "openai")
             rag = get_rag_integration(
-                llm_provider="openai",  # TODO: Make configurable
+                llm_provider=llm_provider,  # Read from environment
                 api_key=None,  # Uses environment variable
                 cluster_version=target_cluster.get("version", "v1.28"),
             )
