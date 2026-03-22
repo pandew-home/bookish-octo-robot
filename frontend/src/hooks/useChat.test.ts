@@ -52,8 +52,11 @@ describe('useChat', () => {
         await result.current.sendMessage('Why is my pod crashing?');
       });
 
-      expect(mockApiClient.post).toHaveBeenCalledWith('/chat', {
+      expect(mockApiClient.post).toHaveBeenCalledWith('/chat/query', {
         query: 'Why is my pod crashing?',
+        session_id: expect.any(String),
+        user_id: expect.any(String),
+        cluster_name: selectedCluster,
       });
 
       // Should have user message and assistant response
@@ -228,8 +231,11 @@ describe('useChat', () => {
         await result.current.sendMessage('  Test message  ');
       });
 
-      expect(mockApiClient.post).toHaveBeenCalledWith('/chat', {
+      expect(mockApiClient.post).toHaveBeenCalledWith('/chat/query', {
         query: 'Test message',
+        session_id: expect.any(String),
+        user_id: expect.any(String),
+        cluster_name: selectedCluster,
       });
     });
   });
@@ -267,7 +273,8 @@ describe('useChat', () => {
 
       expect(mockApiClient.get).toHaveBeenCalledWith('/chat/history', {
         params: {
-          cluster: selectedCluster,
+          user_id: expect.any(String),
+          cluster_name: selectedCluster,
           limit: 5,
         },
       });
@@ -343,7 +350,8 @@ describe('useChat', () => {
       });
 
       expect(mockApiClient.post).toHaveBeenCalledWith('/chat/export', {
-        cluster: selectedCluster,
+        user_id: expect.any(String),
+        cluster_name: selectedCluster,
       });
 
       expect(exportResult).toEqual(mockExport);
@@ -473,7 +481,8 @@ describe('useChat', () => {
       await waitFor(() => {
         expect(mockApiClient.get).toHaveBeenCalledWith('/chat/history', {
           params: {
-            cluster: 'new-cluster',
+            user_id: expect.any(String),
+            cluster_name: 'new-cluster',
             limit: 5,
           },
         });
