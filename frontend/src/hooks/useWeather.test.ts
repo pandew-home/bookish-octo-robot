@@ -1,5 +1,5 @@
 import { renderHook, act, waitFor } from '@testing-library/react';
-import { useWeather, UseWeatherState } from './useWeather';
+import { useWeather } from './useWeather';
 import apiClient from '../services/api';
 import { WeatherData } from '../types/weather';
 
@@ -11,7 +11,6 @@ const mockApiClient = apiClient as jest.Mocked<typeof apiClient>;
 describe('useWeather', () => {
   const selectedCluster = 'dev-cluster-1';
   const isAuthenticated = true;
-  type UseWeatherProps = { cluster: string | null; auth: boolean };
 
   const mockWeatherData: WeatherData = {
     state: 'partly-cloudy',
@@ -57,9 +56,7 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       await waitFor(() => {
         expect(result.current.weatherData).toEqual(mockWeatherData);
@@ -99,9 +96,7 @@ describe('useWeather', () => {
         )
       );
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       // Should be loading initially
       expect(result.current.isLoading).toBe(true);
@@ -123,9 +118,7 @@ describe('useWeather', () => {
         },
       });
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       await waitFor(() => {
         expect(result.current.error).toBe('Failed to read K8sGPT Results');
@@ -141,9 +134,7 @@ describe('useWeather', () => {
         },
       });
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       await waitFor(() => {
         expect(result.current.error).toBe('Authentication required');
@@ -157,9 +148,7 @@ describe('useWeather', () => {
         },
       });
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       await waitFor(() => {
         expect(result.current.error).toBe('No cluster selected');
@@ -173,9 +162,7 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      await act(async () => {
-        renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       // Wait for initial fetch to complete
       await waitFor(() => {
@@ -213,17 +200,15 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      const { rerender } = await act(async () => {
-        return renderHook(
-          ({ cluster, auth }) => useWeather(cluster, auth),
-          {
-            initialProps: {
-              cluster: selectedCluster,
-              auth: isAuthenticated,
-            },
-          }
-        );
-      });
+      const { rerender } = renderHook(
+        ({ cluster, auth }) => useWeather(cluster, auth),
+        {
+          initialProps: {
+            cluster: selectedCluster,
+            auth: isAuthenticated,
+          },
+        }
+      );
 
       // Initial fetch
       await waitFor(() => {
@@ -247,17 +232,15 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      const { rerender } = await act(async () => {
-        return renderHook(
-          ({ cluster, auth }) => useWeather(cluster, auth),
-          {
-            initialProps: {
-              cluster: selectedCluster,
-              auth: isAuthenticated,
-            },
-          }
-        );
-      });
+      const { rerender } = renderHook(
+        ({ cluster, auth }) => useWeather(cluster, auth),
+        {
+          initialProps: {
+            cluster: selectedCluster,
+            auth: isAuthenticated,
+          },
+        }
+      );
 
       // Initial fetch
       await waitFor(() => {
@@ -281,17 +264,15 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      const { rerender } = await act(async () => {
-        return renderHook(
-          ({ cluster, auth }) => useWeather(cluster, auth),
-          {
-            initialProps: {
+      const { rerender } = renderHook(
+        ({ cluster, auth }) => useWeather(cluster, auth),
+        {
+          initialProps: {
               cluster: selectedCluster,
               auth: isAuthenticated,
             },
           }
         );
-      });
 
       // Initial fetch
       await waitFor(() => {
@@ -324,9 +305,7 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       // Wait for initial fetch to complete
       await waitFor(() => {
@@ -350,9 +329,7 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       // Wait for initial fetch
       await waitFor(() => {
@@ -383,9 +360,7 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       // Wait for initial fetch
       await waitFor(() => {
@@ -420,9 +395,7 @@ describe('useWeather', () => {
         data: initialWeatherData,
       });
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       // Wait for initial fetch
       await waitFor(() => {
@@ -450,17 +423,15 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      const { result, rerender } = await act(async () => {
-        return renderHook(
-          ({ cluster, auth }) => useWeather(cluster, auth),
-          {
-            initialProps: {
-              cluster: selectedCluster,
-              auth: isAuthenticated,
-            },
-          }
-        );
-      });
+      const { result, rerender } = renderHook(
+        ({ cluster, auth }) => useWeather(cluster, auth),
+        {
+          initialProps: {
+            cluster: selectedCluster,
+            auth: isAuthenticated,
+          },
+        }
+      );
 
       // Wait for initial fetch
       await waitFor(() => {
@@ -472,6 +443,8 @@ describe('useWeather', () => {
 
       await waitFor(() => {
         expect(result.current.weatherData).toBeNull();
+      });
+      await waitFor(() => {
         expect(result.current.previousWeatherData).toBeNull();
       });
     });
@@ -508,9 +481,7 @@ describe('useWeather', () => {
         data: sunnyWeather,
       });
 
-      const { result } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { result } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       // Wait for initial fetch
       await waitFor(() => {
@@ -537,9 +508,7 @@ describe('useWeather', () => {
         data: mockWeatherData,
       });
 
-      const { unmount } = await act(async () => {
-        return renderHook(() => useWeather(selectedCluster, isAuthenticated));
-      });
+      const { unmount } = renderHook(() => useWeather(selectedCluster, isAuthenticated));
 
       // Wait for initial fetch
       await waitFor(() => {
