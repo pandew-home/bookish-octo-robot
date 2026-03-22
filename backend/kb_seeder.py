@@ -3,9 +3,9 @@ Knowledge Base Seeder for DevOps Chatbot v2.0
 
 Seeds the knowledge base with initial DevOps solutions if empty or force-reset.
 """
+
 import logging
 import os
-from typing import Optional
 from datetime import datetime
 
 from devops_kb.knowledge_base import KnowledgeBase
@@ -32,7 +32,7 @@ Steps to diagnose and fix:
 6. Verify the pod starts successfully
 
 For persistent debugging, add init containers or modify startup probes.""",
-        "tags": ["pod", "crashloopbackoff", "troubleshooting", "logs"]
+        "tags": ["pod", "crashloopbackoff", "troubleshooting", "logs"],
     },
     {
         "title": "Fix ImagePullBackOff Error",
@@ -50,7 +50,7 @@ Verify the fix:
 - Check pod events: `kubectl describe pod <pod-name>`
 - Pull the image manually: `docker pull <image>`
 - Check registry credentials: `kubectl get secrets`""",
-        "tags": ["image", "imagepullbackoff", "registry", "authentication"]
+        "tags": ["image", "imagepullbackoff", "registry", "authentication"],
     },
     {
         "title": "Resolve PVC Pending Status",
@@ -70,7 +70,7 @@ Troubleshooting steps:
 For Kubernetes clusters with dynamic provisioning:
 - Ensure the storage driver/provisioner is running
 - Check provisioner logs: `kubectl logs -n kube-system -l app=provisioner`""",
-        "tags": ["pvc", "storage", "persistent-volume", "pending"]
+        "tags": ["pvc", "storage", "persistent-volume", "pending"],
     },
     {
         "title": "Fix NodeNotReady Status",
@@ -90,7 +90,7 @@ Diagnosis and recovery:
 6. Drain existing pods: `kubectl drain <node-name> --ignore-daemonsets`
 7. Reboot the node if necessary
 8. Uncordon when ready: `kubectl uncordon <node-name>`""",
-        "tags": ["node", "notready", "kubelet", "network", "resources"]
+        "tags": ["node", "notready", "kubelet", "network", "resources"],
     },
     {
         "title": "Debug Service DNS Issues",
@@ -112,7 +112,7 @@ Troubleshooting:
 
 For persistent DNS issues, restart CoreDNS:
 `kubectl rollout restart deployment/coredns -n kube-system`""",
-        "tags": ["service", "dns", "networking", "coredns", "connectivity"]
+        "tags": ["service", "dns", "networking", "coredns", "connectivity"],
     },
     {
         "title": "Handle Pod Eviction and Resource Limits",
@@ -139,7 +139,7 @@ Prevention and recovery:
 Immediate fix for evicted pod:
 - Delete the pod: `kubectl delete pod <pod-name>`
 - Wait for controller to restart it with better conditions""",
-        "tags": ["eviction", "resources", "memory", "disk", "limits"]
+        "tags": ["eviction", "resources", "memory", "disk", "limits"],
     },
 ]
 
@@ -160,14 +160,20 @@ def seed_knowledge_base(kb: KnowledgeBase, force_reseed: bool = False) -> bool:
         existing_solutions = kb.get_all_solutions()
 
         if existing_solutions and not force_reseed:
-            logger.info(f"Knowledge base already has {len(existing_solutions)} solutions, skipping seed")
+            logger.info(
+                f"Knowledge base already has {len(existing_solutions)} solutions, skipping seed"
+            )
             return True
 
         if force_reseed and existing_solutions:
-            logger.info(f"Force reseed enabled, clearing {len(existing_solutions)} existing solutions")
+            logger.info(
+                f"Force reseed enabled, clearing {len(existing_solutions)} existing solutions"
+            )
             # Note: In production, you'd want to backup first
 
-        logger.info(f"Seeding knowledge base with {len(INITIAL_SOLUTIONS)} initial solutions...")
+        logger.info(
+            f"Seeding knowledge base with {len(INITIAL_SOLUTIONS)} initial solutions..."
+        )
 
         seeded_count = 0
         for solution_data in INITIAL_SOLUTIONS:
@@ -179,11 +185,11 @@ def seed_knowledge_base(kb: KnowledgeBase, force_reseed: bool = False) -> bool:
                     tags=solution_data["tags"],
                     source="builtin",
                     created_at=datetime.now().isoformat(),
-                    updated_at=datetime.now().isoformat()
+                    updated_at=datetime.now().isoformat(),
                 )
 
                 # Add to KB
-                solution_id = kb.add_solution(solution)
+                kb.add_solution(solution)
                 logger.info(f"  ✓ Seeded: {solution_data['title']}")
                 seeded_count += 1
 
@@ -191,7 +197,9 @@ def seed_knowledge_base(kb: KnowledgeBase, force_reseed: bool = False) -> bool:
                 logger.error(f"  ✗ Failed to seed '{solution_data['title']}': {e}")
                 continue
 
-        logger.info(f"Knowledge base seeding complete: {seeded_count}/{len(INITIAL_SOLUTIONS)} solutions added")
+        logger.info(
+            f"Knowledge base seeding complete: {seeded_count}/{len(INITIAL_SOLUTIONS)} solutions added"
+        )
         return seeded_count > 0
 
     except Exception as e:
@@ -206,7 +214,11 @@ def should_seed_kb() -> bool:
     Returns:
         True if seeding should be performed
     """
-    seeding_enabled = os.getenv('KB_SEEDING_ENABLED', 'false').lower() in ('true', '1', 'yes')
+    seeding_enabled = os.getenv("KB_SEEDING_ENABLED", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    )
     return seeding_enabled
 
 
@@ -217,5 +229,5 @@ def should_force_reseed() -> bool:
     Returns:
         True if force reseed should be performed
     """
-    force_reseed = os.getenv('KB_FORCE_RESEED', 'false').lower() in ('true', '1', 'yes')
+    force_reseed = os.getenv("KB_FORCE_RESEED", "false").lower() in ("true", "1", "yes")
     return force_reseed

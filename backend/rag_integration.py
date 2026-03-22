@@ -19,7 +19,6 @@ from devops_rag.vector_store import VectorStore
 from devops_kb.knowledge_base import KnowledgeBase
 
 from enrichment_engine import EnrichedContext
-from utils.error_handler import handle_generic_error
 from kb_seeder import seed_knowledge_base, should_seed_kb, should_force_reseed
 
 logger = logging.getLogger(__name__)
