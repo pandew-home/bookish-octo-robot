@@ -20,6 +20,7 @@ from devops_kb.knowledge_base import KnowledgeBase
 
 from enrichment_engine import EnrichedContext
 from utils.error_handler import handle_generic_error
+from kb_seeder import seed_knowledge_base, should_seed_kb, should_force_reseed
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,10 @@ class RAGIntegration:
         self.kb = self._init_knowledge_base(kb_path)
         if self.kb:
             logger.info(f"✓ Knowledge base initialized from {kb_path}")
+            # Seed KB with initial solutions if enabled
+            if should_seed_kb():
+                force_reseed = should_force_reseed()
+                seed_knowledge_base(self.kb, force_reseed=force_reseed)
         elif kb_path:
             warning = f"Knowledge base initialization failed for {kb_path} - continuing without KB"
             self.initialization_warnings.append(warning)
