@@ -37,6 +37,7 @@ import { CredentialBadge } from './CredentialBadge';
 import { SolutionSubmitDialog } from './SolutionSubmitDialog';
 import { solutionsApi } from '../services/api';
 import { Solution } from '../types/solution';
+import { useCredentials } from '../hooks/useCredentials';
 
 // Message interfaces
 interface Citation {
@@ -99,6 +100,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   onExportConversation,
   onClearConversation,
 }) => {
+  const { status } = useCredentials();
   const [internalMessages, setInternalMessages] = useState<ChatMessage[]>([]);
   const [currentQuery, setCurrentQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -148,13 +150,25 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setIsLoading(true);
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/chat`, {
+      const sessionId = localStorage.getItem('sessionId');
+      const userId = status?.accountId || sessionId || 'anonymous';
+
+      if (!selectedCluster) {
+        throw new Error('No cluster selected. Please select a cluster first.');
+      }
+
+      const response = await fetch(`${API_BASE_URL}/api/chat/query`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         credentials: 'include',
-        body: JSON.stringify({ query: query.trim() }),
+        body: JSON.stringify({
+          query: query.trim(),
+          session_id: sessionId,
+          user_id: userId,
+          cluster_name: selectedCluster
+        }),
       });
 
       if (!response.ok) {
