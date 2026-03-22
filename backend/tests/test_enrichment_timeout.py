@@ -23,12 +23,9 @@ def enrichment_plan():
     """Create a basic enrichment plan."""
     return EnrichmentPlan(
         categories=[QueryCategory.POD_ISSUE],
-        
-        requires_deployment_data=False,
-        requires_service_data=False,
-        requires_node_data=False,
-        requires_aws_data=False,
-        requires_k8sgpt_results=True
+        resource_names=[],
+        namespaces=[],
+        include_aws_context=False
     )
 
 
@@ -188,9 +185,9 @@ class TestPartialResultsOnTimeout:
             
             
             
-            requires_node_data=False,
-            requires_aws_data=False,
-            requires_k8sgpt_results=True
+            resource_names=[],
+            namespaces=[],
+            include_aws_context=False,
         )
 
         # Mock fast deployment and service enrichment, slow pod enrichment
@@ -258,11 +255,9 @@ class TestTimeoutWithMultipleClusters:
         plan = EnrichmentPlan(
             categories=[QueryCategory.POD_ISSUE],
             
-            requires_deployment_data=False,
-            requires_service_data=False,
-            requires_node_data=False,
-            requires_aws_data=False,
-            requires_k8sgpt_results=False
+            resource_names=[],
+            namespaces=[],
+            include_aws_context=False,
         )
 
         # Mock slow operation for engine1
