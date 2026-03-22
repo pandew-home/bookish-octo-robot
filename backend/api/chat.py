@@ -280,11 +280,11 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 citations=rag_response.get("citations", []),
                 k8sgpt_findings=[
                     {
-                        "name": r.get("name"),
-                        "kind": r.get("kind"),
-                        "severity": r.get("severity"),
-                        "problem": r.get("problem"),
-                        "solution": r.get("solution"),
+                        "name": r.name,
+                        "kind": r.kind,
+                        "severity": r.severity,
+                        "problem": r.problem,
+                        "solution": r.solution,
                     }
                     for r in k8sgpt_results[:5]  # Top 5 findings
                 ],
