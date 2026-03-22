@@ -226,6 +226,13 @@ jobs:
           kubectl apply -f k8sgpt/rbac.yaml
           kubectl apply -f k8sgpt/k8sgpt-openrouter-cr.yaml
 
+      # --- HTTPS/TLS Setup ---
+      - name: Deploy cert-manager ClusterIssuers
+        run: |
+          # Wait for cert-manager to be ready (should be pre-installed on Civo)
+          echo "Deploying Let's Encrypt certificate issuers..."
+          kubectl apply -f k8s/cert-issuer.yaml || echo "cert-manager not installed - HTTPS will not be available"
+
       # --- Application ---
       - name: Deploy application
         run: |
