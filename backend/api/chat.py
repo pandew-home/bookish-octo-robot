@@ -198,8 +198,16 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 cluster_version=target_cluster.get("version", "v1.28"),
             )
 
-            # Add K8sGPT results to enriched context
+            # Add K8sGPT results and metadata to enriched context
             enriched_context.k8sgpt_results = k8sgpt_results
+            enriched_context.enrichment_plan = {
+                'categories': [c.value for c in enrichment_plan.categories],
+                'resource_names': enrichment_plan.resource_names,
+                'namespaces': enrichment_plan.namespaces,
+                'include_aws_context': enrichment_plan.include_aws_context,
+                'time_range': str(enrichment_plan.time_range) if enrichment_plan.time_range else None,
+            }
+            enriched_context.cluster_name = request.cluster_name
 
             rag_response = rag.process_query(
                 query=cleaned_query,

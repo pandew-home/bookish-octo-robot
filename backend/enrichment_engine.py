@@ -30,6 +30,9 @@ class EnrichedContext:
     security_data: Optional[Dict[str, Any]] = None
     aws_data: Optional[Dict[str, Any]] = None
     errors: List[str] = field(default_factory=list)
+    # Additional metadata for RAG pipeline
+    enrichment_plan: Optional[Dict[str, Any]] = None
+    cluster_name: Optional[str] = None
     
     def merge(self, other: 'EnrichedContext') -> None:
         """Merge another context into this one."""

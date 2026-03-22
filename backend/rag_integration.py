@@ -20,6 +20,7 @@ from devops_kb.knowledge_base import KnowledgeBase
 
 from enrichment_engine import EnrichedContext
 from kb_seeder import seed_knowledge_base, should_seed_kb, should_force_reseed
+from template_engine import TemplateEngine, QueryCategory
 
 logger = logging.getLogger(__name__)
 
@@ -103,7 +104,15 @@ class RAGIntegration:
         except Exception as e:
             logger.error(f"✗ CRITICAL: Failed to initialize RAG engine: {e}")
             raise ValueError(f"Failed to initialize RAG engine: {str(e)}")
-        
+
+        # Initialize template engine for prompt rendering
+        try:
+            self.template_engine = TemplateEngine(templates_path="/data/knowledge-base/templates")
+            logger.info("✓ Template engine initialized")
+        except Exception as e:
+            logger.warning(f"⚠ Template engine initialization failed: {e}, will use default prompts")
+            self.template_engine = None
+
         # Log final initialization status
         if self.initialization_warnings:
             logger.warning(f"RAG integration initialized with {len(self.initialization_warnings)} warning(s)")
@@ -296,34 +305,56 @@ class RAGIntegration:
     ) -> Dict[str, Any]:
         """
         Process query with RAG pipeline using enriched cluster context.
-        
+
         Args:
             query: User query string
             enriched_context: Enriched context from enrichment engine
             max_tokens: Maximum tokens for LLM response
             is_export: Whether this is for export (uses more tokens)
-            
+
         Returns:
             Dictionary with response and metadata
         """
         try:
             # Convert enriched context to cluster context format
             cluster_context = self._format_cluster_context(enriched_context)
-            
+
             # Extract K8sGPT results if available
             health_monitor_errors = None
             if enriched_context.k8sgpt_results:
                 health_monitor_errors = self._format_k8sgpt_errors(enriched_context.k8sgpt_results)
-            
+
+            # Render prompt with template engine if available
+            rendered_query = query
+            if self.template_engine and enriched_context.enrichment_plan:
+                try:
+                    # Get query category from enrichment plan
+                    categories = enriched_context.enrichment_plan.get('categories', [])
+                    category = categories[0] if categories else 'general_health'
+
+                    # Render prompt with enriched context
+                    rendered_query = self.template_engine.render(
+                        query_category=category,
+                        cluster_context=cluster_context,
+                        kb_results=[],  # Will be populated by RAG search
+                        query=query,
+                        cluster_name=enriched_context.cluster_name or "default",
+                        k8sgpt_results=enriched_context.k8sgpt_results or []
+                    )
+                    logger.info(f"Query rendered with template: {category}")
+                except Exception as e:
+                    logger.warning(f"Failed to render query template: {e}, using original query")
+                    rendered_query = query
+
             # Process query through RAG engine
             response = self.rag_engine.process_query(
-                query=query,
+                query=rendered_query,
                 cluster_context=cluster_context,
                 health_monitor_errors=health_monitor_errors,
                 max_tokens=max_tokens,
                 is_export=is_export
             )
-            
+
             return response
             
         except Exception as e:
