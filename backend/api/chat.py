@@ -224,6 +224,16 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             logger.info(f"[STEP_7] ✓ Context metadata set: plan={enriched_context.enrichment_plan['categories']}")
 
             logger.info(f"[STEP_7] Processing query through RAG...")
+            logger.info(f"[STEP_7] ========== CHATBOX INPUT TRACING ==========")
+            logger.info(f"[STEP_7] ORIGINAL EDIT BOX INPUT: {request.query[:150]}...")
+            logger.info(f"[STEP_7] SANITIZED INPUT (cleaned_query): {cleaned_query[:150]}...")
+            logger.info(f"[STEP_7] ENRICHED CONTEXT:")
+            logger.info(f"[STEP_7]   - Enrichment Plan: {enriched_context.enrichment_plan is not None}")
+            if enriched_context.enrichment_plan:
+                logger.info(f"[STEP_7]   - Categories: {enriched_context.enrichment_plan.get('categories', [])}")
+            logger.info(f"[STEP_7]   - Cluster Name: {enriched_context.cluster_name}")
+            logger.info(f"[STEP_7]   - K8sGPT Results: {len(enriched_context.k8sgpt_results or [])} found")
+            logger.info(f"[STEP_7] =========================================")
             rag_response = rag.process_query(
                 query=cleaned_query,
                 enriched_context=enriched_context,

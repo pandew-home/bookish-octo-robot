@@ -337,16 +337,34 @@ class RAGIntegration:
                 logger.info(f"[RAG_QUERY] No K8sGPT results available")
 
             # Render prompt with template engine if available
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Template engine available: {self.template_engine is not None}")
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] ========== TEMPLATE ENGINE CHECK ==========")
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Template engine initialized: {self.template_engine is not None}")
             logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Enrichment plan available: {enriched_context.enrichment_plan is not None}")
+
+            if enriched_context.enrichment_plan:
+                plan = enriched_context.enrichment_plan
+                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Enrichment Plan Details:")
+                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - Categories: {plan.get('categories', [])}")
+                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - Namespaces: {plan.get('namespaces', [])}")
+                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - Resources: {plan.get('resource_names', [])}")
+                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - AWS Context: {plan.get('include_aws_context', False)}")
+                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - Time Range: {plan.get('time_range', 'N/A')}")
+
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Cluster Context Keys: {list(cluster_context.keys())}")
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Cluster Name: {enriched_context.cluster_name}")
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] K8sGPT Results Count: {len(enriched_context.k8sgpt_results or [])}")
+
             # TODO: Re-enable template engine after debugging 500 errors
             rendered_query = query
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Template engine DISABLED - using original query")
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] CURRENT STATUS: Template engine DISABLED - using original query")
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Original Input Query: {query[:150]}...")
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] ==========================================")
             # if self.template_engine and enriched_context.enrichment_plan:
             #     try:
             #         # Get query category from enrichment plan
             #         categories = enriched_context.enrichment_plan.get('categories', [])
             #         category = categories[0] if categories else 'general_health'
+            #         logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Rendering with category: {category}")
             #
             #         # Render prompt with enriched context
             #         rendered_query = self.template_engine.render(
@@ -357,9 +375,11 @@ class RAGIntegration:
             #             cluster_name=enriched_context.cluster_name or "default",
             #             k8sgpt_results=enriched_context.k8sgpt_results or []
             #         )
-            #         logger.info(f"Query rendered with template: {category}")
+            #         logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] ✓ Query successfully rendered with template")
+            #         logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Rendered query length: {len(rendered_query)} chars")
             #     except Exception as e:
-            #         logger.warning(f"Failed to render query template: {e}, using original query")
+            #         logger.error(f"[RAG_QUERY] [PROMPT_ENGINE] ✗ Template engine render failed: {type(e).__name__}: {e}")
+            #         logger.warning(f"[RAG_QUERY] [PROMPT_ENGINE] Falling back to original query")
             #         rendered_query = query
 
             # Process query through RAG engine
