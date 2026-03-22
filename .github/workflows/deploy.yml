@@ -171,8 +171,9 @@ jobs:
           kubectl apply -f k8s/serviceaccount.yaml
           kubectl apply -f k8s/pvc.yaml
           kubectl apply -f k8s/deployment.yaml
-          kubectl apply -f k8s/service.yaml
-          kubectl apply -f k8s/pdb.yaml
+           kubectl apply -f k8s/service.yaml
+           kubectl apply -f k8s/ingress.yaml
+           kubectl apply -f k8s/pdb.yaml
           kubectl apply -f k8s/resourcequota.yaml
 
       - name: Wait for rollout
