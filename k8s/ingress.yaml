@@ -6,9 +6,9 @@ metadata:
   labels:
     app: devops-chatbot
   annotations:
+    kubernetes.io/ingress.class: traefik
     traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
-  ingressClassName: traefik
   rules:
   - host: 5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com
     http:
