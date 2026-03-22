@@ -100,7 +100,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   onExportConversation,
   onClearConversation,
 }) => {
-  const { status } = useCredentials();
+  const { accountId } = useCredentials();
   const [internalMessages, setInternalMessages] = useState<ChatMessage[]>([]);
   const [currentQuery, setCurrentQuery] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -151,7 +151,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     try {
       const sessionId = localStorage.getItem('sessionId');
-      const userId = status?.accountId || sessionId || 'anonymous';
+      const userId = accountId || sessionId || 'anonymous';
 
       if (!selectedCluster) {
         throw new Error('No cluster selected. Please select a cluster first.');
