@@ -165,6 +165,7 @@ secrets.yml
 credentials.json
 credentials.yaml
 .aws/
+.civo/
 .kube/config
 kubeconfig
 kubeconfig.*

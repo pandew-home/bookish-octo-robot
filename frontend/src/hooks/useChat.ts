@@ -63,8 +63,11 @@ export const useChat = (
     setError(null);
 
     try {
-      const response = await apiClient.post('/chat', {
+      const response = await apiClient.post('/chat/query', {
         query: query.trim(),
+        session_id: localStorage.getItem('sessionId') || '',
+        user_id: localStorage.getItem('userId') || 'anonymous',
+        cluster_name: selectedCluster,
       });
 
       const data = response.data;
@@ -138,7 +141,8 @@ export const useChat = (
     try {
       const response = await apiClient.get('/chat/history', {
         params: {
-          cluster: selectedCluster,
+          user_id: localStorage.getItem('userId') || 'anonymous',
+          cluster_name: selectedCluster,
           limit: 5,
         },
       });
@@ -163,7 +167,8 @@ export const useChat = (
 
     try {
       const response = await apiClient.post('/chat/export', {
-        cluster: selectedCluster,
+        user_id: localStorage.getItem('userId') || 'anonymous',
+        cluster_name: selectedCluster,
       });
 
       return response.data as ConversationExport;
