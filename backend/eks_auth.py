@@ -143,19 +143,21 @@ def validate_credentials(
         logger.info(f"Validated credentials for user {user_arn}")
         return True, creds, None
         
-    except sts_client.exceptions.InvalidClientTokenId:
-        error_msg = "Invalid access key ID. Please check your Kion credentials."
-        logger.warning(f"Credential validation failed: {error_msg}")
-        return False, None, error_msg
-        
-    except sts_client.exceptions.SignatureDoesNotMatch:
-        error_msg = "Invalid secret access key. Please check your Kion credentials."
-        logger.warning(f"Credential validation failed: {error_msg}")
-        return False, None, error_msg
-        
     except Exception as e:
-        error_msg = f"Failed to validate credentials: {str(e)}"
-        logger.error(f"Credential validation error: {e}")
+        from botocore.exceptions import ClientError
+
+        if isinstance(e, ClientError):
+            error_code = e.response.get('Error', {}).get('Code', '')
+            if error_code == 'InvalidClientTokenId':
+                error_msg = "Invalid access key ID. Please check your Kion credentials."
+            elif error_code == 'SignatureDoesNotMatch':
+                error_msg = "Invalid secret access key. Please check your Kion credentials."
+            else:
+                error_msg = f"AWS credential validation failed: {error_code}"
+        else:
+            error_msg = f"Failed to validate credentials: {str(e)}"
+
+        logger.warning(f"Credential validation failed: {error_msg}")
         return False, None, error_msg
 
 
