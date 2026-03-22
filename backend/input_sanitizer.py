@@ -26,7 +26,6 @@ class InputSanitizer:
         # Shell commands and execution
         r"#!/bin/(bash|sh)",  # Shebang
         r"\$\([^)]+\)",  # Command substitution $(...)
-        r"`\s*(?:if|for|while|do|done|case|esac|function|return|echo|cat|grep|sed|awk|cut|tr|cp|mv|rm|mkdir|chmod|chown|kubectl|docker|helm|git|npm|pip|make|curl|wget)\b",  # Command substitution with shell commands only
         r"\b(bash|sh|zsh|fish|ksh|csh|tcsh)\s+-c",  # Shell with -c flag
         r"\b(eval|exec|system|subprocess|popen)\s*\(",  # Code execution functions
         r"\b(kubectl|docker|helm|aws|gcloud|az)\s+(delete|remove|destroy)",  # Destructive commands
@@ -74,7 +73,7 @@ class InputSanitizer:
 
     _sensitive_compiled = [re.compile(pattern) for pattern in SENSITIVE_PATTERNS]
 
-    def validate_query(self, query: str) -> Tuple[bool, Optional[str]]:
+    def validate_query(self, query: str) -> Tuple[bool, Optional[str], str]:
         """
         Validate a user query for safety and correctness.
 
@@ -82,27 +81,40 @@ class InputSanitizer:
             query: User query string
 
         Returns:
-            Tuple of (is_valid, error_message)
+            Tuple of (is_valid, error_message, cleaned_query)
             - is_valid: True if query is safe, False otherwise
             - error_message: None if valid, descriptive error if invalid
+            - cleaned_query: Query with backticks removed
         """
-        # Check length
-        if not query or len(query.strip()) == 0:
-            return False, "Query cannot be empty. Please enter a question or command."
+        # Remove backticks (they don't add value to natural language prompts)
+        cleaned_query = query.replace("`", "")
 
-        if len(query) > 2000:
+        # Check length
+        if not cleaned_query or len(cleaned_query.strip()) == 0:
             return (
                 False,
-                f"Query is too long ({len(query)} characters). Please limit your query to 2000 characters.",
+                "Query cannot be empty. Please enter a question or command.",
+                cleaned_query,
+            )
+
+        if len(cleaned_query) > 2000:
+            return (
+                False,
+                f"Query is too long ({len(cleaned_query)} characters). Please limit your query to 2000 characters.",
+                cleaned_query,
             )
 
         # Check for unsafe patterns
         for pattern in self._compiled_patterns:
-            if pattern.search(query):
+            if pattern.search(cleaned_query):
                 logger.warning(f"Blocked unsafe query pattern: {pattern.pattern}")
-                return False, self._get_helpful_rejection_message(pattern.pattern)
+                return (
+                    False,
+                    self._get_helpful_rejection_message(pattern.pattern),
+                    cleaned_query,
+                )
 
-        return True, None
+        return True, None, cleaned_query
 
     def _get_helpful_rejection_message(self, pattern: str) -> str:
         """
