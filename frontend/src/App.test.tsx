@@ -262,7 +262,8 @@ describe('App Component', () => {
       
       expect(screen.getByTestId('weather-widget')).toBeInTheDocument();
       expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
-      expect(screen.getByTestId('results-panel')).toBeInTheDocument();
+      // ResultsPanel is only visible on large screens (useMediaQuery returns false in jsdom)
+      expect(screen.queryByTestId('results-panel')).not.toBeInTheDocument();
       expect(screen.getByTestId('credential-badge')).toBeInTheDocument();
     });
 
@@ -421,13 +422,14 @@ describe('App Component', () => {
       });
     });
 
-    it('should render main content components in layout', () => {
+    it('should render weather and chat on small viewport', () => {
       render(<App />);
       
-      // Check that all main components are rendered
+      // Check that weather and chat are always rendered
       expect(screen.getByTestId('weather-widget')).toBeInTheDocument();
       expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
-      expect(screen.getByTestId('results-panel')).toBeInTheDocument();
+      // ResultsPanel is not directly visible on small/medium (useMediaQuery returns false in jsdom)
+      expect(screen.queryByTestId('results-panel')).not.toBeInTheDocument();
     });
   });
 });

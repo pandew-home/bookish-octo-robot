@@ -1,7 +1,8 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Box, Container, AppBar, Toolbar, Typography, Alert } from '@mui/material';
+import { Box, Container, AppBar, Toolbar, Typography, Alert, useMediaQuery, IconButton, Drawer, Badge } from '@mui/material';
+import { Analytics as AnalyticsIcon } from '@mui/icons-material';
 import LoginForm from './components/LoginForm';
 import ClusterSelector from './components/ClusterSelector';
 import { CredentialBadge } from './components/CredentialBadge';
@@ -35,75 +36,78 @@ function App() {
   useWeather(cluster.selectedCluster, credentials.isAuthenticated);
 
   // Create theme - Deep Space / Obsidian dark theme
-  const theme = useMemo(() => {
-    return createTheme({
-      palette: {
-        mode: 'dark',
-        primary: {
-          main: '#66a16e',
-          light: '#88c490',
-          dark: '#4e8055',
-          contrastText: '#ffffff',
-        },
-        secondary: {
-          main: '#4fc3f7',
-        },
-        background: {
-          default: '#0a1214',
-          paper: '#121d20',
-        },
-        text: {
-          primary: '#ffffff',
-          secondary: '#a0b0b5',
-        },
-        divider: '#1e2e32',
-        error: { main: '#f44336' },
-        warning: { main: '#ff9800' },
-        info: { main: '#4fc3f7' },
-        success: { main: '#66bb6a' },
+  const theme = useMemo(() => createTheme({
+    palette: {
+      mode: 'dark',
+      primary: {
+        main: '#66a16e',
+        light: '#88c490',
+        dark: '#4e8055',
+        contrastText: '#ffffff',
       },
-      components: {
-        MuiCard: {
-          styleOverrides: {
-            root: {
-              backgroundImage: 'none',
-              border: '1px solid #1e2e32',
-            },
+      secondary: {
+        main: '#4fc3f7',
+      },
+      background: {
+        default: '#0a1214',
+        paper: '#121d20',
+      },
+      text: {
+        primary: '#ffffff',
+        secondary: '#a0b0b5',
+      },
+      divider: '#1e2e32',
+      error: { main: '#f44336' },
+      warning: { main: '#ff9800' },
+      info: { main: '#4fc3f7' },
+      success: { main: '#66bb6a' },
+    },
+    components: {
+      MuiCard: {
+        styleOverrides: {
+          root: {
+            backgroundImage: 'none',
+            border: '1px solid #1e2e32',
           },
         },
-        MuiAppBar: {
-          styleOverrides: {
-            root: {
-              backgroundColor: '#0d1618',
-              backgroundImage: 'none',
-            },
+      },
+      MuiAppBar: {
+        styleOverrides: {
+          root: {
+            backgroundColor: '#0d1618',
+            backgroundImage: 'none',
           },
         },
-        MuiButton: {
-          styleOverrides: {
-            containedPrimary: {
-              '&:hover': { backgroundColor: '#4e8055' },
-            },
+      },
+      MuiButton: {
+        styleOverrides: {
+          containedPrimary: {
+            '&:hover': { backgroundColor: '#4e8055' },
           },
         },
-        MuiTextField: {
-          styleOverrides: {
-            root: {
-              '& .MuiOutlinedInput-root': {
-                '& fieldset': { borderColor: '#1e2e32' },
-                '&:hover fieldset': { borderColor: '#66a16e' },
-              },
+      },
+      MuiTextField: {
+        styleOverrides: {
+          root: {
+            '& .MuiOutlinedInput-root': {
+              '& fieldset': { borderColor: '#1e2e32' },
+              '&:hover fieldset': { borderColor: '#66a16e' },
             },
           },
         },
       },
-      typography: {
-        fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
-        h4: { fontWeight: 600 },
-        h6: { fontWeight: 500 },
-      },
-    });
-  }, []);
+    },
+    typography: {
+      fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+      h4: { fontWeight: 600 },
+      h6: { fontWeight: 500 },
+    },
+  }), []);
+
+  // Responsive breakpoints
+  const isLargeScreen = useMediaQuery(theme.breakpoints.up('lg'));
+  const isMediumScreen = useMediaQuery(theme.breakpoints.between('sm', 'lg'));
+  const [resultsDrawerOpen, setResultsDrawerOpen] = useState(false);
 
   // Render login form if not authenticated
   if (!credentials.isAuthenticated) {
@@ -219,38 +223,74 @@ function App() {
           <Box sx={{ mb: 3 }}>
             <WeatherWidget
               onAskAboutIssue={(issue) => {
-                // Pre-fill chat with question about the issue
                 chat.sendMessage(issue);
+              }}
+              onCheckEvents={() => {
+                chat.sendMessage('What recent events happened in the cluster?');
               }}
             />
           </Box>
 
           {/* Main content grid: Chat and Results */}
-          <Box
-            sx={{
-              display: 'grid',
-              gridTemplateColumns: { xs: '1fr', lg: '2fr 1fr' },
-              gap: 3,
-            }}
-          >
-            {/* Chat interface */}
-            <Box>
-              <ChatInterface
-                isAuthenticated={credentials.isAuthenticated}
-                selectedCluster={cluster.selectedCluster}
-                messages={chat.messages}
-                onMessagesChange={(messages) => {
-                  // This is handled internally by the ChatInterface
-                  // We're just passing the messages for display
-                }}
-              />
+          {isLargeScreen ? (
+            <Box
+              sx={{
+                display: 'grid',
+                gridTemplateColumns: '2fr 1fr',
+                gap: 3,
+              }}
+            >
+              <Box>
+                <ChatInterface
+                  isAuthenticated={credentials.isAuthenticated}
+                  selectedCluster={cluster.selectedCluster}
+                  messages={chat.messages}
+                  onMessagesChange={() => {}}
+                  onExportConversation={chat.exportConversation}
+                  onClearConversation={chat.clearMessages}
+                />
+              </Box>
+              <Box>
+                <ResultsPanel />
+              </Box>
             </Box>
-
-            {/* Results panel */}
+          ) : (
             <Box>
-              <ResultsPanel />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                <ChatInterface
+                  isAuthenticated={credentials.isAuthenticated}
+                  selectedCluster={cluster.selectedCluster}
+                  messages={chat.messages}
+                  onMessagesChange={() => {}}
+                  onExportConversation={chat.exportConversation}
+                  onClearConversation={chat.clearMessages}
+                />
+              </Box>
+              {isMediumScreen && (
+                <IconButton
+                  onClick={() => setResultsDrawerOpen(true)}
+                  color="primary"
+                  sx={{ position: 'fixed', bottom: 16, right: 16, zIndex: 1000 }}
+                >
+                  <Badge color="primary">
+                    <AnalyticsIcon />
+                  </Badge>
+                </IconButton>
+              )}
+              <Drawer
+                anchor="right"
+                open={resultsDrawerOpen}
+                onClose={() => setResultsDrawerOpen(false)}
+                PaperProps={{ sx: { width: '85%', maxWidth: 400 } }}
+              >
+                {resultsDrawerOpen && (
+                  <Box sx={{ p: 2 }}>
+                    <ResultsPanel />
+                  </Box>
+                )}
+              </Drawer>
             </Box>
-          </Box>
+          )}
         </Container>
       </Box>
     </ThemeProvider>

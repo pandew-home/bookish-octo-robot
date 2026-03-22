@@ -6,28 +6,12 @@ import {
   Box,
   Button,
   Alert,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  Table,
-  TableHead,
-  TableBody,
-  TableRow,
-  TableCell,
   LinearProgress,
   Chip,
-  Divider,
-  IconButton,
-  Collapse,
   Stack,
   CircularProgress,
 } from '@mui/material';
 import {
-  Close as CloseIcon,
-  ExpandMore as ExpandMoreIcon,
-  ExpandLess as ExpandLessIcon,
-  Visibility as ViewIcon,
   Event as EventIcon,
   Help as HelpIcon,
   Warning as WarningIcon,
@@ -54,15 +38,6 @@ const weatherNames: Record<WeatherState, string> = {
   stormy: 'Stormy',
 };
 
-// Cluster tool info interface
-interface ClusterToolInfo {
-  name: string;
-  version: string;
-  category: string;
-  deploymentAgeDays?: number;
-  status: 'healthy' | 'degraded' | 'unknown';
-}
-
 // K8sGPT Result summary interface
 interface K8sGPTResultSummary {
   name: string;
@@ -85,7 +60,6 @@ interface WeatherData {
   clusterVersion: string;
   k8sgptResultCount: number;
   topIssues?: K8sGPTResultSummary[];
-  clusterTools: ClusterToolInfo[];
   timestamp: string;
   k8sgptStatus?: K8sGPTStatus;
   k8sgptMessage?: string;
@@ -94,16 +68,15 @@ interface WeatherData {
 // Props interface
 interface WeatherWidgetProps {
   onAskAboutIssue?: (issue: string) => void;
+  onCheckEvents?: () => void;
 }
 
 const WEATHER_POLL_INTERVAL = 60000; // 60 seconds
 const API_BASE_URL = process.env.REACT_APP_API_URL || '';
 
-export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue }) => {
+export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue, onCheckEvents }) => {
   const [weatherData, setWeatherData] = useState<WeatherData | null>(null);
   const [previousWeatherData, setPreviousWeatherData] = useState<WeatherData | null>(null);
-  const [detailsOpen, setDetailsOpen] = useState(false);
-  const [toolsExpanded, setToolsExpanded] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,8 +91,7 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
       newData.clusterName !== oldData.clusterName ||
       newData.clusterVersion !== oldData.clusterVersion ||
       newData.k8sgptResultCount !== oldData.k8sgptResultCount ||
-      JSON.stringify(newData.topIssues) !== JSON.stringify(oldData.topIssues) ||
-      JSON.stringify(newData.clusterTools) !== JSON.stringify(oldData.clusterTools)
+      JSON.stringify(newData.topIssues) !== JSON.stringify(oldData.topIssues)
     );
   };
 
@@ -160,13 +132,6 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
           problem: issue.problem,
           solution: issue.solution,
         })),
-        clusterTools: rawData.cluster_tools?.map((tool: any) => ({
-          name: tool.name,
-          version: tool.version,
-          category: tool.category,
-          deploymentAgeDays: tool.deployment_age_days,
-          status: tool.status,
-        })) || [],
         timestamp: rawData.timestamp,
         k8sgptStatus: rawData.k8sgpt_status,
         k8sgptMessage: rawData.k8sgpt_message,
@@ -219,26 +184,6 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
     return `${diffDays}d ago`;
   };
 
-  // Get status chip color
-  const getStatusColor = (status: ClusterToolInfo['status']) => {
-    switch (status) {
-      case 'healthy': return 'success';
-      case 'degraded': return 'warning';
-      case 'unknown': return 'default';
-      default: return 'default';
-    }
-  };
-
-  // Get status icon
-  const getStatusIcon = (status: ClusterToolInfo['status']) => {
-    switch (status) {
-      case 'healthy': return '✅';
-      case 'degraded': return '⚠️';
-      case 'unknown': return '❓';
-      default: return '❓';
-    }
-  };
-
   // Get severity color
   const getSeverityColor = (severity: 'low' | 'medium' | 'high') => {
     switch (severity) {
@@ -252,11 +197,8 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
   // Handle quick action buttons
   const handleQuickAction = (action: string, issue?: K8sGPTResultSummary) => {
     switch (action) {
-      case 'view-pods':
-        onAskAboutIssue?.('Show me the failing pods and their status');
-        break;
       case 'check-events':
-        onAskAboutIssue?.('What recent events happened in the cluster?');
+        onCheckEvents?.();
         break;
       case 'ask-about-this':
         if (issue) {
@@ -352,16 +294,16 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
         )}
 
         <CardContent sx={{ textAlign: 'center', py: 3 }}>
-          {/* K8sGPT Status Banner */}
+          {/* Cluster Analyzer Status Banner */}
           {displayData.k8sgptStatus && displayData.k8sgptStatus !== 'available' && (
             <Alert
               severity={displayData.k8sgptStatus === 'not_installed' ? 'info' : 'warning'}
               sx={{ mb: 2, textAlign: 'left' }}
             >
               {displayData.k8sgptStatus === 'not_installed' ? (
-                <>K8sGPT operator is not installed on this cluster. Weather data may be incomplete.</>
+                <>Cluster Analyzer operator is not installed on this cluster. Weather data may be incomplete.</>
               ) : (
-                <>{displayData.k8sgptMessage || 'Unable to reach K8sGPT. Some data may be unavailable.'}</>
+                <>{displayData.k8sgptMessage || 'Unable to reach Cluster Analyzer. Some data may be unavailable.'}</>
               )}
             </Alert>
           )}
@@ -381,9 +323,9 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
             </Typography>
           </Box>
 
-          {/* K8sGPT Result Count */}
+          {/* Cluster Analyzer Result Count */}
           <Typography variant="body2" color="text.secondary" gutterBottom>
-            {displayData.k8sgptResultCount} K8sGPT {displayData.k8sgptResultCount === 1 ? 'result' : 'results'}
+            {displayData.k8sgptResultCount} Cluster Analyzer {displayData.k8sgptResultCount === 1 ? 'result' : 'results'}
           </Typography>
 
           {/* Last Updated */}
@@ -402,13 +344,6 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
                     sx={{ textAlign: 'left' }}
                     action={
                       <Stack direction="row" spacing={1}>
-                        <Button
-                          size="small"
-                          startIcon={<ViewIcon />}
-                          onClick={() => handleQuickAction('view-pods')}
-                        >
-                          View Pods
-                        </Button>
                         <Button
                           size="small"
                           startIcon={<EventIcon />}
@@ -441,142 +376,8 @@ export const WeatherWidget: React.FC<WeatherWidgetProps> = ({ onAskAboutIssue })
             </Box>
           )}
 
-          {/* View Details Button */}
-          <Box sx={{ mt: 3 }}>
-            <Button
-              variant="outlined"
-              onClick={() => setDetailsOpen(true)}
-              size="large"
-            >
-              View Details
-            </Button>
-          </Box>
         </CardContent>
       </Card>
-
-      {/* Details Dialog */}
-      <Dialog
-        open={detailsOpen}
-        onClose={() => setDetailsOpen(false)}
-        maxWidth="md"
-        fullWidth
-      >
-        <DialogTitle>
-          Cluster Health Details
-          <IconButton
-            aria-label="close"
-            onClick={() => setDetailsOpen(false)}
-            sx={{ position: 'absolute', right: 8, top: 8 }}
-          >
-            <CloseIcon />
-          </IconButton>
-        </DialogTitle>
-
-        <DialogContent>
-          {/* Cluster Info */}
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="body1" gutterBottom>
-              <strong>Cluster:</strong> {displayData.clusterName}
-            </Typography>
-            <Typography variant="body1" gutterBottom>
-              <strong>Kubernetes:</strong> {displayData.clusterVersion}
-            </Typography>
-            <Typography variant="body1" gutterBottom>
-              <strong>Weather:</strong> {weatherIcons[displayData.state]} {weatherNames[displayData.state]}
-            </Typography>
-            <Typography variant="body1" gutterBottom>
-              <strong>K8sGPT Results:</strong> {displayData.k8sgptResultCount}
-            </Typography>
-          </Box>
-
-          <Divider sx={{ my: 2 }} />
-
-          {/* Top Issues Section */}
-          {hasIssues && (
-            <>
-              <Typography variant="h6" gutterBottom>
-                TOP ISSUES
-              </Typography>
-              <Box sx={{ mb: 3 }}>
-                <Stack spacing={1}>
-                  {displayData.topIssues!.map((issue, index) => (
-                    <Alert
-                      key={index}
-                      severity={getSeverityColor(issue.severity)}
-                      sx={{ textAlign: 'left' }}
-                    >
-                      <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                        {issue.kind}/{issue.name}
-                      </Typography>
-                      <Typography variant="body2" color="text.secondary">
-                        {issue.namespace} • {issue.severity}
-                      </Typography>
-                      <Typography variant="body2" sx={{ mt: 0.5 }}>
-                        <strong>Problem:</strong> {issue.problem}
-                      </Typography>
-                      {issue.solution && (
-                        <Typography variant="body2" sx={{ mt: 0.5 }}>
-                          <strong>Solution:</strong> {issue.solution}
-                        </Typography>
-                      )}
-                    </Alert>
-                  ))}
-                </Stack>
-              </Box>
-
-              <Divider sx={{ my: 2 }} />
-            </>
-          )}
-
-          {/* Cluster Tools */}
-          <Box sx={{ mb: 2 }}>
-            <Button
-              onClick={() => setToolsExpanded(!toolsExpanded)}
-              endIcon={toolsExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-              sx={{ mb: 1 }}
-            >
-              <Typography variant="h6">
-                CLUSTER TOOLS & VERSIONS
-              </Typography>
-            </Button>
-
-            <Collapse in={toolsExpanded}>
-              <Table size="small">
-                <TableHead>
-                  <TableRow>
-                    <TableCell><strong>Tool</strong></TableCell>
-                    <TableCell><strong>Version</strong></TableCell>
-                    <TableCell><strong>Category</strong></TableCell>
-                    <TableCell><strong>Status</strong></TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {displayData.clusterTools.map((tool, index) => (
-                    <TableRow key={index}>
-                      <TableCell>{tool.name}</TableCell>
-                      <TableCell>{tool.version}</TableCell>
-                      <TableCell>{tool.category}</TableCell>
-                      <TableCell>
-                        <Chip
-                          label={`${getStatusIcon(tool.status)} ${tool.status}`}
-                          color={getStatusColor(tool.status)}
-                          size="small"
-                        />
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </Collapse>
-          </Box>
-        </DialogContent>
-
-        <DialogActions>
-          <Button onClick={() => setDetailsOpen(false)}>
-            Close
-          </Button>
-        </DialogActions>
-      </Dialog>
     </>
   );
 };

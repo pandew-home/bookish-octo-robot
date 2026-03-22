@@ -108,7 +108,7 @@ describe('CredentialBadge', () => {
     expect(screen.getByText(/Active \(5m\)/)).toBeInTheDocument();
   });
 
-  it('should format time correctly for seconds only', () => {
+  it('should format time correctly for seconds only (rounded to minutes)', () => {
     mockUseCredentialStatus.mockReturnValue({
       status: {
         present: true,
@@ -121,7 +121,7 @@ describe('CredentialBadge', () => {
     });
 
     render(<CredentialBadge />);
-    expect(screen.getByText(/Active \(45s\)/)).toBeInTheDocument();
+    expect(screen.getByText(/Active \(0m\)/)).toBeInTheDocument();
   });
 
   it('should format time correctly for hours and minutes', () => {

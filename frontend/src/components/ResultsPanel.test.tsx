@@ -63,7 +63,7 @@ describe('ResultsPanel', () => {
     it('should render the component with title', async () => {
       render(<ResultsPanel />);
       
-      expect(screen.getByText('K8sGPT Results')).toBeInTheDocument();
+      expect(screen.getByText('Cluster Analyzer Results')).toBeInTheDocument();
     });
 
     it('should display loading indicator initially', () => {
@@ -88,7 +88,7 @@ describe('ResultsPanel', () => {
       render(<ResultsPanel />);
       
       await waitFor(() => {
-        expect(screen.getByText('3 results')).toBeInTheDocument();
+        expect(screen.getByText(/results shown/)).toBeInTheDocument();
       });
     });
 
@@ -168,75 +168,67 @@ describe('ResultsPanel', () => {
       render(<ResultsPanel />);
       
       await waitFor(() => {
-        expect(screen.getByText(/No K8sGPT results found/)).toBeInTheDocument();
+        expect(screen.getByText(/No Cluster Analyzer results found/)).toBeInTheDocument();
         expect(screen.getByText(/Your cluster is healthy/)).toBeInTheDocument();
       });
     });
   });
 
   describe('Filtering', () => {
-    it('should open filter panel when filter button is clicked', async () => {
+    it('should show severity tabs', async () => {
       render(<ResultsPanel />);
       
       await waitFor(() => {
         expect(screen.getByText('pod-failing-1')).toBeInTheDocument();
       });
       
-      // Find filter button by test ID
-      const filterButton = screen.getByTestId('FilterListIcon').closest('button');
-      if (filterButton) {
-        fireEvent.click(filterButton);
-      }
-      
-      await waitFor(() => {
-        expect(screen.getByText('Filters')).toBeInTheDocument();
-      });
+      // Verify severity tabs are present
+      expect(screen.getByText(/All/)).toBeInTheDocument();
+      expect(screen.getByText('High')).toBeInTheDocument();
+      expect(screen.getByText('Medium')).toBeInTheDocument();
+      expect(screen.getByText('Low')).toBeInTheDocument();
     });
 
-    it('should have filter controls available', async () => {
+    it('should filter results by severity tab click', async () => {
       render(<ResultsPanel />);
       
       await waitFor(() => {
-        expect(screen.getByText('3 results')).toBeInTheDocument();
+        expect(screen.getByText('pod-failing-1')).toBeInTheDocument();
       });
       
-      // Verify filter button is present
-      const filterIcon = screen.getByTestId('FilterListIcon');
-      expect(filterIcon).toBeInTheDocument();
+      // Click High tab
+      const highTab = screen.getByText('High');
+      fireEvent.click(highTab);
+      
+      // Only high severity result should be visible
+      await waitFor(() => {
+        expect(screen.getByText('pod-failing-1')).toBeInTheDocument();
+        expect(screen.queryByText('deployment-scaling-issue')).not.toBeInTheDocument();
+        expect(screen.queryByText('service-endpoint-warning')).not.toBeInTheDocument();
+      });
+      
+      expect(screen.getByText('1 result shown')).toBeInTheDocument();
     });
 
-    it('should display available namespaces and kinds for filtering', async () => {
+    it('should display namespace and kind in results', async () => {
       render(<ResultsPanel />);
       
       await waitFor(() => {
-        expect(screen.getByText('3 results')).toBeInTheDocument();
+        expect(screen.getByText('pod-failing-1')).toBeInTheDocument();
       });
       
       // Results contain different namespaces and kinds
-      expect(screen.getAllByText('default').length).toBeGreaterThan(0);
-      expect(screen.getByText('production')).toBeInTheDocument();
       expect(screen.getByText('Pod')).toBeInTheDocument();
       expect(screen.getByText('Deployment')).toBeInTheDocument();
       expect(screen.getByText('Service')).toBeInTheDocument();
-    });
-
-    it('should show filter button in header', async () => {
-      render(<ResultsPanel />);
-      
-      await waitFor(() => {
-        expect(screen.getByText('pod-failing-1')).toBeInTheDocument();
-      });
-      
-      // Verify filter button is present
-      const filterIcon = screen.getByTestId('FilterListIcon');
-      expect(filterIcon).toBeInTheDocument();
+      expect(screen.getByText('production')).toBeInTheDocument();
     });
 
     it('should have refresh button in header', async () => {
       render(<ResultsPanel />);
       
       await waitFor(() => {
-        expect(screen.getByText('3 results')).toBeInTheDocument();
+        expect(screen.getByText(/results shown/)).toBeInTheDocument();
       });
       
       // Verify refresh button is present
@@ -294,33 +286,6 @@ describe('ResultsPanel', () => {
         // Solution text should not be visible (it's in a Collapse component)
         // We can't easily test this without more complex DOM queries
       }
-    });
-  });
-
-  describe('Ask About This Action', () => {
-    it('should call onAskAbout callback when button is clicked', async () => {
-      const mockOnAskAbout = jest.fn();
-      render(<ResultsPanel onAskAbout={mockOnAskAbout} />);
-      
-      await waitFor(() => {
-        expect(screen.getByText('pod-failing-1')).toBeInTheDocument();
-      });
-      
-      const askButtons = screen.getAllByText('Ask About This');
-      fireEvent.click(askButtons[0]);
-      
-      expect(mockOnAskAbout).toHaveBeenCalledWith(mockResults[0]);
-    });
-
-    it('should disable Ask About This button when no callback provided', async () => {
-      render(<ResultsPanel />);
-      
-      await waitFor(() => {
-        expect(screen.getByText('pod-failing-1')).toBeInTheDocument();
-      });
-      
-      const askButtons = screen.getAllByText('Ask About This');
-      expect(askButtons[0]).toBeDisabled();
     });
   });
 

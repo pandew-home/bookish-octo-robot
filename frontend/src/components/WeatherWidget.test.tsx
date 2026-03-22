@@ -11,15 +11,6 @@ const mockWeatherData = {
   cluster_version: '1.28',
   k8sgpt_result_count: 0,
   top_issues: [],
-  cluster_tools: [
-    {
-      name: 'k8sgpt',
-      version: '0.3.0',
-      category: 'diagnostics',
-      deployment_age_days: 5,
-      status: 'healthy',
-    },
-  ],
   timestamp: new Date().toISOString(),
 };
 
@@ -49,7 +40,7 @@ describe('WeatherWidget', () => {
     });
 
     expect(screen.getByText('Sunny')).toBeInTheDocument();
-    expect(screen.getByText(/0 K8sGPT results/)).toBeInTheDocument();
+    expect(screen.getByText(/0 Cluster Analyzer results/)).toBeInTheDocument();
   });
 
   it('should display weather icon for sunny state', async () => {
@@ -106,21 +97,6 @@ describe('WeatherWidget', () => {
     });
   });
 
-  it('should open details dialog when View Details is clicked', async () => {
-    render(<WeatherWidget />);
-
-    await waitFor(() => {
-      expect(screen.getByText('test-cluster')).toBeInTheDocument();
-    });
-
-    const viewDetailsButton = screen.getByText('View Details');
-    fireEvent.click(viewDetailsButton);
-
-    await waitFor(() => {
-      expect(screen.getByText('Cluster Health Details')).toBeInTheDocument();
-    });
-  });
-
   it('should call onAskAboutIssue when quick action is clicked', async () => {
     const mockOnAskAboutIssue = jest.fn();
     
@@ -156,31 +132,6 @@ describe('WeatherWidget', () => {
     expect(mockOnAskAboutIssue).toHaveBeenCalledWith(
       expect.stringContaining('Pod/failing-pod')
     );
-  });
-
-  it('should display cluster tools in details dialog', async () => {
-    render(<WeatherWidget />);
-
-    await waitFor(() => {
-      expect(screen.getByText('test-cluster')).toBeInTheDocument();
-    });
-
-    const viewDetailsButton = screen.getByText('View Details');
-    fireEvent.click(viewDetailsButton);
-
-    await waitFor(() => {
-      expect(screen.getByText('Cluster Health Details')).toBeInTheDocument();
-    });
-
-    // Expand cluster tools section
-    const toolsButton = screen.getByText(/CLUSTER TOOLS & VERSIONS/);
-    fireEvent.click(toolsButton);
-
-    await waitFor(() => {
-      expect(screen.getByText('k8sgpt')).toBeInTheDocument();
-    });
-
-    expect(screen.getByText('0.3.0')).toBeInTheDocument();
   });
 
   it('should preserve previous data during refresh', async () => {

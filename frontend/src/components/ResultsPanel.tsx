@@ -4,16 +4,11 @@ import {
   CardContent,
   Typography,
   Box,
-  Button,
   Alert,
   Chip,
   Stack,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
-  OutlinedInput,
-  SelectChangeEvent,
+  Tabs,
+  Tab,
   Divider,
   IconButton,
   Collapse,
@@ -23,14 +18,11 @@ import {
 import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
-  Help as HelpIcon,
   Refresh as RefreshIcon,
-  FilterList as FilterIcon,
 } from '@mui/icons-material';
 import { resultsApi } from '../services/api';
 import {
   K8sGPTResult,
-  SeverityLevel,
   getSeverityColor,
   getSeverityIcon,
   getSeverityDisplayName,
@@ -41,11 +33,6 @@ import {
  */
 interface ResultsPanelProps {
   /**
-   * Callback when user clicks "Ask About This" for a result
-   */
-  onAskAbout?: (result: K8sGPTResult) => void;
-  
-  /**
    * Auto-refresh interval in milliseconds (default: 60000 = 60 seconds)
    */
   refreshInterval?: number;
@@ -54,18 +41,16 @@ interface ResultsPanelProps {
 /**
  * ResultsPanel Component
  * 
- * Displays K8sGPT Result CRDs with severity indicators, filtering by severity/namespace/kind,
- * and "Ask About This" button for each result. Fetches data from GET /api/results endpoint.
+ * Displays Cluster Analyzer Results with severity tabs and expandable details.
+ * Fetches data from GET /api/results endpoint.
  * 
  * Features:
- * - Display K8sGPT Result CRDs with severity indicators
- * - Filter by severity, namespace, kind
- * - "Ask About This" button for each result
+ * - Display Cluster Analyzer Results with severity indicators
+ * - Filter by severity (tabs)
  * - Auto-refresh every 60 seconds
  * - Expandable result details
  */
 export const ResultsPanel: React.FC<ResultsPanelProps> = ({
-  onAskAbout,
   refreshInterval = 60000,
 }) => {
   // State
@@ -73,45 +58,21 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set());
-  const [filterOpen, setFilterOpen] = useState(false);
   
-  // Filter state
-  const [selectedSeverities, setSelectedSeverities] = useState<SeverityLevel[]>([]);
-  const [selectedNamespaces, setSelectedNamespaces] = useState<string[]>([]);
-  const [selectedKinds, setSelectedKinds] = useState<string[]>([]);
+  // Severity tab state (0 = all, 1 = high, 2 = medium, 3 = low)
+  const [severityTab, setSeverityTab] = useState<number>(0);
 
-  // Extract unique values for filter dropdowns
-  const availableNamespaces = useMemo(() => {
-    const namespaces = new Set(results.map(r => r.namespace));
-    return Array.from(namespaces).sort();
-  }, [results]);
-
-  const availableKinds = useMemo(() => {
-    const kinds = new Set(results.map(r => r.kind));
-    return Array.from(kinds).sort();
-  }, [results]);
-
-  // Filter results based on selected filters
+  // Filter results based on severity tabs
   const filteredResults = useMemo(() => {
     return results.filter(result => {
-      // Filter by severity
-      if (selectedSeverities.length > 0 && !selectedSeverities.includes(result.severity)) {
-        return false;
-      }
-      
-      // Filter by namespace
-      if (selectedNamespaces.length > 0 && !selectedNamespaces.includes(result.namespace)) {
-        return false;
-      }
-      
-      // Filter by kind
-      if (selectedKinds.length > 0 && !selectedKinds.includes(result.kind)) {
-        return false;
-      }
+      // Filter by severity tab
+      if (severityTab === 1 && result.severity !== 'high') return false;
+      if (severityTab === 2 && result.severity !== 'medium') return false;
+      if (severityTab === 3 && result.severity !== 'low') return false;
       
       return true;
     });
-  }, [results, selectedSeverities, selectedNamespaces, selectedKinds]);
+  }, [results, severityTab]);
 
   // Fetch results from API
   const fetchResults = async () => {
@@ -135,7 +96,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
       
       setResults(convertedResults);
     } catch (err: any) {
-      console.error('Failed to fetch K8sGPT results:', err);
+      console.error('Failed to fetch Cluster Analyzer results:', err);
       setError(err.response?.data?.detail || err.message || 'Failed to fetch results');
     } finally {
       setLoading(false);
@@ -169,41 +130,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
     });
   };
 
-  // Handle "Ask About This" button
-  const handleAskAbout = (result: K8sGPTResult) => {
-    if (onAskAbout) {
-      onAskAbout(result);
-    }
-  };
-
-  // Handle filter changes
-  const handleSeverityChange = (event: SelectChangeEvent<SeverityLevel[]>) => {
-    const value = event.target.value;
-    setSelectedSeverities(typeof value === 'string' ? [] : value);
-  };
-
-  const handleNamespaceChange = (event: SelectChangeEvent<string[]>) => {
-    const value = event.target.value;
-    setSelectedNamespaces(typeof value === 'string' ? [] : value);
-  };
-
-  const handleKindChange = (event: SelectChangeEvent<string[]>) => {
-    const value = event.target.value;
-    setSelectedKinds(typeof value === 'string' ? [] : value);
-  };
-
-  // Clear all filters
-  const clearFilters = () => {
-    setSelectedSeverities([]);
-    setSelectedNamespaces([]);
-    setSelectedKinds([]);
-  };
-
   // Check if any filters are active
-  const hasActiveFilters = selectedSeverities.length > 0 || 
-                          selectedNamespaces.length > 0 || 
-                          selectedKinds.length > 0;
-
   // Format timestamp for display
   const formatTimestamp = (timestamp: string): string => {
     const date = new Date(timestamp);
@@ -225,23 +152,27 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
     <Card>
       <CardContent>
         {/* Header */}
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
           <Typography variant="h6" component="h2">
-            K8sGPT Results
+            Cluster Analyzer Results
           </Typography>
-          <Stack direction="row" spacing={1}>
-            <IconButton
-              onClick={() => setFilterOpen(!filterOpen)}
-              color={hasActiveFilters ? 'primary' : 'default'}
-              size="small"
-            >
-              <FilterIcon />
-            </IconButton>
-            <IconButton onClick={handleRefresh} disabled={loading} size="small">
-              <RefreshIcon />
-            </IconButton>
-          </Stack>
+          <IconButton onClick={handleRefresh} disabled={loading} size="small">
+            <RefreshIcon />
+          </IconButton>
         </Box>
+
+        {/* Severity Tabs */}
+        <Tabs
+          value={severityTab}
+          onChange={(_, newValue) => setSeverityTab(newValue)}
+          sx={{ mb: 2, minHeight: 36 }}
+          variant="fullWidth"
+        >
+          <Tab label={`All (${results.length})`} sx={{ minHeight: 36 }} />
+          <Tab label={`High`} sx={{ minHeight: 36 }} />
+          <Tab label={`Medium`} sx={{ minHeight: 36 }} />
+          <Tab label={`Low`} sx={{ minHeight: 36 }} />
+        </Tabs>
 
         {/* Loading indicator */}
         {loading && <LinearProgress sx={{ mb: 2 }} />}
@@ -253,130 +184,10 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
           </Alert>
         )}
 
-        {/* Filter section */}
-        <Collapse in={filterOpen}>
-          <Paper variant="outlined" sx={{ p: 2, mb: 2 }}>
-            <Stack spacing={2}>
-              <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                Filters
-              </Typography>
-
-              {/* Severity filter */}
-              <FormControl size="small" fullWidth>
-                <InputLabel>Severity</InputLabel>
-                <Select
-                  multiple
-                  value={selectedSeverities}
-                  onChange={handleSeverityChange}
-                  input={<OutlinedInput label="Severity" />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip
-                          key={value}
-                          label={`${getSeverityIcon(value)} ${getSeverityDisplayName(value)}`}
-                          size="small"
-                          color={getSeverityColor(value)}
-                        />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  <MenuItem value="high">
-                    <Chip
-                      label={`${getSeverityIcon('high')} High`}
-                      size="small"
-                      color="error"
-                      sx={{ mr: 1 }}
-                    />
-                  </MenuItem>
-                  <MenuItem value="medium">
-                    <Chip
-                      label={`${getSeverityIcon('medium')} Medium`}
-                      size="small"
-                      color="warning"
-                      sx={{ mr: 1 }}
-                    />
-                  </MenuItem>
-                  <MenuItem value="low">
-                    <Chip
-                      label={`${getSeverityIcon('low')} Low`}
-                      size="small"
-                      color="info"
-                      sx={{ mr: 1 }}
-                    />
-                  </MenuItem>
-                </Select>
-              </FormControl>
-
-              {/* Namespace filter */}
-              <FormControl size="small" fullWidth>
-                <InputLabel>Namespace</InputLabel>
-                <Select
-                  multiple
-                  value={selectedNamespaces}
-                  onChange={handleNamespaceChange}
-                  input={<OutlinedInput label="Namespace" />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  {availableNamespaces.map((namespace) => (
-                    <MenuItem key={namespace} value={namespace}>
-                      {namespace}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              {/* Kind filter */}
-              <FormControl size="small" fullWidth>
-                <InputLabel>Kind</InputLabel>
-                <Select
-                  multiple
-                  value={selectedKinds}
-                  onChange={handleKindChange}
-                  input={<OutlinedInput label="Kind" />}
-                  renderValue={(selected) => (
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                      {selected.map((value) => (
-                        <Chip key={value} label={value} size="small" />
-                      ))}
-                    </Box>
-                  )}
-                >
-                  {availableKinds.map((kind) => (
-                    <MenuItem key={kind} value={kind}>
-                      {kind}
-                    </MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-
-              {/* Clear filters button */}
-              {hasActiveFilters && (
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={clearFilters}
-                  fullWidth
-                >
-                  Clear Filters
-                </Button>
-              )}
-            </Stack>
-          </Paper>
-        </Collapse>
-
         {/* Results count */}
-        <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box sx={{ mb: 2 }}>
           <Typography variant="body2" color="text.secondary">
-            {filteredResults.length} {filteredResults.length === 1 ? 'result' : 'results'}
-            {hasActiveFilters && ` (filtered from ${results.length})`}
+            {filteredResults.length} {filteredResults.length === 1 ? 'result' : 'results'} shown
           </Typography>
         </Box>
 
@@ -385,7 +196,7 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
           <Box sx={{ textAlign: 'center', py: 4 }}>
             <Typography variant="body2" color="text.secondary">
               {results.length === 0 
-                ? 'No K8sGPT results found. Your cluster is healthy! ☀️'
+                ? 'No Cluster Analyzer results found. Your cluster is healthy!'
                 : 'No results match the selected filters.'}
             </Typography>
           </Box>
@@ -469,19 +280,6 @@ export const ResultsPanel: React.FC<ResultsPanelProps> = ({
                       </Box>
                     )}
                   </Collapse>
-
-                  {/* Action button */}
-                  <Box sx={{ mt: 2 }}>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      startIcon={<HelpIcon />}
-                      onClick={() => handleAskAbout(result)}
-                      disabled={!onAskAbout}
-                    >
-                      Ask About This
-                    </Button>
-                  </Box>
                 </Paper>
               );
             })}

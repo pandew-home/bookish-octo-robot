@@ -8,18 +8,13 @@ import {
 import { useCredentialStatus } from '../hooks/useCredentialStatus';
 
 /**
- * Format seconds into human-readable time (e.g., "5m 30s", "2h 15m")
+ * Format seconds into human-readable time (e.g., "5m", "2h 15m")
  */
 const formatTimeRemaining = (seconds: number): string => {
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-
   const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = seconds % 60;
 
   if (minutes < 60) {
-    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+    return `${minutes}m`;
   }
 
   const hours = Math.floor(minutes / 60);

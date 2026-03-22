@@ -246,7 +246,7 @@ describe('ChatInterface', () => {
     expect(screen.getByText('Solution 1')).toBeInTheDocument();
   });
 
-  it('should display K8sGPT findings when present', async () => {
+  it('should display Cluster Analyzer findings when present', async () => {
     const mockResponse = {
       content: 'Response with findings',
       citations: [],
@@ -280,7 +280,7 @@ describe('ChatInterface', () => {
     fireEvent.click(sendButton);
 
     await waitFor(() => {
-      expect(screen.getByText('K8sGPT Findings:')).toBeInTheDocument();
+      expect(screen.getByText('Cluster Analyzer Findings:')).toBeInTheDocument();
     });
 
     expect(screen.getByText('Pod/failing-pod')).toBeInTheDocument();

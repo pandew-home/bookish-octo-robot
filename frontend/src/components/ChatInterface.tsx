@@ -15,6 +15,10 @@ import {
   Stack,
   Divider,
   Tooltip,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -25,6 +29,9 @@ import {
   Person as PersonIcon,
   SmartToy as BotIcon,
   Warning as WarningIcon,
+  MoreVert as MoreVertIcon,
+  Download as DownloadIcon,
+  DeleteSweep as ClearIcon,
 } from '@mui/icons-material';
 import { CredentialBadge } from './CredentialBadge';
 import { SolutionSubmitDialog } from './SolutionSubmitDialog';
@@ -41,7 +48,7 @@ interface Citation {
   successRate?: number;
 }
 
-interface K8sGPTFinding {
+interface ClusterAnalyzerFinding {
   name: string;
   kind: string;
   namespace: string;
@@ -56,7 +63,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   citations?: Citation[];
-  k8sgptFindings?: K8sGPTFinding[];
+  k8sgptFindings?: ClusterAnalyzerFinding[];
   safetyNotice?: string;
   timestamp: string;
   savedToKB?: boolean;
@@ -75,6 +82,8 @@ interface ChatInterfaceProps {
   suggestedQueries?: string[];
   messages?: ChatMessage[];
   onMessagesChange?: (messages: ChatMessage[]) => void;
+  onExportConversation?: () => Promise<any>;
+  onClearConversation?: () => void;
 }
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '';
@@ -87,6 +96,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   suggestedQueries = [],
   messages: externalMessages,
   onMessagesChange,
+  onExportConversation,
+  onClearConversation,
 }) => {
   const [internalMessages, setInternalMessages] = useState<ChatMessage[]>([]);
   const [currentQuery, setCurrentQuery] = useState('');
@@ -95,6 +106,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [expandedFindings, setExpandedFindings] = useState<Set<string>>(new Set());
   const [solutionDialogOpen, setSolutionDialogOpen] = useState(false);
   const [selectedMessageForKB, setSelectedMessageForKB] = useState<ChatMessage | null>(null);
+  const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Use external messages if provided, otherwise use internal state
@@ -258,6 +270,58 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     setSelectedMessageForKB(null);
   };
 
+  // Handle chat actions menu
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setMenuAnchorEl(event.currentTarget);
+  };
+
+  const handleMenuClose = () => {
+    setMenuAnchorEl(null);
+  };
+
+  const handleExport = async () => {
+    handleMenuClose();
+    if (onExportConversation) {
+      const result = await onExportConversation();
+      if (result) {
+        const md = [
+          `# Conversation Export`,
+          `**Cluster:** ${result.cluster}`,
+          `**Date:** ${new Date(result.timestamp).toLocaleString()}`,
+          '',
+          `## Problem`,
+          result.problem,
+          '',
+          `## Investigation`,
+          result.investigation,
+          '',
+          `## Root Cause`,
+          result.rootCause,
+          '',
+          `## Solution`,
+          result.solution,
+          '',
+          `## Verification`,
+          result.verification,
+        ].join('\n');
+        const blob = new Blob([md], { type: 'text/markdown' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `conversation-${result.cluster || selectedCluster || 'export'}.md`;
+        a.click();
+        URL.revokeObjectURL(url);
+      }
+    }
+  };
+
+  const handleClear = () => {
+    handleMenuClose();
+    if (onClearConversation) {
+      onClearConversation();
+    }
+  };
+
   // Copy text to clipboard
   const copyToClipboard = async (text: string) => {
     try {
@@ -280,7 +344,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
     });
   };
 
-  // Toggle K8sGPT findings expansion
+  // Toggle Cluster Analyzer findings expansion
   const toggleFindingsExpansion = (messageId: string) => {
     setExpandedFindings(prev => {
       const newSet = new Set(prev);
@@ -372,7 +436,34 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                   Cluster: <strong>{selectedCluster}</strong>
                 </Typography>
               )}
-              <CredentialBadge />
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <CredentialBadge />
+                {(onExportConversation || onClearConversation) && messages.length > 0 && (
+                  <>
+                    <IconButton size="small" onClick={handleMenuOpen}>
+                      <MoreVertIcon fontSize="small" />
+                    </IconButton>
+                    <Menu
+                      anchorEl={menuAnchorEl}
+                      open={Boolean(menuAnchorEl)}
+                      onClose={handleMenuClose}
+                    >
+                      {onExportConversation && (
+                        <MenuItem onClick={handleExport}>
+                          <ListItemIcon><DownloadIcon fontSize="small" /></ListItemIcon>
+                          <ListItemText>Export Conversation</ListItemText>
+                        </MenuItem>
+                      )}
+                      {onClearConversation && (
+                        <MenuItem onClick={handleClear}>
+                          <ListItemIcon><ClearIcon fontSize="small" /></ListItemIcon>
+                          <ListItemText>Clear Conversation</ListItemText>
+                        </MenuItem>
+                      )}
+                    </Menu>
+                  </>
+                )}
+              </Box>
             </Box>
           )}
 
@@ -476,12 +567,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     </Alert>
                   )}
 
-                  {/* K8sGPT Findings */}
+                  {/* Cluster Analyzer Findings */}
                   {message.k8sgptFindings && message.k8sgptFindings.length > 0 && (
                     <Box sx={{ mt: 2 }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
                         <Typography variant="caption" color="text.secondary">
-                          K8sGPT Findings:
+                          Cluster Analyzer Findings:
                         </Typography>
                         <Button
                           size="small"

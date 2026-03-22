@@ -110,7 +110,7 @@ export const useCredentialStatus = (): CredentialStatusState => {
     return () => clearInterval(interval);
   }, [fetchStatus]);
 
-  // Update countdown timer every second
+  // Update countdown timer every minute
   useEffect(() => {
     if (timeRemaining === null || timeRemaining <= 0) {
       return;
@@ -121,9 +121,9 @@ export const useCredentialStatus = (): CredentialStatusState => {
         if (prev === null || prev <= 0) {
           return null;
         }
-        return prev - 1;
+        return prev - 60;
       });
-    }, 1000);
+    }, 60000);
 
     return () => clearInterval(interval);
   }, [timeRemaining]);
