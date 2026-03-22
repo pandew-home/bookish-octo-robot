@@ -106,9 +106,6 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
         if not is_valid:
             raise HTTPException(status_code=400, detail=error_msg)
 
-        # Use cleaned query for the rest of processing
-        request.query = cleaned_query
-
         # Check rate limits
         allowed, retry_after, remaining = await rate_limiter.check_rate_limit(
             user_id=request.user_id, max_requests=20, window_seconds=60, endpoint="chat"
@@ -180,7 +177,7 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
 
             # Step 5: Route and classify query
             query_router = QueryRouter()
-            enrichment_plan = query_router.classify(request.query)
+            enrichment_plan = query_router.classify(cleaned_query)
 
             logger.info(
                 f"Query classified: {[c.value for c in enrichment_plan.categories]}"
@@ -205,7 +202,7 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             enriched_context.k8sgpt_results = k8sgpt_results
 
             rag_response = rag.process_query(
-                query=request.query,
+                query=cleaned_query,
                 enriched_context=enriched_context,
                 max_tokens=request.max_tokens,
                 is_export=request.is_export,
@@ -219,7 +216,7 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             if not conversation_id:
                 conversation_id = conversation_history.create_conversation(
                     user_id=request.user_id,
-                    title=request.query[:50],  # Use first 50 chars as title
+                    title=cleaned_query[:50],  # Use first 50 chars as title
                     cluster_name=request.cluster_name,  # Per-cluster isolation
                 )
 
@@ -228,7 +225,7 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 user_id=request.user_id,
                 conversation_id=conversation_id,
                 role="user",
-                content=request.query,
+                content=cleaned_query,
                 cluster_name=request.cluster_name,  # Per-cluster isolation
             )
 
@@ -243,7 +240,7 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
 
             # Step 10: Build response
             response = ChatResponse(
-                query=request.query,
+                query=cleaned_query,
                 response=rag_response["response"],
                 conversation_id=conversation_id,
                 citations=rag_response.get("citations", []),
