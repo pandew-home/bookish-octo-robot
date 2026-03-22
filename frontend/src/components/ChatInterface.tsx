@@ -141,8 +141,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       loading: true,
     };
 
+    // Capture snapshot now — messages is a stale closure inside the async below
+    const messagesWithLoading = [...messages, userMessage, loadingMessage];
+
     if (onMessagesChange) {
-      onMessagesChange([...messages, userMessage, loadingMessage]);
+      onMessagesChange(messagesWithLoading);
     } else {
       setInternalMessages(prev => [...prev, userMessage, loadingMessage]);
     }
@@ -186,7 +189,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       }
 
       const data = await response.json();
-      
+
       const assistantMessage: ChatMessage = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
@@ -199,9 +202,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         cluster: selectedCluster || undefined,
       };
 
-      // Replace loading message with actual response
+      // Replace loading message with actual response (use snapshot, not stale closure)
       if (onMessagesChange) {
-        onMessagesChange([...messages.slice(0, -1), assistantMessage]);
+        onMessagesChange([...messagesWithLoading.slice(0, -1), assistantMessage]);
       } else {
         setInternalMessages(prev => prev.slice(0, -1).concat(assistantMessage));
       }
@@ -213,9 +216,9 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         timestamp: new Date().toISOString(),
       };
 
-      // Replace loading message with error
+      // Replace loading message with error (use snapshot, not stale closure)
       if (onMessagesChange) {
-        onMessagesChange([...messages.slice(0, -1), errorMessage]);
+        onMessagesChange([...messagesWithLoading.slice(0, -1), errorMessage]);
       } else {
         setInternalMessages(prev => prev.slice(0, -1).concat(errorMessage));
       }
@@ -331,6 +334,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
   const handleClear = () => {
     handleMenuClose();
+    setInternalMessages([]);
     if (onClearConversation) {
       onClearConversation();
     }

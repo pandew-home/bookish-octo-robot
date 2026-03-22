@@ -253,7 +253,7 @@ function App() {
                   isAuthenticated={credentials.isAuthenticated}
                   selectedCluster={cluster.selectedCluster}
                   messages={chat.messages}
-                  onMessagesChange={() => {}}
+                  onMessagesChange={chat.setMessages}
                   onExportConversation={chat.exportConversation}
                   onClearConversation={chat.clearMessages}
                 />
@@ -269,7 +269,7 @@ function App() {
                   isAuthenticated={credentials.isAuthenticated}
                   selectedCluster={cluster.selectedCluster}
                   messages={chat.messages}
-                  onMessagesChange={() => {}}
+                  onMessagesChange={chat.setMessages}
                   onExportConversation={chat.exportConversation}
                   onClearConversation={chat.clearMessages}
                 />

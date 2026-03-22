@@ -1,9 +1,10 @@
-import { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { ChatMessage, ConversationExport, ChatErrorType } from '../types/chat';
 import apiClient from '../services/api';
 
 export interface UseChatState {
   messages: ChatMessage[];
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   isLoading: boolean;
   error: string | null;
   sendMessage: (query: string) => Promise<void>;
@@ -201,6 +202,7 @@ export const useChat = (
 
   return {
     messages,
+    setMessages,
     isLoading,
     error,
     sendMessage,
