@@ -20,7 +20,8 @@ from devops_kb.knowledge_base import KnowledgeBase
 
 from enrichment_engine import EnrichedContext
 from kb_seeder import seed_knowledge_base, should_seed_kb, should_force_reseed
-from template_engine import TemplateEngine, QueryCategory
+# TODO: Re-enable after debugging 500 errors
+# from template_engine import TemplateEngine, QueryCategory
 
 logger = logging.getLogger(__name__)
 
@@ -106,12 +107,14 @@ class RAGIntegration:
             raise ValueError(f"Failed to initialize RAG engine: {str(e)}")
 
         # Initialize template engine for prompt rendering
-        try:
-            self.template_engine = TemplateEngine(templates_path="/data/knowledge-base/templates")
-            logger.info("✓ Template engine initialized")
-        except Exception as e:
-            logger.warning(f"⚠ Template engine initialization failed: {e}, will use default prompts")
-            self.template_engine = None
+        # TODO: Re-enable after debugging 500 errors
+        # try:
+        #     self.template_engine = TemplateEngine(templates_path="/data/knowledge-base/templates")
+        #     logger.info("✓ Template engine initialized")
+        # except Exception as e:
+        #     logger.warning(f"⚠ Template engine initialization failed: {e}, will use default prompts")
+        #     self.template_engine = None
+        self.template_engine = None  # Disabled for debugging
 
         # Log final initialization status
         if self.initialization_warnings:
@@ -325,26 +328,27 @@ class RAGIntegration:
                 health_monitor_errors = self._format_k8sgpt_errors(enriched_context.k8sgpt_results)
 
             # Render prompt with template engine if available
+            # TODO: Re-enable template engine after debugging 500 errors
             rendered_query = query
-            if self.template_engine and enriched_context.enrichment_plan:
-                try:
-                    # Get query category from enrichment plan
-                    categories = enriched_context.enrichment_plan.get('categories', [])
-                    category = categories[0] if categories else 'general_health'
-
-                    # Render prompt with enriched context
-                    rendered_query = self.template_engine.render(
-                        query_category=category,
-                        cluster_context=cluster_context,
-                        kb_results=[],  # Will be populated by RAG search
-                        query=query,
-                        cluster_name=enriched_context.cluster_name or "default",
-                        k8sgpt_results=enriched_context.k8sgpt_results or []
-                    )
-                    logger.info(f"Query rendered with template: {category}")
-                except Exception as e:
-                    logger.warning(f"Failed to render query template: {e}, using original query")
-                    rendered_query = query
+            # if self.template_engine and enriched_context.enrichment_plan:
+            #     try:
+            #         # Get query category from enrichment plan
+            #         categories = enriched_context.enrichment_plan.get('categories', [])
+            #         category = categories[0] if categories else 'general_health'
+            #
+            #         # Render prompt with enriched context
+            #         rendered_query = self.template_engine.render(
+            #             query_category=category,
+            #             cluster_context=cluster_context,
+            #             kb_results=[],  # Will be populated by RAG search
+            #             query=query,
+            #             cluster_name=enriched_context.cluster_name or "default",
+            #             k8sgpt_results=enriched_context.k8sgpt_results or []
+            #         )
+            #         logger.info(f"Query rendered with template: {category}")
+            #     except Exception as e:
+            #         logger.warning(f"Failed to render query template: {e}, using original query")
+            #         rendered_query = query
 
             # Process query through RAG engine
             response = self.rag_engine.process_query(
