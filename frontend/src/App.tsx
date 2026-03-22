@@ -99,8 +99,16 @@ function App() {
     },
     typography: {
       fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
-      h4: { fontWeight: 600 },
-      h6: { fontWeight: 500 },
+      fontSize: 14,
+      h1: { fontSize: '2.5rem' },
+      h2: { fontSize: '2rem' },
+      h3: { fontSize: '1.75rem' },
+      h4: { fontSize: '1.5rem', fontWeight: 600 },
+      h5: { fontSize: '1.25rem' },
+      h6: { fontSize: '1rem', fontWeight: 500 },
+      body1: { fontSize: '0.875rem' },
+      body2: { fontSize: '0.75rem' },
+      caption: { fontSize: '0.6875rem' },
     },
   }), []);
 

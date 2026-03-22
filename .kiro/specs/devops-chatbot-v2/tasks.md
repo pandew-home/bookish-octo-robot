@@ -760,6 +760,16 @@ This implementation plan converts the v2.0 design into a series of incremental c
 - [x] 39. Final checkpoint - Ensure all tests pass and system is ready for deployment
   - Ensure all tests pass, ask the user if questions arise.
 
+- [ ] 40. Implement async timeout enforcement in EnrichmentEngine
+  - Wrap asyncio.gather in asyncio.wait_for(self.timeout) to prevent hanging on slow K8s API calls
+  - Add timeout handling to _enrich_pods, _enrich_deployments, etc.
+  - _Requirements: 5.8_
+
+- [ ] 41. Fix AWS credential validation pattern
+  - Update input_sanitizer.py to accept ASIA* (temporary) credentials in addition to AKIA*
+  - Pattern: ^A[SK]IA[0-9A-Z]{16}$
+  - _Requirements: 8.6_
+
 ## Notes
 
 - Tasks marked with `*` are optional property-based tests and can be skipped for faster MVP
