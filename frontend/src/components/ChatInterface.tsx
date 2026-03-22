@@ -72,6 +72,7 @@ interface ChatMessage {
   loading?: boolean;
   cluster?: string;
   errorType?: ChatErrorType;
+  backendErrors?: { type: string; message: string; severity: string }[];
 }
 
 // Props interface
@@ -82,7 +83,7 @@ interface ChatInterfaceProps {
   onSaveToKB?: (message: ChatMessage) => void;
   suggestedQueries?: string[];
   messages?: ChatMessage[];
-  onMessagesChange?: (messages: ChatMessage[]) => void;
+  onMessagesChange?: (messages: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
   onExportConversation?: () => Promise<any>;
   onClearConversation?: () => void;
 }
@@ -141,11 +142,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       loading: true,
     };
 
-    // Capture snapshot now — messages is a stale closure inside the async below
-    const messagesWithLoading = [...messages, userMessage, loadingMessage];
+    // Use functional updates throughout — replace loading message by ID so concurrent sends don't clobber each other
+    const loadingMessageId = loadingMessage.id;
 
     if (onMessagesChange) {
-      onMessagesChange(messagesWithLoading);
+      onMessagesChange(prev => [...prev, userMessage, loadingMessage]);
     } else {
       setInternalMessages(prev => [...prev, userMessage, loadingMessage]);
     }
@@ -200,13 +201,14 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         timestamp: new Date().toISOString(),
         queryType: data.query_type,
         cluster: selectedCluster || undefined,
+        backendErrors: data.errors?.length ? data.errors : undefined,
       };
 
-      // Replace loading message with actual response (use snapshot, not stale closure)
+      // Replace loading message in-place by ID (not by position)
       if (onMessagesChange) {
-        onMessagesChange([...messagesWithLoading.slice(0, -1), assistantMessage]);
+        onMessagesChange(prev => prev.map(m => m.id === loadingMessageId ? assistantMessage : m));
       } else {
-        setInternalMessages(prev => prev.slice(0, -1).concat(assistantMessage));
+        setInternalMessages(prev => prev.map(m => m.id === loadingMessageId ? assistantMessage : m));
       }
     } catch (error) {
       const errorMessage: ChatMessage = {
@@ -216,11 +218,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         timestamp: new Date().toISOString(),
       };
 
-      // Replace loading message with error (use snapshot, not stale closure)
+      // Replace loading message in-place by ID
       if (onMessagesChange) {
-        onMessagesChange([...messagesWithLoading.slice(0, -1), errorMessage]);
+        onMessagesChange(prev => prev.map(m => m.id === loadingMessageId ? errorMessage : m));
       } else {
-        setInternalMessages(prev => prev.slice(0, -1).concat(errorMessage));
+        setInternalMessages(prev => prev.map(m => m.id === loadingMessageId ? errorMessage : m));
       }
     } finally {
       setIsLoading(false);
@@ -573,6 +575,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                         {message.errorType === 'connection_error' && 'Connection failed. Please check your network and cluster connectivity.'}
                         {message.errorType === 'rbac_forbidden' && 'Permission denied. You may not have the required RBAC permissions for this operation.'}
                       </Typography>
+                    </Alert>
+                  )}
+
+                  {/* Backend Errors */}
+                  {message.backendErrors && message.backendErrors.length > 0 && (
+                    <Alert severity="error" sx={{ mt: 2 }}>
+                      <Typography variant="caption" display="block" sx={{ fontWeight: 'bold', mb: 0.5 }}>
+                        Backend errors ({message.backendErrors.length}):
+                      </Typography>
+                      {message.backendErrors.map((err, idx) => (
+                        <Typography key={idx} variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
+                          [{err.severity}] {err.type}: {err.message}
+                        </Typography>
+                      ))}
                     </Alert>
                   )}
 

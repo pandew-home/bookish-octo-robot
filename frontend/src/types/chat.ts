@@ -42,6 +42,7 @@ export interface ChatMessage {
   loading?: boolean;
   cluster?: string;
   errorType?: ChatErrorType;
+  backendErrors?: { type: string; message: string; severity: string }[];
 }
 
 /**

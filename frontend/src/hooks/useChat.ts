@@ -58,7 +58,8 @@ export const useChat = (
       loading: true,
     };
 
-    // Add user message and loading indicator
+    // Add user message and loading indicator; capture ID for in-place replacement later
+    const loadingMessageId = loadingMessage.id;
     setMessages(prev => [...prev, userMessage, loadingMessage]);
     setIsLoading(true);
     setError(null);
@@ -83,10 +84,11 @@ export const useChat = (
         timestamp: new Date().toISOString(),
         queryType: data.query_type,
         cluster: selectedCluster,
+        backendErrors: data.errors?.length ? data.errors : undefined,
       };
 
-      // Replace loading message with actual response
-      setMessages(prev => prev.slice(0, -1).concat(assistantMessage));
+      // Replace loading message in-place by ID (not by position — prevents race with concurrent sends)
+      setMessages(prev => prev.map(m => m.id === loadingMessageId ? assistantMessage : m));
     } catch (err: any) {
       let errorMessage = 'Failed to get response. Please try again.';
       let errorType: ChatErrorType | undefined;
@@ -122,8 +124,8 @@ export const useChat = (
         errorType,
       };
 
-      // Replace loading message with error
-      setMessages(prev => prev.slice(0, -1).concat(errorMsg));
+      // Replace loading message in-place by ID
+      setMessages(prev => prev.map(m => m.id === loadingMessageId ? errorMsg : m));
       setError(errorMessage);
     } finally {
       setIsLoading(false);

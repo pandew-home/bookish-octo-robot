@@ -394,7 +394,7 @@ class RAGIntegration:
             return response
             
         except Exception as e:
-            logger.error(f"Error processing query with RAG: {e}")
+            logger.error(f"Error processing query with RAG: {type(e).__name__}: {e}", exc_info=True)
             
             # Determine error type for frontend styling
             error_type = "unknown"
