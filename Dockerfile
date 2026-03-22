@@ -26,17 +26,13 @@ RUN /opt/venv/bin/pip install --no-cache-dir -r requirements.prod.txt
 COPY libs/ ./libs/
 RUN /opt/venv/bin/pip install --no-cache-dir -e ./libs/devops-k8s -e ./libs/devops-kb -e ./libs/devops-prompts -e ./libs/devops-rag
 
-# Stage 3: Envoy proxy builder
-FROM envoyproxy/envoy:v1.29.2 AS envoy-minimal
-
-# Stage 4: Production image
+# Stage 3: Production image
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    supervisor curl ca-certificates libssl3 libstdc++6 \
+    supervisor curl ca-certificates libssl3 libstdc++6 nginx \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=envoy-minimal /usr/local/bin/envoy /usr/local/bin/envoy
 RUN useradd -m -u 1000 -s /bin/bash chatbot
 COPY --from=python-builder /opt/venv /opt/venv
 
@@ -52,6 +48,7 @@ WORKDIR /app
 # Configs (rarely change)
 COPY docker/envoy.yaml /etc/envoy/envoy.yaml
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY docker/nginx.conf /etc/nginx/nginx.conf
 
 # Frontend build
 COPY --from=frontend-builder --chown=chatbot:chatbot /app/frontend/build /var/www/html
@@ -65,8 +62,8 @@ COPY --chown=chatbot:chatbot backend/api ./backend/api/
 COPY --chown=chatbot:chatbot backend/middleware ./backend/middleware/
 COPY --chown=chatbot:chatbot backend/utils ./backend/utils/
 
-RUN mkdir -p /data /tmp/envoy /tmp/supervisor /var/log/supervisor /var/run /etc/envoy \
-    && chown -R chatbot:chatbot /app /data /tmp /tmp/envoy /tmp/supervisor /var/www/html /var/log/supervisor /var/run /etc/envoy \
+RUN mkdir -p /data /tmp/supervisor /var/log/supervisor /var/run \
+    && chown -R chatbot:chatbot /app /data /tmp /tmp/supervisor /var/www/html /var/log/supervisor /var/run \
     && chmod -R 755 /app /data /var/www/html
 
 USER chatbot
