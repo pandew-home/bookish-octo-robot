@@ -180,12 +180,10 @@ def seed_knowledge_base(kb: KnowledgeBase, force_reseed: bool = False) -> bool:
             try:
                 # Create Solution object
                 solution = Solution(
-                    title=solution_data["title"],
-                    description=solution_data["description"],
+                    problem_description=solution_data["title"],
+                    resolution_steps=solution_data["description"],
                     tags=solution_data["tags"],
-                    source="builtin",
-                    created_at=datetime.now().isoformat(),
-                    updated_at=datetime.now().isoformat(),
+                    created_at=datetime.now(),
                 )
 
                 # Add to KB
