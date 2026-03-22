@@ -6,8 +6,15 @@ metadata:
   labels:
     app: devops-chatbot
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
+    # Traefik entrypoints: web (http:80) and websecure (https:443)
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    # Redirect HTTP to HTTPS
+    traefik.ingress.kubernetes.io/router.middlewares: devops-chatbot-redirect-https@kubernetescrd
 spec:
+  tls:
+  - hosts:
+    - 5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com
+    secretName: devops-chatbot-tls
   rules:
   - host: 5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com
     http:
@@ -19,3 +26,14 @@ spec:
             name: devops-chatbot
             port:
               number: 80
+---
+# Traefik Middleware for HTTP to HTTPS redirect
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: devops-chatbot
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
