@@ -319,17 +319,29 @@ class RAGIntegration:
             Dictionary with response and metadata
         """
         try:
+            logger.info(f"[RAG_QUERY] Processing query with RAG engine...")
+            logger.info(f"[RAG_QUERY] Input: {query[:100]}...")
+
             # Convert enriched context to cluster context format
+            logger.info(f"[RAG_QUERY] Formatting cluster context...")
             cluster_context = self._format_cluster_context(enriched_context)
+            logger.info(f"[RAG_QUERY] ✓ Context formatted, keys: {list(cluster_context.keys())}")
 
             # Extract K8sGPT results if available
+            logger.info(f"[RAG_QUERY] Processing K8sGPT results...")
             health_monitor_errors = None
             if enriched_context.k8sgpt_results:
                 health_monitor_errors = self._format_k8sgpt_errors(enriched_context.k8sgpt_results)
+                logger.info(f"[RAG_QUERY] ✓ Found {len(health_monitor_errors)} K8sGPT errors")
+            else:
+                logger.info(f"[RAG_QUERY] No K8sGPT results available")
 
             # Render prompt with template engine if available
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Template engine available: {self.template_engine is not None}")
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Enrichment plan available: {enriched_context.enrichment_plan is not None}")
             # TODO: Re-enable template engine after debugging 500 errors
             rendered_query = query
+            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Template engine DISABLED - using original query")
             # if self.template_engine and enriched_context.enrichment_plan:
             #     try:
             #         # Get query category from enrichment plan

@@ -97,14 +97,19 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
         HTTPException: If credentials invalid, cluster not selected, or processing fails
     """
     try:
-        logger.info(f"Processing chat query for session {request.session_id[:8]}...")
+        logger.info("=" * 80)
+        logger.info(f"[CHAT_QUERY] Processing chat query for session {request.session_id[:8]}...")
+        logger.info(f"[CHAT_QUERY] Input: {request.query[:100]}...")
 
         # Step 1: Validate input and clean backticks
+        logger.info(f"[STEP_1] Validating and sanitizing input...")
         is_valid, error_msg, cleaned_query = input_sanitizer.validate_query(
             request.query
         )
         if not is_valid:
+            logger.error(f"[STEP_1] Validation failed: {error_msg}")
             raise HTTPException(status_code=400, detail=error_msg)
+        logger.info(f"[STEP_1] ✓ Sanitized: {cleaned_query[:100]}...")
 
         # Check rate limits
         allowed, retry_after, remaining = await rate_limiter.check_rate_limit(
@@ -176,29 +181,37 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             logger.info(f"Found {len(k8sgpt_results)} K8sGPT results")
 
             # Step 5: Route and classify query
+            logger.info(f"[STEP_5] Classifying query...")
             query_router = QueryRouter()
             enrichment_plan = query_router.classify(cleaned_query)
 
+            categories = [c.value for c in enrichment_plan.categories]
             logger.info(
-                f"Query classified: {[c.value for c in enrichment_plan.categories]}"
+                f"[STEP_5] ✓ Query classified as: {categories}"
             )
+            logger.info(f"[STEP_5]   Namespaces: {enrichment_plan.namespaces}")
+            logger.info(f"[STEP_5]   Resources: {enrichment_plan.resource_names}")
 
             # Step 6: Enrich with cluster context
+            logger.info(f"[STEP_6] Enriching with cluster context...")
             enrichment_engine = EnrichmentEngine(k8s_clients, creds)
             enriched_context = await enrichment_engine.execute(enrichment_plan)
 
             logger.info(
-                f"Context enriched with {len(enriched_context.errors)} error(s)"
+                f"[STEP_6] ✓ Context enriched with {len(enriched_context.errors)} error(s)"
             )
 
             # Step 7: Generate response with RAG
+            logger.info(f"[STEP_7] Initializing RAG engine...")
             rag = get_rag_integration(
                 llm_provider="openai",  # TODO: Make configurable
                 api_key=None,  # Uses environment variable
                 cluster_version=target_cluster.get("version", "v1.28"),
             )
+            logger.info(f"[STEP_7] ✓ RAG engine initialized")
 
             # Add K8sGPT results and metadata to enriched context
+            logger.info(f"[STEP_7] Setting enriched context metadata...")
             enriched_context.k8sgpt_results = k8sgpt_results
             enriched_context.enrichment_plan = {
                 'categories': [c.value for c in enrichment_plan.categories],
@@ -208,13 +221,16 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 'time_range': str(enrichment_plan.time_range) if enrichment_plan.time_range else None,
             }
             enriched_context.cluster_name = request.cluster_name
+            logger.info(f"[STEP_7] ✓ Context metadata set: plan={enriched_context.enrichment_plan['categories']}")
 
+            logger.info(f"[STEP_7] Processing query through RAG...")
             rag_response = rag.process_query(
                 query=cleaned_query,
                 enriched_context=enriched_context,
                 max_tokens=request.max_tokens,
                 is_export=request.is_export,
             )
+            logger.info(f"[STEP_7] ✓ RAG response received, length: {len(rag_response.get('response', ''))} chars")
 
             # Step 8: Parse response for safety warnings
             parsed_response = response_parser.parse(rag_response["response"])
