@@ -30,7 +30,7 @@ RUN /opt/venv/bin/pip install --no-cache-dir -e ./libs/devops-k8s -e ./libs/devo
 FROM python:3.11-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    supervisor curl ca-certificates libssl3 libstdc++6 nginx \
+    supervisor curl ca-certificates libssl3 libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN useradd -m -u 1000 -s /bin/bash chatbot
@@ -46,9 +46,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 WORKDIR /app
 
 # Configs (rarely change)
-COPY docker/envoy.yaml /etc/envoy/envoy.yaml
 COPY docker/supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY docker/nginx.conf /etc/nginx/nginx.conf
 
 # Frontend build
 COPY --from=frontend-builder --chown=chatbot:chatbot /app/frontend/build /var/www/html

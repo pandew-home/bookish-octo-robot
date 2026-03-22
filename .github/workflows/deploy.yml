@@ -138,15 +138,19 @@ jobs:
           docker run -d \
             --name chatbot-test \
             -p 8080:8080 \
+            -e LLM_API_KEY=smoke-test-key \
+            -e DEFAULT_REGION=us-east-1 \
+            -e LLM_PROVIDER=openai \
+            -e LLM_MODEL=gpt-4o-mini \
             --health-cmd="curl -f http://localhost:8080/api/health || exit 1" \
             --health-interval=5s \
             --health-timeout=3s \
             --health-retries=3 \
             "$IMAGE"
 
-          # Wait for services to start
+          # Wait for backend to start (startup validator + uvicorn init)
           echo "Waiting for services to start..."
-          sleep 15
+          sleep 30
 
           # Check container is still running
           if ! docker ps | grep chatbot-test; then
