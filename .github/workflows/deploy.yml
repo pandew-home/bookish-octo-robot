@@ -327,6 +327,20 @@ jobs:
           echo "=== Running critical security tests ==="
           python -m pytest tests/test_credentials_api.py tests/test_auth_flows.py -v --tb=short || echo "Note: Some tests may require cluster credentials, checking logs..."
 
+      - name: Verify public endpoint
+        run: |
+          URL="http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com"
+
+          echo "=== Public health check ==="
+          curl -sf --retry 10 --retry-delay 5 --retry-connrefused \
+            "$URL/api/health" | jq . || { echo "✗ Public health endpoint unreachable"; exit 1; }
+
+          echo "=== Public frontend check ==="
+          curl -sf --retry 5 --retry-delay 3 \
+            "$URL/" -o /dev/null -w "HTTP %{http_code}\n" || { echo "✗ Public frontend unreachable"; exit 1; }
+
+          echo "✓ Public endpoint is up"
+
       - name: Verify K8s resources
         run: |
           echo "=== Pods ==="
