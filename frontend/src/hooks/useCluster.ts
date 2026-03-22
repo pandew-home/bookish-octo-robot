@@ -116,8 +116,11 @@ export const useCluster = (isAuthenticated: boolean): UseClusterState => {
           setClusters(discoveredClusters);
           // Auto-select the first (current) cluster
           const currentCluster = discoveredClusters[0].name;
-          setSelectedCluster(currentCluster);
-          await clusterApi.selectCluster(currentCluster);
+          // Call selectCluster first, then set state only if successful
+          const response = await clusterApi.selectCluster(currentCluster);
+          if (response.success) {
+            setSelectedCluster(currentCluster);
+          }
         }
       } catch (err: any) {
         const errorMessage = err.response?.data?.detail || err.message || 'Failed to discover clusters';

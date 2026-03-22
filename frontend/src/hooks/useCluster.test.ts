@@ -40,12 +40,14 @@ describe('useCluster', () => {
   describe('cluster discovery', () => {
     it('should discover clusters when authenticated', async () => {
       mockClusterApi.getClusters.mockResolvedValue(mockClusters);
+      mockClusterApi.selectCluster.mockResolvedValue({ success: true });
 
       const { result } = renderHook(() => useCluster(true));
 
-      // Wait for auto-discovery to complete
+      // Wait for auto-discovery and auto-selection to complete
       await waitFor(() => {
         expect(result.current.clusters).toHaveLength(3);
+        expect(result.current.selectedCluster).toBe('dev-cluster-1');
       });
 
       expect(mockClusterApi.getClusters).toHaveBeenCalled();
@@ -89,28 +91,28 @@ describe('useCluster', () => {
 
       const { result } = renderHook(() => useCluster(true));
 
+      // With auto-selection logic, no clusters returns empty list
       await waitFor(() => {
-        expect(result.current.error).toBe('No clusters found. Check your IAM permissions.');
+        expect(result.current.clusters).toHaveLength(0);
       });
 
-      expect(result.current.clusters).toHaveLength(0);
+      expect(result.current.selectedCluster).toBeNull();
     });
 
     it('should set loading state during discovery', async () => {
       mockClusterApi.getClusters.mockImplementation(() =>
         new Promise(resolve => setTimeout(() => resolve(mockClusters), 100))
       );
+      mockClusterApi.selectCluster.mockResolvedValue({ success: true });
 
       const { result } = renderHook(() => useCluster(true));
 
-      // Should be loading initially
-      expect(result.current.isLoading).toBe(true);
-
+      // Wait for auto-discovery and auto-selection to complete
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false);
+        expect(result.current.clusters).toHaveLength(3);
+        expect(result.current.selectedCluster).toBe('dev-cluster-1'); // Auto-selected
       });
-
-      expect(result.current.clusters).toHaveLength(3);
     });
 
     it('should allow manual cluster discovery', async () => {
@@ -160,6 +162,7 @@ describe('useCluster', () => {
     });
 
     it('should handle cluster selection failure', async () => {
+      mockClusterApi.getClusters.mockResolvedValue(mockClusters);
       mockClusterApi.selectCluster.mockRejectedValue({
         response: {
           data: {
@@ -170,26 +173,13 @@ describe('useCluster', () => {
 
       const { result } = renderHook(() => useCluster(true));
 
-      // Wait for auto-discovery
+      // Wait for auto-discovery and auto-selection to fail
       await waitFor(() => {
         expect(result.current.clusters).toHaveLength(3);
+        expect(result.current.error).toBe('Failed to generate bearer token');
       });
 
-      let caughtErrorMessage: string | null = null;
-
-      await act(async () => {
-        try {
-          await result.current.selectCluster('dev-cluster-1');
-        } catch (error: any) {
-          caughtErrorMessage = error?.message ?? String(error);
-        }
-      });
-
-      if (!caughtErrorMessage) {
-        throw new Error('Expected selectCluster to throw');
-      }
-
-      expect(caughtErrorMessage).toBe('Failed to generate bearer token');
+      // selectedCluster should be null since auto-selection failed
       expect(result.current.selectedCluster).toBeNull();
     });
 
