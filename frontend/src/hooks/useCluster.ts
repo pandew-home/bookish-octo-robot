@@ -104,13 +104,31 @@ export const useCluster = (isAuthenticated: boolean): UseClusterState => {
   }, []);
 
   /**
-   * Auto-discover clusters when authenticated
+   * Auto-discover clusters when authenticated and auto-select the current cluster
    */
   useEffect(() => {
-    if (isAuthenticated && clusters.length === 0) {
-      discoverClusters();
+    const autoDiscoverAndSelect = async () => {
+      if (!isAuthenticated) return;
+
+      try {
+        const discoveredClusters = await clusterApi.getClusters();
+        if (discoveredClusters.length > 0) {
+          setClusters(discoveredClusters);
+          // Auto-select the first (current) cluster
+          const currentCluster = discoveredClusters[0].name;
+          setSelectedCluster(currentCluster);
+          await clusterApi.selectCluster(currentCluster);
+        }
+      } catch (err: any) {
+        const errorMessage = err.response?.data?.detail || err.message || 'Failed to discover clusters';
+        setError(errorMessage);
+      }
+    };
+
+    if (isAuthenticated && clusters.length === 0 && !selectedCluster) {
+      autoDiscoverAndSelect();
     }
-  }, [isAuthenticated, clusters.length, discoverClusters]);
+  }, [isAuthenticated, clusters.length, selectedCluster]);
 
   /**
    * Clear selection when authentication is lost
