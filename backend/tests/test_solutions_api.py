@@ -21,10 +21,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'libs', '
 
 from devops_kb.solution import Solution
 
-# Mock the problematic imports before importing the router
+# Mock the problematic imports before importing the router.
+# Save the real module first so other tests can still patch it correctly.
+_real_rag_integration = sys.modules.get('rag_integration')
 sys.modules['rag_integration'] = MagicMock()
 
 from api.solutions import router, get_solution_manager
+
+# Restore the real module so @patch('rag_integration.*') works in other test files.
+# api.solutions already captured its reference to get_rag_integration from the mock above,
+# and test_solutions_api.py patches api.solutions.get_rag_integration directly anyway.
+if _real_rag_integration is not None:
+    sys.modules['rag_integration'] = _real_rag_integration
+else:
+    del sys.modules['rag_integration']
 
 
 # Create a test FastAPI app
