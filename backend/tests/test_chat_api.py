@@ -501,13 +501,18 @@ class TestInputSanitizationFlow:
     """Test input sanitization integration in chat API."""
 
     def test_sanitizer_blocks_shell_commands(self):
-        """Test that shell commands are blocked."""
+        """Test that destructive shell commands are blocked.
+
+        Note: General shell syntax (bash -c, shebangs, kubectl, etc.) is intentionally
+        allowed — this is a DevOps chatbot where users routinely include such syntax in
+        their questions. Only genuinely destructive patterns (rm -rf /, fork bombs) are
+        blocked.
+        """
         sanitizer = InputSanitizer()
 
         queries = [
-            "bash -c 'kubectl delete pod'",
-            "#!/bin/bash\necho hello",
-            "$(rm -rf /)",
+            "$(rm -rf /)",   # destructive rm targeting root filesystem
+            "rm -rf /tmp",   # rm -rf / variant
         ]
 
         for query in queries:
