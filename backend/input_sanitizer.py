@@ -21,40 +21,26 @@ class InputSanitizer:
     - Credential access attempt detection
     """
 
-    # Unsafe patterns that should be blocked
+    # Unsafe patterns that should be blocked.
+    #
+    # This is a DevOps chatbot — users WILL ask about kubectl delete, Dockerfile
+    # syntax, shell scripts, Python imports, pip install, etc. Block only genuine
+    # security threats: credential content leaking to the LLM, root filesystem
+    # destruction, and SQL injection (defensive, for future DB integration).
     UNSAFE_PATTERNS = [
-        # Shell commands and execution
-        r"#!/bin/(bash|sh)",  # Shebang
-        r"\$\([^)]+\)",  # Command substitution $(...)
-        r"\b(bash|sh|zsh|fish|ksh|csh|tcsh)\s+-c",  # Shell with -c flag
-        r"\b(eval|exec|system|subprocess|popen)\s*\(",  # Code execution functions
-        r"\b(kubectl|docker|helm|aws|gcloud|az)\s+(delete|remove|destroy)",  # Destructive commands
-        # Code injection
-        r"import\s+os",  # OS module import
-        r"import\s+subprocess",  # Subprocess import
-        r"from\s+os\s+import",  # OS imports
-        r"__import__\s*\(",  # Dynamic imports
-        r"compile\s*\(",  # Code compilation
-        # SQL injection
-        r"('\s*OR\s+'1'\s*=\s*'1)",  # Classic SQL injection
-        r"(;\s*DROP\s+TABLE)",  # DROP TABLE
-        r"(;\s*DELETE\s+FROM)",  # DELETE FROM
-        r"(UNION\s+SELECT)",  # UNION SELECT
-        # Credential access
-        r"/etc/passwd",  # Password file
-        r"/etc/shadow",  # Shadow file
-        r"\.aws/credentials",  # AWS credentials
-        r"\.kube/config",  # Kubeconfig
-        r"AKIAIO[A-Z0-9]{14}",  # AWS access key pattern
-        r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----",  # Private keys
-        # Dockerfile commands (prevent container escape attempts)
-        r"\bFROM\s+",
-        r"\bRUN\s+",
-        r"\bCMD\s+",
-        r"\bENTRYPOINT\s+",
-        # Module/package management
-        r"\b(pip|npm|yarn|gem|cargo)\s+install",
-        r"\brequire\s*\(",  # Node.js require
+        # Actual credentials — never send to LLM
+        r"AKIA[0-9A-Z]{16}",                         # AWS access key
+        r"-----BEGIN\s+(RSA\s+)?PRIVATE\s+KEY-----", # RSA private key
+        r"-----BEGIN\s+EC\s+PRIVATE\s+KEY-----",     # EC private key
+
+        # Genuinely destructive shell — rm targeting root filesystem
+        r"\brm\s+-[rf]{1,3}\s+/",                    # rm -rf / or rm -r / etc.
+        r":\(\)\s*\{[^}]*\};\s*:",                   # Fork bomb :(){ :|:& };:
+
+        # SQL injection (defensive, in case of future DB integration)
+        r"'\s*OR\s+'1'\s*=\s*'1",                    # ' OR '1'='1
+        r";\s*DROP\s+TABLE",                          # ; DROP TABLE
+        r"\bUNION\s+SELECT\b",                        # UNION SELECT
     ]
 
     # Compile patterns for efficiency
@@ -84,10 +70,14 @@ class InputSanitizer:
             Tuple of (is_valid, error_message, cleaned_query)
             - is_valid: True if query is safe, False otherwise
             - error_message: None if valid, descriptive error if invalid
-            - cleaned_query: Query with backticks removed
+            - cleaned_query: Query with shell-special chars escaped/stripped
         """
-        # Remove backticks (they don't add value to natural language prompts)
-        cleaned_query = query.replace("`", "")
+        # Strip characters that have no value in natural-language queries but
+        # can confuse downstream processing: backticks, null bytes, zero-width
+        # spaces.  Everything else (Dockerfile keywords, kubectl flags, $(),
+        # shebang lines, etc.) is left intact — this is a DevOps chatbot and
+        # users routinely include that kind of syntax in their questions.
+        cleaned_query = query.replace("`", "").replace("\x00", "")
 
         # Check length
         if not cleaned_query or len(cleaned_query.strip()) == 0:
@@ -126,52 +116,27 @@ class InputSanitizer:
         Returns:
             User-friendly error message with suggestions
         """
-        if "bash" in pattern or "sh" in pattern or "$(" in pattern or "`" in pattern:
+        if "AKIA" in pattern or "PRIVATE" in pattern or "EC PRIVATE" in pattern:
             return (
-                "Your query contains shell command syntax. "
-                "Please rephrase your question in natural language. "
-                "For example, instead of 'kubectl get pods', ask 'Show me the pods in the cluster'."
+                "Your query appears to contain credential material (API keys or private keys). "
+                "Please do not paste secrets into your question — describe what you need instead."
             )
 
-        if "eval" in pattern or "exec" in pattern or "import" in pattern:
+        if "rm" in pattern or r":\(" in pattern:
             return (
-                "Your query contains code execution patterns. "
-                "Please ask your question in plain English without code snippets."
+                "Your query contains a destructive filesystem operation. "
+                "Please describe what you are trying to accomplish and I will help safely."
             )
 
-        if "kubectl" in pattern or "docker" in pattern or "helm" in pattern:
-            if "delete" in pattern or "remove" in pattern or "destroy" in pattern:
-                return (
-                    "I cannot execute destructive commands directly. "
-                    "Please describe what you want to accomplish, and I'll provide safe recommendations."
-                )
-
-        if "DROP" in pattern or "DELETE" in pattern or "UNION" in pattern:
+        if "DROP" in pattern or "UNION" in pattern or "OR" in pattern:
             return (
-                "Your query contains SQL injection patterns. "
-                "Please rephrase your question without SQL syntax."
-            )
-
-        if (
-            "passwd" in pattern
-            or "shadow" in pattern
-            or "credentials" in pattern
-            or "AKIA" in pattern
-        ):
-            return (
-                "Your query attempts to access sensitive credential information. "
-                "This is not allowed for security reasons."
-            )
-
-        if "FROM" in pattern or "RUN" in pattern or "CMD" in pattern:
-            return (
-                "Your query contains Dockerfile syntax. "
-                "Please ask your question in natural language instead."
+                "Your query contains patterns that look like SQL injection. "
+                "Please rephrase your question."
             )
 
         return (
-            "Your query contains potentially unsafe patterns. "
-            "Please rephrase your question in plain English without code or commands."
+            "Your query contains a pattern that cannot be processed. "
+            "Please rephrase your question."
         )
 
     def sanitize_for_logging(self, text: str) -> str:

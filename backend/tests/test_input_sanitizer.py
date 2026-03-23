@@ -60,123 +60,139 @@ class TestQueryValidation:
         assert error is None
 
 
-class TestShellCommandBlocking:
-    """Test cases for blocking shell commands."""
+class TestDevOpsSyntaxAllowed:
+    """
+    Verify that common DevOps syntax is ALLOWED through the sanitizer.
+
+    This is a DevOps chatbot — users routinely ask questions that contain
+    Dockerfile instructions, kubectl commands, shell scripts, Python imports,
+    package manager invocations, etc.  None of these should be blocked.
+    """
 
     def setup_method(self):
-        """Set up test fixtures."""
         self.sanitizer = InputSanitizer()
 
-    def test_block_shebang(self):
-        """Test blocking of shebang patterns."""
-        queries = ["#!/bin/bash\necho 'hello'", "#!/bin/sh\nls -la"]
-
-        for query in queries:
-            is_valid, error, _ = self.sanitizer.validate_query(query)
-            assert is_valid is False
-            assert "shell" in error.lower() or "command" in error.lower()
-
-    def test_block_command_substitution(self):
-        """Test blocking of command substitution."""
+    def test_allow_dockerfile_syntax(self):
+        """Dockerfile instructions in questions must pass."""
         queries = [
-            "Show me $(kubectl get pods)",
-            "What is `cat /etc/passwd`",
-            "Run $(rm -rf /)",
+            "FROM ubuntu:22.04 — why does my build fail?",
+            "RUN apt-get update keeps throwing errors",
+            "What does CMD vs ENTRYPOINT mean?",
+            "ENTRYPOINT ['python', 'app.py'] vs CMD difference",
+            "COPY . /app is not working in my Dockerfile",
         ]
-
         for query in queries:
             is_valid, error, _ = self.sanitizer.validate_query(query)
-            assert is_valid is False
-            assert error is not None
+            assert is_valid is True, f"Should be allowed: {query!r}, got: {error}"
 
-    def test_block_shell_with_c_flag(self):
-        """Test blocking of shell -c execution."""
-        queries = [
-            "bash -c 'kubectl delete pod'",
-            "sh -c 'rm -rf /'",
-            "zsh -c 'echo hello'",
-        ]
-
-        for query in queries:
-            is_valid, error, _ = self.sanitizer.validate_query(query)
-            assert is_valid is False
-
-    def test_block_destructive_commands(self):
-        """Test blocking of destructive kubectl/docker/helm commands."""
+    def test_allow_kubectl_commands(self):
+        """kubectl commands including delete must pass — users ask about them."""
         queries = [
             "kubectl delete pod my-pod",
-            "docker remove container",
-            "helm delete my-release",
-            "aws destroy infrastructure",
+            "kubectl delete all --all -n production — what does this do?",
+            "How do I use kubectl to get pods?",
+            "kubectl rollout restart deployment/my-app",
+            "explain kubectl drain",
         ]
-
         for query in queries:
             is_valid, error, _ = self.sanitizer.validate_query(query)
-            assert is_valid is False
-            assert "destructive" in error.lower() or "cannot execute" in error.lower()
+            assert is_valid is True, f"Should be allowed: {query!r}, got: {error}"
 
-    def test_allow_non_destructive_commands_in_text(self):
-        """Test that non-destructive command mentions are allowed."""
+    def test_allow_shell_syntax(self):
+        """Shell syntax in questions must pass."""
         queries = [
-            "How do I use kubectl to get pods?",
-            "What does the helm list command show?",
-            "Explain the docker ps command",
+            "#!/bin/bash — what does the shebang do?",
+            "bash -c 'kubectl delete pod' — is this safe?",
+            "Show me $(kubectl get pods) usage",
+            "zsh -c 'echo hello' keeps failing",
         ]
+        for query in queries:
+            is_valid, error, _ = self.sanitizer.validate_query(query)
+            assert is_valid is True, f"Should be allowed: {query!r}, got: {error}"
 
+    def test_allow_python_and_package_imports(self):
+        """Python imports and package manager commands must pass."""
+        queries = [
+            "import os — why does this fail in a distroless image?",
+            "from os import system in my init script",
+            "import subprocess is not working",
+            "pip install flask inside Dockerfile",
+            "npm install keeps failing in the CI",
+            "why does yarn install take so long?",
+        ]
+        for query in queries:
+            is_valid, error, _ = self.sanitizer.validate_query(query)
+            assert is_valid is True, f"Should be allowed: {query!r}, got: {error}"
+
+    def test_allow_docker_and_helm_operations(self):
+        """docker remove / helm delete queries must pass."""
+        queries = [
+            "docker remove container — what flags are safe?",
+            "helm delete my-release — is this reversible?",
+            "aws destroy infrastructure documentation",
+        ]
+        for query in queries:
+            is_valid, error, _ = self.sanitizer.validate_query(query)
+            assert is_valid is True, f"Should be allowed: {query!r}, got: {error}"
+
+
+class TestGenuinelyDangerousInputBlocked:
+    """
+    Verify that genuinely dangerous input is still blocked.
+
+    Only real security threats (credentials, root filesystem destruction,
+    SQL injection) return 400.
+    """
+
+    def setup_method(self):
+        self.sanitizer = InputSanitizer()
+
+    def test_block_rm_rf_root(self):
+        """rm -rf targeting / must be blocked."""
+        queries = [
+            "rm -rf / && kubectl delete all",
+            "rm -rf /",
+            "rm -r /",
+        ]
+        for query in queries:
+            is_valid, error, _ = self.sanitizer.validate_query(query)
+            assert is_valid is False, f"Should be blocked: {query!r}"
+            assert error is not None
+
+    def test_block_aws_key_patterns(self):
+        """AWS access keys embedded in queries must be blocked."""
+        query = "My key is AKIAIOSFODNN7EXAMPLE"
+        is_valid, error, _ = self.sanitizer.validate_query(query)
+        assert is_valid is False
+        assert "credential" in error.lower()
+
+    def test_block_private_keys(self):
+        """Private key headers must be blocked."""
+        query = "-----BEGIN RSA PRIVATE KEY-----"
+        is_valid, error, _ = self.sanitizer.validate_query(query)
+        assert is_valid is False
+        assert "credential" in error.lower()
+
+
+class TestCodeInjectionBlocking:
+    """Retained for backward compatibility — these are now mostly allowed."""
+
+    def setup_method(self):
+        self.sanitizer = InputSanitizer()
+
+    def test_allow_eval_exec_in_questions(self):
+        """eval/exec in natural-language questions are permitted."""
+        queries = [
+            "why does eval fail in my bash script?",
+            "exec probe is failing in my pod",
+        ]
         for query in queries:
             is_valid, error, _ = self.sanitizer.validate_query(query)
             assert is_valid is True
 
-
-class TestCodeInjectionBlocking:
-    """Test cases for blocking code injection."""
-
-    def setup_method(self):
-        """Set up test fixtures."""
-        self.sanitizer = InputSanitizer()
-
-    @pytest.mark.skip(reason="Stale mock/assertion - needs update")
-    def test_block_eval_exec(self):
-        """Test blocking of eval/exec patterns."""
-        queries = [
-            "eval('print(hello)')",
-            "exec('import os')",
-            "system('ls -la')",
-            "subprocess.call(['rm', '-rf', '/'])",
-        ]
-
-        for query in queries:
-            is_valid, error, _ = self.sanitizer.validate_query(query)
-            assert is_valid is False
-            assert "code" in error.lower() or "execution" in error.lower()
-
-    def test_block_os_imports(self):
-        """Test blocking of OS module imports."""
-        queries = [
-            "import os",
-            "from os import system",
-            "import subprocess",
-            "__import__('os')",
-        ]
-
-        for query in queries:
-            is_valid, error, _ = self.sanitizer.validate_query(query)
-            assert is_valid is False
-
-    @pytest.mark.skip(reason="Stale mock/assertion - needs update")
+    @pytest.mark.skip(reason="Dockerfile syntax now allowed - chatbot context")
     def test_block_dockerfile_commands(self):
-        """Test blocking of Dockerfile syntax."""
-        queries = [
-            "FROM ubuntu:20.04",
-            "RUN apt-get update",
-            "CMD ['/bin/bash']",
-            "ENTRYPOINT ['python', 'app.py']",
-        ]
-
-        for query in queries:
-            is_valid, error, _ = self.sanitizer.validate_query(query)
-            assert is_valid is False
-            assert "dockerfile" in error.lower() or "natural language" in error.lower()
+        """Dockerfile syntax is no longer blocked."""
 
 
 class TestSQLInjectionBlocking:
