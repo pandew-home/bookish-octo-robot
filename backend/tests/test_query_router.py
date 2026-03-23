@@ -129,40 +129,35 @@ class TestQueryClassification:
 
 
 class TestResourceExtraction:
-    """Test cases for resource name extraction."""
-    
+    """Test cases for resource name extraction.
+
+    Resource name extraction was removed from QueryRouter to prevent
+    false-positive matches (e.g. namespace names misidentified as pod names).
+    The agentic engine now handles resource discovery via live K8s API calls.
+    """
+
     def setup_method(self):
         """Set up test fixtures."""
         self.router = QueryRouter()
-    
-    def test_extract_pod_names(self):
-        """Test extraction of pod names."""
-        query = "Why is pod my-app-12345-abcde failing?"
-        plan = self.router.classify(query)
-        
-        assert len(plan.resource_names) > 0
-    
-    def test_extract_deployment_names(self):
-        """Test extraction of deployment names."""
-        query = "Check deployment my-deployment status"
-        plan = self.router.classify(query)
-        
-        assert 'my-deployment' in plan.resource_names
-    
-    def test_extract_namespace_names(self):
-        """Test extraction of namespace names."""
-        query = "Show pods in namespace production"
-        plan = self.router.classify(query)
-        
-        assert 'production' in plan.namespaces
-    
-    def test_extract_multiple_resources(self):
-        """Test extraction of multiple resource types."""
-        query = "Why can't pod my-pod in namespace staging connect to service my-service?"
-        plan = self.router.classify(query)
-        
-        assert len(plan.resource_names) > 0
-        assert len(plan.namespaces) > 0
+
+    def test_resource_names_always_empty(self):
+        """resource_names is always empty — extraction delegated to the agent."""
+        plan = self.router.classify("Why is pod my-app-12345-abcde failing?")
+        assert plan.resource_names == []
+
+    def test_namespaces_always_empty(self):
+        """namespaces is always empty — extraction delegated to the agent."""
+        plan = self.router.classify("Show pods in namespace production")
+        assert plan.namespaces == []
+
+    def test_classification_still_works_without_extraction(self):
+        """Confirm query classification is unaffected by removal of extraction."""
+        plan = self.router.classify(
+            "Why can't pod my-pod in namespace staging connect to service my-service?"
+        )
+        assert plan.resource_names == []
+        assert plan.namespaces == []
+        assert len(plan.categories) > 0
 
 
 class TestAWSContextDetection:
