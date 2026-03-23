@@ -90,17 +90,17 @@ jobs:
       - name: Run critical security & auth tests
         run: |
           cd backend
-          python -m pytest tests/test_credentials_api.py tests/test_auth_flows.py tests/test_cluster_isolation.py -v --tb=short
+          python -m pytest tests/test_credentials_api.py tests/test_auth_flows.py tests/test_cluster_isolation.py -v --tb=short --no-cov
 
       - name: Run chat API & integration tests
         run: |
           cd backend
-          python -m pytest tests/test_chat_api.py tests/test_enrichment_timeout.py -v --tb=short
+          python -m pytest tests/test_chat_api.py tests/test_enrichment_timeout.py -v --tb=short --no-cov
 
       - name: Run all backend tests
         run: |
           cd backend
-          python -m pytest --tb=short -q
+          python -m pytest --tb=short -q --no-cov
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
