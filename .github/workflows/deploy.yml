@@ -318,20 +318,20 @@ jobs:
 
           kill $PF_PID
 
-      - name: Run critical tests against deployed service
+      - name: Run critical unit tests
         run: |
           pip install -r backend/requirements.txt
           pip install -e libs/devops-k8s -e libs/devops-kb -e libs/devops-prompts -e libs/devops-rag
           pip install "httpx<0.28"
           cd backend
-          echo "=== Running critical security tests ==="
+          echo "=== Running critical security and auth tests ==="
           python -m pytest tests/test_credentials_api.py tests/test_auth_flows.py -v --tb=short || echo "Note: Some tests may require cluster credentials, checking logs..."
 
-      - name: Verify public endpoint
+      - name: Wait for public endpoint to stabilise
         run: |
           URL="http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com"
 
-          echo "=== Public health check ==="
+          echo "=== Public health check (with retries) ==="
           curl -sf --retry 10 --retry-delay 5 --retry-connrefused \
             "$URL/api/health" | jq . || { echo "✗ Public health endpoint unreachable"; exit 1; }
 
@@ -340,6 +340,12 @@ jobs:
             "$URL/" -o /dev/null -w "HTTP %{http_code}\n" || { echo "✗ Public frontend unreachable"; exit 1; }
 
           echo "✓ Public endpoint is up"
+
+      - name: Run real endpoint smoke tests
+        run: |
+          URL="http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com"
+          echo "=== Running functional smoke tests against $URL ==="
+          python backend/tests/smoke_post_deploy.py "$URL"
 
       - name: Verify K8s resources
         run: |

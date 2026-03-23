@@ -616,8 +616,8 @@ async def export_conversation(export: ExportRequest) -> dict:
         # Build markdown export with structured sections
         markdown_export = f"""# Conversation Export
 
-**User:** {user_id}
-**Cluster:** {cluster_name}
+**User:** {export.user_id}
+**Cluster:** {export.cluster_name}
 **Exported:** {export_time}
 **Messages:** {len(all_messages)}
 
@@ -674,9 +674,9 @@ To verify the solution:
         logger.info(f"Generated export with {len(markdown_export)} characters")
 
         return {
-            "user_id": user_id,
-            "cluster": cluster_name,
-            "conversation_id": conversation_id,
+            "user_id": export.user_id,
+            "cluster": export.cluster_name,
+            "conversation_id": export.conversation_id,
             "export_format": "markdown",
             "content": markdown_export,
             "message_count": len(all_messages),
