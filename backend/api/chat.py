@@ -303,7 +303,10 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                     ),
                 },
                 token_usage=rag.get_token_usage(),
-                errors=enriched_context.errors + rag_response.get("errors", []),
+                errors=[
+                    {'type': 'enrichment', 'message': str(e), 'severity': 'warning'}
+                    for e in enriched_context.errors
+                ] + rag_response.get("errors", []),
                 metadata={
                     "cluster": request.cluster_name,
                     "cluster_version": target_cluster.get("version"),

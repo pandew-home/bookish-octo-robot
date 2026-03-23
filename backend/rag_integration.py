@@ -491,13 +491,23 @@ class RAGIntegration:
         errors = []
         
         for result in k8sgpt_results:
-            error = {
-                'resource_kind': result.get('kind', 'Unknown'),
-                'resource_name': result.get('resource_name', 'Unknown'),
-                'message': result.get('details', ''),
-                'error': result.get('error', []),
-                'backend': result.get('backend', 'Unknown')
-            }
+            # Support both K8sGPTResult dataclass objects and legacy dicts
+            if hasattr(result, 'kind'):
+                error = {
+                    'resource_kind': result.kind,
+                    'resource_name': result.name,
+                    'message': result.problem,
+                    'error': [],
+                    'backend': getattr(result, 'analyzer', 'Unknown')
+                }
+            else:
+                error = {
+                    'resource_kind': result.get('kind', 'Unknown'),
+                    'resource_name': result.get('resource_name', 'Unknown'),
+                    'message': result.get('details', ''),
+                    'error': result.get('error', []),
+                    'backend': result.get('backend', 'Unknown')
+                }
             errors.append(error)
         
         return errors
