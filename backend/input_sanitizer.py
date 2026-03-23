@@ -50,11 +50,10 @@ class InputSanitizer:
 
     # Patterns to sanitize in logs (replace with [REDACTED])
     SENSITIVE_PATTERNS = [
-        r"AKIA[0-9A-Z]{16}",  # AWS access keys
-        r"[A-Za-z0-9+/]{40}",  # AWS secret keys (base64-like)
+        r"A[SK]IA[0-9A-Z]{16}",                          # AWS access keys (AKIA/ASIA)
         r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+",  # JWT tokens
-        r"ghp_[A-Za-z0-9]{36}",  # GitHub personal access tokens
-        r"sk-[A-Za-z0-9]{48}",  # OpenAI API keys
+        r"ghp_[A-Za-z0-9]{36}",                          # GitHub personal access tokens
+        r"sk-[A-Za-z0-9]{48}",                           # OpenAI API keys
     ]
 
     _sensitive_compiled = [re.compile(pattern) for pattern in SENSITIVE_PATTERNS]
@@ -170,11 +169,11 @@ class InputSanitizer:
         Returns:
             Tuple of (is_valid, error_message)
         """
-        # Validate access key format (AKIA followed by 16 alphanumeric characters)
-        if not re.match(r"^AKIA[0-9A-Z]{16}$", access_key):
+        # Validate access key format — AKIA (permanent) or ASIA (temporary/STS)
+        if not re.match(r"^A[SK]IA[0-9A-Z]{16}$", access_key):
             return (
                 False,
-                "Invalid access key format. AWS access keys start with 'AKIA' followed by 16 characters.",
+                "Invalid access key format. AWS access keys start with 'AKIA' (permanent) or 'ASIA' (temporary/STS) followed by 16 characters.",
             )
 
         # Validate secret key length (40 characters)
@@ -218,7 +217,7 @@ class InputSanitizer:
         pod_patterns = [
             r"pod\s+([a-z0-9-]+)",
             r"pods?\s+named\s+([a-z0-9-]+)",
-            r"([a-z0-9-]+-[a-z0-9]{5,10}-[a-z0-9]{5})",  # Pod name pattern
+            r"([a-z0-9-]+-[a-z0-9]{5,10}-[a-z0-9]{5})\b",  # Pod name pattern (word boundary prevents partial matches)
         ]
 
         for pattern in pod_patterns:

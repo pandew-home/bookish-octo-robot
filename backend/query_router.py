@@ -228,9 +228,6 @@ class QueryRouter:
 
         query_lower = cleaned_query.lower()
 
-        # Extract resource names
-        resources = self.sanitizer.extract_resource_names(cleaned_query)
-
         # Score each category
         scores = {
             QueryCategory.POD_ISSUE: self._count_keywords(
@@ -279,10 +276,8 @@ class QueryRouter:
         # Build enrichment plan
         plan = EnrichmentPlan(
             categories=categories,
-            resource_names=resources.get("pods", [])
-            + resources.get("deployments", [])
-            + resources.get("services", []),
-            namespaces=resources.get("namespaces", []),
+            resource_names=[],
+            namespaces=[],
             include_k8sgpt_results=True,
             include_aws_context=include_aws,
             time_range=time_range,

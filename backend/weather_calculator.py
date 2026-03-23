@@ -37,13 +37,14 @@ class WeatherState(str, Enum):
 class K8sGPTResultSummary:
     """
     Summary of a K8sGPT Result for weather display.
-    
+
     Attributes:
         name: Result name
         kind: Resource kind
         namespace: Resource namespace
         severity: Issue severity
         problem: Problem description (truncated)
+        solution: Suggested solution
         timestamp: Result creation time
     """
     name: str
@@ -51,6 +52,7 @@ class K8sGPTResultSummary:
     namespace: str
     severity: str
     problem: str
+    solution: str
     timestamp: str
     
     def to_dict(self) -> Dict:
@@ -261,12 +263,17 @@ class WeatherCalculator:
             if len(problem) > 200:
                 problem = problem[:197] + "..."
             
+            solution = result.solution
+            if len(solution) > 300:
+                solution = solution[:297] + "..."
+
             summary = K8sGPTResultSummary(
                 name=result.name,
                 kind=result.kind,
                 namespace=result.namespace,
                 severity=result.severity,
                 problem=problem,
+                solution=solution,
                 timestamp=result.timestamp.isoformat() if isinstance(result.timestamp, datetime) else str(result.timestamp)
             )
             summaries.append(summary)

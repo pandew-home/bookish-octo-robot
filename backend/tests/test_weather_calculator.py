@@ -99,6 +99,7 @@ class TestK8sGPTResultSummary:
             namespace='default',
             severity='high',
             problem='Test problem',
+            solution='Restart the pod',
             timestamp='2024-01-15T10:30:00'
         )
         
@@ -116,6 +117,7 @@ class TestK8sGPTResultSummary:
             namespace='default',
             severity='high',
             problem='Test problem',
+            solution='Restart the pod',
             timestamp='2024-01-15T10:30:00'
         )
         

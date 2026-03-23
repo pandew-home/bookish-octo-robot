@@ -1,8 +1,9 @@
 """LLM client abstraction for multiple providers."""
 
+import json
 import os
 import re
-from typing import Optional
+from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
 
 
@@ -152,6 +153,38 @@ class OpenAIClient(LLMClientBase):
 
         return response.choices[0].message.content
 
+    def generate_with_tools(self, messages: List[Any], tools: List[Dict]) -> Dict[str, Any]:
+        """Generate a response with tool-calling support.
+
+        Returns {"type": "text", "text": ...} when the LLM produces a final answer,
+        or {"type": "tool_calls", "tool_calls": [...]} when it wants to call tools.
+        """
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+        }
+        if tools:
+            kwargs["tools"] = tools
+
+        response = self.client.chat.completions.create(**kwargs)
+        msg = response.choices[0].message
+        self.total_prompt_tokens += response.usage.prompt_tokens
+        self.total_completion_tokens += response.usage.completion_tokens
+
+        if msg.tool_calls:
+            return {
+                "type": "tool_calls",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "name": tc.function.name,
+                        "args": json.loads(tc.function.arguments),
+                    }
+                    for tc in msg.tool_calls
+                ],
+            }
+        return {"type": "text", "text": msg.content or ""}
+
     def embed(self, text: str) -> list:
         """Generate embedding using OpenAI.
 
@@ -248,6 +281,48 @@ class AnthropicClient(LLMClientBase):
         self.total_completion_tokens += message.usage.output_tokens
 
         return message.content[0].text
+
+    def generate_with_tools(self, messages: List[Any], tools: List[Dict]) -> Dict[str, Any]:
+        """Generate a response with tool-calling support (Anthropic format).
+
+        Converts OpenAI-style tool definitions to Anthropic format internally.
+        Returns {"type": "text", "text": ...} or {"type": "tool_calls", ...}.
+        Anthropic requires max_tokens; use 4096 as a generous default.
+        """
+        anthropic_tools = [
+            {
+                "name": t["function"]["name"],
+                "description": t["function"]["description"],
+                "input_schema": t["function"]["parameters"],
+            }
+            for t in tools
+        ]
+
+        kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": 4096,
+            "messages": messages,
+        }
+        if anthropic_tools:
+            kwargs["tools"] = anthropic_tools
+
+        response = self.client.messages.create(**kwargs)
+        self.total_prompt_tokens += response.usage.input_tokens
+        self.total_completion_tokens += response.usage.output_tokens
+
+        tool_uses = [b for b in response.content if b.type == "tool_use"]
+        text_blocks = [b for b in response.content if b.type == "text"]
+
+        if tool_uses:
+            return {
+                "type": "tool_calls",
+                "tool_calls": [
+                    {"id": tu.id, "name": tu.name, "args": tu.input}
+                    for tu in tool_uses
+                ],
+                "raw_content": response.content,
+            }
+        return {"type": "text", "text": text_blocks[0].text if text_blocks else ""}
 
     def embed(self, text: str) -> list:
         """Generate embedding using Anthropic.

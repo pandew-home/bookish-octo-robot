@@ -17,8 +17,7 @@ from pydantic import BaseModel, Field
 
 from api.credentials import get_credentials_for_session
 from cluster_manager import get_k8s_clients
-from query_router import QueryRouter
-from enrichment_engine import EnrichmentEngine
+from agentic_engine import AgentEngine
 from rag_integration import get_rag_integration
 from k8sgpt_reader import K8sGPTReader
 from conversation_history import ConversationHistory
@@ -181,68 +180,29 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             k8sgpt_results = await k8sgpt_reader.read_results()
             logger.info(f"Found {len(k8sgpt_results)} K8sGPT results")
 
-            # Step 5: Route and classify query
-            logger.info(f"[STEP_5] Classifying query...")
-            query_router = QueryRouter()
-            enrichment_plan = query_router.classify(cleaned_query)
-
-            categories = [c.value for c in enrichment_plan.categories]
-            logger.info(
-                f"[STEP_5] ✓ Query classified as: {categories}"
-            )
-            logger.info(f"[STEP_5]   Namespaces: {enrichment_plan.namespaces}")
-            logger.info(f"[STEP_5]   Resources: {enrichment_plan.resource_names}")
-
-            # Step 6: Enrich with cluster context
-            logger.info(f"[STEP_6] Enriching with cluster context...")
-            enrichment_engine = EnrichmentEngine(k8s_clients, creds)
-            enriched_context = await enrichment_engine.execute(enrichment_plan)
-
-            logger.info(
-                f"[STEP_6] ✓ Context enriched with {len(enriched_context.errors)} error(s)"
-            )
-
-            # Step 7: Generate response with RAG
-            logger.info(f"[STEP_7] Initializing RAG engine...")
+            # Step 5: Run agentic investigation
+            logger.info(f"[STEP_5] Starting agentic K8s investigation...")
+            cluster_version = target_cluster.get("version", "v1.34")
             llm_provider = os.getenv("LLM_PROVIDER", "openai")
             rag = get_rag_integration(
-                llm_provider=llm_provider,  # Read from environment
-                api_key=None,  # Uses environment variable
-                cluster_version=target_cluster.get("version", "v1.28"),
+                llm_provider=llm_provider,
+                api_key=None,
+                cluster_version=cluster_version,
             )
-            logger.info(f"[STEP_7] ✓ RAG engine initialized")
-
-            # Add K8sGPT results and metadata to enriched context
-            logger.info(f"[STEP_7] Setting enriched context metadata...")
-            enriched_context.k8sgpt_results = k8sgpt_results
-            enriched_context.enrichment_plan = {
-                'categories': [c.value for c in enrichment_plan.categories],
-                'resource_names': enrichment_plan.resource_names,
-                'namespaces': enrichment_plan.namespaces,
-                'include_aws_context': enrichment_plan.include_aws_context,
-                'time_range': str(enrichment_plan.time_range) if enrichment_plan.time_range else None,
-            }
-            enriched_context.cluster_name = request.cluster_name
-            logger.info(f"[STEP_7] ✓ Context metadata set: plan={enriched_context.enrichment_plan['categories']}")
-
-            logger.info(f"[STEP_7] Processing query through RAG...")
-            logger.info(f"[STEP_7] ========== CHATBOX INPUT TRACING ==========")
-            logger.info(f"[STEP_7] ORIGINAL EDIT BOX INPUT: {request.query[:150]}...")
-            logger.info(f"[STEP_7] SANITIZED INPUT (cleaned_query): {cleaned_query[:150]}...")
-            logger.info(f"[STEP_7] ENRICHED CONTEXT:")
-            logger.info(f"[STEP_7]   - Enrichment Plan: {enriched_context.enrichment_plan is not None}")
-            if enriched_context.enrichment_plan:
-                logger.info(f"[STEP_7]   - Categories: {enriched_context.enrichment_plan.get('categories', [])}")
-            logger.info(f"[STEP_7]   - Cluster Name: {enriched_context.cluster_name}")
-            logger.info(f"[STEP_7]   - K8sGPT Results: {len(enriched_context.k8sgpt_results or [])} found")
-            logger.info(f"[STEP_7] =========================================")
-            rag_response = rag.process_query(
-                query=cleaned_query,
-                enriched_context=enriched_context,
-                max_tokens=request.max_tokens,
-                is_export=request.is_export,
+            kb_results = rag.search_knowledge_base(cleaned_query, top_k=5)
+            agent = AgentEngine(
+                k8s_clients=k8s_clients,
+                llm_client=rag.llm_client,
+                k8sgpt_results=k8sgpt_results,
+                kb_results=kb_results,
+                cluster_version=cluster_version,
+                cluster_name=request.cluster_name,
             )
-            logger.info(f"[STEP_7] ✓ RAG response received, length: {len(rag_response.get('response', ''))} chars")
+            rag_response = await agent.run(query=cleaned_query)
+            logger.info(
+                f"[STEP_5] ✓ Agent done: {rag_response['iterations']} iteration(s), "
+                f"{len(rag_response['tool_calls_made'])} tool call(s)"
+            )
 
             # Step 8: Parse response for safety warnings
             parsed_response = response_parser.parse(rag_response["response"])
@@ -292,21 +252,11 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 ],
                 safety_warnings=parsed_response.safety_notices,
                 enrichment_plan={
-                    "categories": [c.value for c in enrichment_plan.categories],
-                    "resource_names": enrichment_plan.resource_names,
-                    "namespaces": enrichment_plan.namespaces,
-                    "include_aws_context": enrichment_plan.include_aws_context,
-                    "time_range": (
-                        str(enrichment_plan.time_range)
-                        if enrichment_plan.time_range
-                        else None
-                    ),
+                    "tool_calls": rag_response.get("tool_calls_made", []),
+                    "iterations": rag_response.get("iterations", 0),
                 },
                 token_usage=rag.get_token_usage(),
-                errors=[
-                    {'type': 'enrichment', 'message': str(e), 'severity': 'warning'}
-                    for e in enriched_context.errors
-                ] + rag_response.get("errors", []),
+                errors=rag_response.get("errors", []),
                 metadata={
                     "cluster": request.cluster_name,
                     "cluster_version": target_cluster.get("version"),
