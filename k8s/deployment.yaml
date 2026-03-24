@@ -22,6 +22,8 @@ spec:
         # Security profiles
         seccomp.security.alpha.kubernetes.io/pod: runtime/default
     spec:
+      imagePullSecrets:
+      - name: ghcr-pull-secret
       serviceAccountName: devops-chatbot
       securityContext:
         runAsNonRoot: true
