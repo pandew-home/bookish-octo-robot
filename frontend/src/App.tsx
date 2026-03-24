@@ -1,8 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Box, Container, AppBar, Toolbar, Typography, Alert, useMediaQuery, IconButton, Drawer, Badge } from '@mui/material';
-import { Analytics as AnalyticsIcon } from '@mui/icons-material';
+import { Box, Container, AppBar, Toolbar, Typography, Alert } from '@mui/material';
 import LoginForm from './components/LoginForm';
 import ClusterSelector from './components/ClusterSelector';
 import { CredentialBadge } from './components/CredentialBadge';
@@ -112,10 +111,6 @@ function App() {
     },
   }), []);
 
-  // Responsive breakpoints
-  const isLargeScreen = useMediaQuery(theme.breakpoints.up('lg'));
-  const isMediumScreen = useMediaQuery(theme.breakpoints.between('sm', 'lg'));
-  const [resultsDrawerOpen, setResultsDrawerOpen] = useState(false);
 
   // Render login form if not authenticated
   if (!credentials.isAuthenticated) {
@@ -227,7 +222,7 @@ function App() {
             </Alert>
           )}
 
-          {/* Weather widget */}
+          {/* Layer 1: Weather widget */}
           <Box sx={{ mb: 3 }}>
             <WeatherWidget
               onAskAboutIssue={(issue) => {
@@ -239,66 +234,22 @@ function App() {
             />
           </Box>
 
-          {/* Main content grid: Chat and Results */}
-          {isLargeScreen ? (
-            <Box
-              sx={{
-                display: 'grid',
-                gridTemplateColumns: '2fr 1fr',
-                gap: 3,
-              }}
-            >
-              <Box>
-                <ChatInterface
-                  isAuthenticated={credentials.isAuthenticated}
-                  selectedCluster={cluster.selectedCluster}
-                  messages={chat.messages}
-                  onMessagesChange={chat.setMessages}
-                  onExportConversation={chat.exportConversation}
-                  onClearConversation={chat.clearMessages}
-                />
-              </Box>
-              <Box>
-                <ResultsPanel />
-              </Box>
-            </Box>
-          ) : (
-            <Box>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <ChatInterface
-                  isAuthenticated={credentials.isAuthenticated}
-                  selectedCluster={cluster.selectedCluster}
-                  messages={chat.messages}
-                  onMessagesChange={chat.setMessages}
-                  onExportConversation={chat.exportConversation}
-                  onClearConversation={chat.clearMessages}
-                />
-              </Box>
-              {isMediumScreen && (
-                <IconButton
-                  onClick={() => setResultsDrawerOpen(true)}
-                  color="primary"
-                  sx={{ position: 'fixed', bottom: 16, right: 16, zIndex: 1000 }}
-                >
-                  <Badge color="primary">
-                    <AnalyticsIcon />
-                  </Badge>
-                </IconButton>
-              )}
-              <Drawer
-                anchor="right"
-                open={resultsDrawerOpen}
-                onClose={() => setResultsDrawerOpen(false)}
-                PaperProps={{ sx: { width: '85%', maxWidth: 400 } }}
-              >
-                {resultsDrawerOpen && (
-                  <Box sx={{ p: 2 }}>
-                    <ResultsPanel />
-                  </Box>
-                )}
-              </Drawer>
-            </Box>
-          )}
+          {/* Layer 2: Chat — full width */}
+          <Box sx={{ mb: 3 }}>
+            <ChatInterface
+              isAuthenticated={credentials.isAuthenticated}
+              selectedCluster={cluster.selectedCluster}
+              messages={chat.messages}
+              onMessagesChange={chat.setMessages}
+              onExportConversation={chat.exportConversation}
+              onClearConversation={chat.clearMessages}
+            />
+          </Box>
+
+          {/* Layer 3: Analyzer results — full width */}
+          <Box>
+            <ResultsPanel />
+          </Box>
         </Container>
       </Box>
     </ThemeProvider>
