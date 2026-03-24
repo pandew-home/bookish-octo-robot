@@ -262,8 +262,8 @@ describe('App Component', () => {
       
       expect(screen.getByTestId('weather-widget')).toBeInTheDocument();
       expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
-      // ResultsPanel is only visible on large screens (useMediaQuery returns false in jsdom)
-      expect(screen.queryByTestId('results-panel')).not.toBeInTheDocument();
+      // ResultsPanel is always rendered in the stacked layout
+      expect(screen.getByTestId('results-panel')).toBeInTheDocument();
       expect(screen.getByTestId('credential-badge')).toBeInTheDocument();
     });
 
@@ -317,10 +317,10 @@ describe('App Component', () => {
         ],
       });
 
-      const { container } = render(<App />);
-      
+      render(<App />);
+
       // Theme is applied via ThemeProvider, check that component renders
-      expect(container.querySelector('.MuiAppBar-root')).toBeInTheDocument();
+      expect(screen.getByRole('banner')).toBeInTheDocument();
     });
 
     it('should apply staging theme for staging cluster', () => {
@@ -338,9 +338,9 @@ describe('App Component', () => {
         ],
       });
 
-      const { container } = render(<App />);
-      
-      expect(container.querySelector('.MuiAppBar-root')).toBeInTheDocument();
+      render(<App />);
+
+      expect(screen.getByRole('banner')).toBeInTheDocument();
     });
 
     it('should apply prod theme for prod cluster', () => {
@@ -358,9 +358,9 @@ describe('App Component', () => {
         ],
       });
 
-      const { container } = render(<App />);
-      
-      expect(container.querySelector('.MuiAppBar-root')).toBeInTheDocument();
+      render(<App />);
+
+      expect(screen.getByRole('banner')).toBeInTheDocument();
     });
   });
 
@@ -425,11 +425,10 @@ describe('App Component', () => {
     it('should render weather and chat on small viewport', () => {
       render(<App />);
       
-      // Check that weather and chat are always rendered
+      // All three layers are always rendered regardless of viewport
       expect(screen.getByTestId('weather-widget')).toBeInTheDocument();
       expect(screen.getByTestId('chat-interface')).toBeInTheDocument();
-      // ResultsPanel is not directly visible on small/medium (useMediaQuery returns false in jsdom)
-      expect(screen.queryByTestId('results-panel')).not.toBeInTheDocument();
+      expect(screen.getByTestId('results-panel')).toBeInTheDocument();
     });
   });
 });
