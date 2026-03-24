@@ -8,7 +8,7 @@ metadata:
     version: v2.0
     git-sha: "1121c46"
 spec:
-  replicas: 1
+  replicas: 2
   selector:
     matchLabels:
       app: devops-chatbot
