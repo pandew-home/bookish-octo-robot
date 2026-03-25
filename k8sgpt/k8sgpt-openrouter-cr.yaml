@@ -26,7 +26,7 @@ spec:
     anonymized: false
   analysis:
     interval: 5m
-  noCache: true
+  noCache: false
   # Filters: list of analyzer kinds to run. Empty = run all built-in analyzers.
   # Explicitly list to ensure HorizontalPodAutoscaler and Node are included.
   filters:
