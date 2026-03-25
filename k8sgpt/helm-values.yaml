@@ -14,7 +14,9 @@ serviceMonitor:
 metrics:
   enabled: true
 
-# Emit structured JSON Result logs from the operator pod.
-# Alloy can parse these directly rather than scraping free-form operator logs.
+# resultLogging creates a k8sgpt-metrics Service in the same namespace, which
+# causes K8s to inject K8SGPT_METRICS_PORT=tcp://... into the k8sgpt pod.
+# k8sgpt v0.4.29+ reads that env var as its metrics bind address and crashes.
+# The operator controller already emits structured JSON logs that Alloy scrapes.
 resultLogging:
-  enabled: true
+  enabled: false
