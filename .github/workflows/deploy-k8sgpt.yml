@@ -137,14 +137,13 @@ jobs:
             sleep 10
           done
 
-          # Extract dashboard JSON from ConfigMap and push via API
-          kubectl get configmap grafana-k8sgpt-dashboard -n monitoring \
-            -o jsonpath='{.data.k8sgpt-dashboard\.json}' > /tmp/dashboard.json
-
+          # Extract dashboard JSON from the repo file and push via API
           python3 - <<'EOF'
-          import json, sys
-          with open('/tmp/dashboard.json') as f:
-              dashboard = json.load(f)
+          import json, re
+          with open('k8sgpt/Alloy/grafana-k8sgpt-dashboard.yaml') as f:
+              content = f.read()
+          start = content.find('{', content.find('k8sgpt-dashboard.json'))
+          dashboard = json.loads(content[start:])
           dashboard.pop('id', None)
           dashboard['uid'] = 'k8sgpt-results'
           payload = json.dumps({'dashboard': dashboard, 'overwrite': True, 'folderId': 0})
