@@ -22,11 +22,11 @@ spec:
     secret:
       name: k8sgpt-ai-secret
       key: openai-api-key
-    # This enables the masking of sensitive cluster data
-    anonymized: true
+    # anonymized: false sends real resource names to the LLM for specific, actionable fixes
+    anonymized: false
   analysis:
-    interval: 2m
-  noCache: false
+    interval: 5m
+  noCache: true
   # Filters: list of analyzer kinds to run. Empty = run all built-in analyzers.
   # Explicitly list to ensure HorizontalPodAutoscaler and Node are included.
   filters:
