@@ -17,7 +17,7 @@ spec:
   ai:
     enabled: true
     backend: openai
-    model: openrouter/auto
+    model: qwen/qwen3-coder
     baseUrl: https://openrouter.ai/api/v1
     secret:
       name: k8sgpt-ai-secret
@@ -39,3 +39,9 @@ spec:
     - PersistentVolumeClaim
     - Service
     - Ingress
+    - PodDisruptionBudget
+    - MutatingWebhookConfiguration
+    - ValidatingWebhookConfiguration
+    - GatewayClass
+    - Gateway
+    - HTTPRoute
