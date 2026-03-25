@@ -94,6 +94,33 @@ jobs:
             -n monitoring --reuse-values \
             --values k8sgpt/Alloy/loki-stack-values.yaml
 
+      - name: Register Loki datasource in Grafana via API
+        run: |
+          GRAFANA_IP=$(kubectl get svc prometheus-grafana -n monitoring \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          GRAFANA_URL="http://${GRAFANA_IP}"
+          GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
+            -o jsonpath='{.data.admin-password}' | base64 -d)
+
+          # Wait for Grafana to be reachable
+          for i in $(seq 1 12); do
+            curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" && break
+            echo "Waiting for Grafana... attempt $i"
+            sleep 10
+          done
+
+          curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -u "admin:${GRAFANA_PASS}" \
+            -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
+            "${GRAFANA_URL}/api/datasources" \
+          || curl -sf -X PUT \
+            -H "Content-Type: application/json" \
+            -u "admin:${GRAFANA_PASS}" \
+            -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
+            "${GRAFANA_URL}/api/datasources/uid/loki"
+          echo "Loki datasource registered"
+
       - name: Push dashboard to Grafana via API
         run: |
           # Get Grafana external IP and admin password
