@@ -1,0 +1,8 @@
+# Overrides applied to the existing loki-stack installation.
+# Prevents the loki-stack datasource ConfigMap from setting isDefault: true,
+# which conflicts with Prometheus being the default Grafana datasource.
+# Applied with: helm upgrade loki grafana/loki-stack ... --reuse-values --values this-file.yaml
+# Supersedes: loki-datasource-fix.yaml
+
+loki:
+  isDefault: false

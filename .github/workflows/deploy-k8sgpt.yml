@@ -1,0 +1,101 @@
+name: Deploy K8sGPT Operator & Observability
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'k8sgpt/**'
+      - '.github/workflows/deploy-k8sgpt.yml'
+  workflow_dispatch:
+
+env:
+  CLUSTER_NAME: bookish-octo-robot
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy K8sGPT & Observability
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Civo CLI
+        run: curl -sL https://civo.com/get | sh
+
+      - name: Configure kubectl
+        run: |
+          civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
+          civo apikey current deploy-key
+          civo kubernetes config ${{ env.CLUSTER_NAME }} --save
+
+      - name: Verify cluster access
+        run: kubectl get nodes
+
+      - name: Add Helm repos
+        run: |
+          helm repo add k8sgpt-operator https://charts.k8sgpt.ai/
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Create namespace
+        run: kubectl apply -f k8sgpt/namespace.yaml
+
+      - name: Create k8sgpt AI secret
+        run: |
+          kubectl create secret generic k8sgpt-ai-secret \
+            --from-literal=openai-api-key=${{ secrets.OPENROUTER_API_KEY }} \
+            -n k8sgpt-operator-system \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy K8sGPT operator
+        run: |
+          helm upgrade --install k8sgpt-operator k8sgpt-operator/k8sgpt-operator \
+            -n k8sgpt-operator-system \
+            --version 0.1.4 \
+            --values k8sgpt/helm-values.yaml \
+            --wait --timeout=120s
+
+      - name: Apply custom RBAC
+        run: kubectl apply -f k8sgpt/rbac.yaml
+
+      - name: Apply K8sGPT CR
+        run: kubectl apply -f k8sgpt/k8sgpt-openrouter-cr.yaml
+
+      - name: Wait for K8sGPT CR ready
+        run: |
+          kubectl wait k8sgpt/k8sgpt-openrouter \
+            -n k8sgpt-operator-system \
+            --for=condition=Ready \
+            --timeout=120s \
+          || kubectl describe k8sgpt/k8sgpt-openrouter -n k8sgpt-operator-system
+
+      - name: Deploy Alloy & observability manifests
+        run: |
+          kubectl apply -f k8sgpt/Alloy/alloy-rbac.yaml
+          helm upgrade --install alloy grafana/alloy \
+            -n monitoring --create-namespace \
+            --values k8sgpt/Alloy/alloy-values.yaml \
+            --wait --timeout=120s
+          kubectl apply -f k8sgpt/Alloy/alloy-cleanup-cronjob.yaml
+          kubectl apply -f k8sgpt/Alloy/grafana-k8sgpt-dashboard.yaml
+
+      - name: Apply monitoring stack Helm overrides
+        run: |
+          helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+            -n monitoring --reuse-values \
+            --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
+          helm upgrade loki grafana/loki-stack \
+            -n monitoring --reuse-values \
+            --values k8sgpt/Alloy/loki-stack-values.yaml
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n k8sgpt-operator-system
+          kubectl get pods -n monitoring
+          kubectl get k8sgpts -n k8sgpt-operator-system

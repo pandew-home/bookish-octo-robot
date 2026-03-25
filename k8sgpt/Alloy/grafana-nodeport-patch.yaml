@@ -1,9 +1,10 @@
-# Strategic merge patch to expose Grafana as NodePort on 30300.
-# Apply with: kubectl patch svc kube-prometheus-stack-grafana -n monitoring --patch-file grafana-nodeport-patch.yaml
-# Or: kubectl apply -f grafana-nodeport-patch.yaml
+# SUPERSEDED — this manual patch is replaced by kube-prometheus-stack-values.yaml.
+# The deploy-k8sgpt.yml workflow now runs:
+#   helm upgrade kube-prometheus-stack ... --reuse-values --values kube-prometheus-stack-values.yaml
+# which sets grafana.service.type=NodePort/nodePort=30300 and survives Helm upgrades.
 #
-# NOTE: This overrides the Helm-managed ClusterIP service.
-# Re-running `helm upgrade` will revert it — reapply this patch after upgrades.
+# Kept here as a fallback if the Helm values override doesn't take effect.
+# Apply manually with: kubectl apply -f grafana-nodeport-patch.yaml
 apiVersion: v1
 kind: Service
 metadata:

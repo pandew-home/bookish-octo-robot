@@ -1,0 +1,18 @@
+# Overrides applied to the existing kube-prometheus-stack installation.
+# Applied with: helm upgrade kube-prometheus-stack ... --reuse-values --values this-file.yaml
+# Supersedes: grafana-nodeport-patch.yaml and loki-datasource-fix.yaml
+
+grafana:
+  service:
+    type: NodePort
+    nodePort: 30300
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki:3100
+      isDefault: false
+      version: 1
+      jsonData:
+        maxLines: 1000

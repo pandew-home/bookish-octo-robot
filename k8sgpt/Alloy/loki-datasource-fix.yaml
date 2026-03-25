@@ -1,12 +1,10 @@
-# Fixes the loki-loki-stack Helm-managed ConfigMap which ships with isDefault: true,
-# conflicting with Prometheus (also isDefault: true) and blocking all Grafana datasource
-# provisioning. This patch sets isDefault: false and adds an explicit uid so the
-# K8sGPT dashboard can reference it reliably.
+# SUPERSEDED — this manual patch is replaced by loki-stack-values.yaml.
+# The deploy-k8sgpt.yml workflow now runs:
+#   helm upgrade loki grafana/loki-stack -n monitoring --reuse-values --values loki-stack-values.yaml
+# which sets loki.isDefault=false and survives Helm upgrades.
 #
-# Apply with: kubectl apply -f loki-datasource-fix.yaml
-#
-# NOTE: This will be overwritten if loki-stack Helm chart is upgraded.
-# Re-apply after: helm upgrade loki grafana/loki-stack -n monitoring
+# Kept here as a fallback if loki-stack Helm values don't apply cleanly.
+# Apply manually with: kubectl apply -f loki-datasource-fix.yaml
 apiVersion: v1
 kind: ConfigMap
 metadata:
