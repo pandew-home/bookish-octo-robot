@@ -20,7 +20,7 @@ spec:
             runAsUser: 65534
           containers:
             - name: cleanup
-              image: bitnami/kubectl:latest
+              image: alpine/k8s:1.29.2
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
