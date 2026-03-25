@@ -94,6 +94,45 @@ jobs:
             -n monitoring --reuse-values \
             --values k8sgpt/Alloy/loki-stack-values.yaml
 
+      - name: Push dashboard to Grafana via API
+        run: |
+          # Get Grafana external IP and admin password
+          GRAFANA_IP=$(kubectl get svc prometheus-grafana -n monitoring \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          GRAFANA_URL="http://${GRAFANA_IP}"
+          GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
+            -o jsonpath='{.data.admin-password}' | base64 -d)
+
+          # Wait for Grafana to be reachable
+          for i in $(seq 1 12); do
+            curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" && break
+            echo "Waiting for Grafana... attempt $i"
+            sleep 10
+          done
+
+          # Extract dashboard JSON from ConfigMap and push via API
+          kubectl get configmap grafana-k8sgpt-dashboard -n monitoring \
+            -o jsonpath='{.data.k8sgpt-dashboard\.json}' > /tmp/dashboard.json
+
+          python3 - <<'EOF'
+          import json, sys
+          with open('/tmp/dashboard.json') as f:
+              dashboard = json.load(f)
+          dashboard.pop('id', None)
+          dashboard['uid'] = 'k8sgpt-results'
+          payload = json.dumps({'dashboard': dashboard, 'overwrite': True, 'folderId': 0})
+          with open('/tmp/grafana-payload.json', 'w') as f:
+              f.write(payload)
+          EOF
+
+          RESULT=$(curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -u "admin:${GRAFANA_PASS}" \
+            -d @/tmp/grafana-payload.json \
+            "${GRAFANA_URL}/api/dashboards/db")
+          echo "Dashboard import result: ${RESULT}"
+          echo "Dashboard URL: ${GRAFANA_URL}/d/k8sgpt-results"
+
       - name: Verify deployment
         run: |
           kubectl get pods -n k8sgpt-operator-system
