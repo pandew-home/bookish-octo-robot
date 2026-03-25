@@ -13,3 +13,8 @@ serviceMonitor:
 
 metrics:
   enabled: true
+
+# Emit structured JSON Result logs from the operator pod.
+# Alloy can parse these directly rather than scraping free-form operator logs.
+resultLogging:
+  enabled: true

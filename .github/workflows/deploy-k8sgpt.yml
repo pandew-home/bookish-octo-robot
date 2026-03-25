@@ -57,7 +57,7 @@ jobs:
         run: |
           helm upgrade --install k8sgpt-operator k8sgpt-operator/k8sgpt-operator \
             -n k8sgpt-operator-system \
-            --version 0.1.4 \
+            --version 0.2.26 \
             --values k8sgpt/helm-values.yaml \
             --wait --timeout=120s
 
