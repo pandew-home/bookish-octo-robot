@@ -90,9 +90,7 @@ jobs:
           helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
             -n monitoring --create-namespace --reuse-values \
             --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
-          helm upgrade --install loki grafana/loki-stack \
-            -n monitoring --create-namespace --reuse-values \
-            --values k8sgpt/Alloy/loki-stack-values.yaml
+          # Loki already deployed in loki namespace - skip upgrade
 
       - name: Register Loki datasource in Grafana via API
         run: |
