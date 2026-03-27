@@ -44,7 +44,9 @@ spec:
                   CUTOFF=$(date -u -d "${RETENTION_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-${RETENTION_HOURS}H +%Y-%m-%dT%H:%M:%SZ)
                   echo "Deleting K8sGPT Results older than ${RETENTION_HOURS}h (before ${CUTOFF})"
 
-                  DELETED=0
+                  COUNTFILE=$(mktemp)
+                  echo 0 > "$COUNTFILE"
+
                   kubectl get results.core.k8sgpt.ai --all-namespaces \
                     -o custom-columns='NAME:.metadata.name,NS:.metadata.namespace,CREATED:.metadata.creationTimestamp' \
                     --no-headers | awk '{print $1"|"$2"|"$3}' | while IFS= read -r line; do
@@ -53,8 +55,11 @@ spec:
                     CREATED=$(echo "$line" | cut -d'|' -f3)
                     if [ "$CREATED" \< "$CUTOFF" ]; then
                       echo "Deleting Result ${NS}/${NAME} (created ${CREATED})"
-                      kubectl delete result.core.k8sgpt.ai "$NAME" -n "$NS" --ignore-not-found && DELETED=$((DELETED + 1))
+                      kubectl delete result.core.k8sgpt.ai "$NAME" -n "$NS" --ignore-not-found && \
+                        echo $(( $(cat "$COUNTFILE") + 1 )) > "$COUNTFILE"
                     fi
                   done
 
+                  DELETED=$(cat "$COUNTFILE")
+                  rm -f "$COUNTFILE"
                   echo "Cleanup complete. Deleted ${DELETED} Result(s)."
