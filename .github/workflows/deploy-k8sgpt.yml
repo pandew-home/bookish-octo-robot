@@ -87,11 +87,11 @@ jobs:
 
       - name: Apply monitoring stack Helm overrides
         run: |
-          helm upgrade kube-prometheus-stack prometheus-community/kube-prometheus-stack \
-            -n monitoring --reuse-values \
+          helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+            -n monitoring --create-namespace --reuse-values \
             --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
-          helm upgrade loki grafana/loki-stack \
-            -n monitoring --reuse-values \
+          helm upgrade --install loki grafana/loki-stack \
+            -n monitoring --create-namespace --reuse-values \
             --values k8sgpt/Alloy/loki-stack-values.yaml
 
       - name: Register Loki datasource in Grafana via API
