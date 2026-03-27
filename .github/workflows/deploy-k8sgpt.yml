@@ -107,17 +107,25 @@ jobs:
             sleep 10
           done
 
-          curl -sf -X POST \
+          set +e
+          curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             -u "admin:${GRAFANA_PASS}" \
             -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
             "${GRAFANA_URL}/api/datasources" \
-          || curl -sf -X PUT \
-            -H "Content-Type: application/json" \
-            -u "admin:${GRAFANA_PASS}" \
-            -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
-            "${GRAFANA_URL}/api/datasources/uid/loki"
-          echo "Loki datasource registered"
+            -o /dev/null
+          HTTP_RESULT=$?
+          if [ $HTTP_RESULT -ne 0 ] || [ "$HTTP_STATUS" = "400" ] || [ "$HTTP_STATUS" = "404" ]; then
+            echo "PUT Loki datasource (POST failed with status $HTTP_STATUS)"
+            curl -s -w "\nHTTP_STATUS:%{http_code}" -X PUT \
+              -H "Content-Type: application/json" \
+              -u "admin:${GRAFANA_PASS}" \
+              -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
+              "${GRAFANA_URL}/api/datasources/uid/loki" \
+              -o /dev/null
+          fi
+          set -e
+          echo "Loki datasource registration completed"
 
       - name: Push dashboard to Grafana via API
         run: |
