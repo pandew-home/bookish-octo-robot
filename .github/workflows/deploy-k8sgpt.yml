@@ -96,36 +96,35 @@ jobs:
         run: |
           GRAFANA_IP=$(kubectl get svc prometheus-grafana -n monitoring \
             -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          if [ -z "$GRAFANA_IP" ]; then
+            echo "Grafana IP not available, skipping Loki datasource registration"
+            exit 0
+          fi
           GRAFANA_URL="http://${GRAFANA_IP}"
           GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
             -o jsonpath='{.data.admin-password}' | base64 -d)
 
           # Wait for Grafana to be reachable
-          for i in $(seq 1 12); do
-            curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" && break
+          for i in $(seq 1 6); do
+            if curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
+              break
+            fi
             echo "Waiting for Grafana... attempt $i"
-            sleep 10
+            sleep 5
           done
 
-          set +e
-          curl -s -w "\nHTTP_STATUS:%{http_code}" -X POST \
+          curl -s -X POST \
             -H "Content-Type: application/json" \
             -u "admin:${GRAFANA_PASS}" \
             -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
             "${GRAFANA_URL}/api/datasources" \
-            -o /dev/null
-          HTTP_RESULT=$?
-          if [ $HTTP_RESULT -ne 0 ] || [ "$HTTP_STATUS" = "400" ] || [ "$HTTP_STATUS" = "404" ]; then
-            echo "PUT Loki datasource (POST failed with status $HTTP_STATUS)"
-            curl -s -w "\nHTTP_STATUS:%{http_code}" -X PUT \
+            || curl -s -X PUT \
               -H "Content-Type: application/json" \
               -u "admin:${GRAFANA_PASS}" \
               -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
               "${GRAFANA_URL}/api/datasources/uid/loki" \
-              -o /dev/null
-          fi
-          set -e
-          echo "Loki datasource registration completed"
+            || echo "Loki datasource registration skipped"
+          echo "Loki datasource step completed"
 
       - name: Push dashboard to Grafana via API
         run: |
