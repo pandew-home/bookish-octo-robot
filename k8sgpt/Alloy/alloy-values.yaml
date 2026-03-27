@@ -33,14 +33,38 @@ alloy:
         forward_to = [loki.process.k8sgpt_results.receiver]
       }
 
-      // Forward k8sgpt operator pod logs to Loki as-is (for debugging)
-      // Structured Result CRD data is pushed separately by k8sgpt-result-scraper CronJob
+      // Parse and enrich operator pod logs before forwarding.
+      // k8sgpt emits controller-runtime JSON structured logs; extracting key fields
+      // enables {source="k8sgpt", level="error"} and {source="k8sgpt", level="info"}
+      // filters in Grafana without scanning every log line.
       loki.process "k8sgpt_results" {
         forward_to = [loki.write.default.receiver]
 
         stage.static_labels {
           values = {
             source = "k8sgpt",
+          }
+        }
+
+        // Extract fields from controller-runtime JSON logs produced by the k8sgpt pod.
+        // Expected fields: level (info/error/debug), msg, kind, name, namespace, error.
+        stage.json {
+          expressions = {
+            log_level     = "level",
+            log_msg       = "msg",
+            log_kind      = "kind",
+            log_name      = "name",
+            log_namespace = "namespace",
+            log_error     = "error",
+          }
+        }
+
+        // Promote level to a Loki stream label so Grafana can filter by severity
+        // without a full-text scan.  Only label level; high-cardinality fields like
+        // name/namespace stay as log-line metadata.
+        stage.labels {
+          values = {
+            level = "log_level",
           }
         }
       }

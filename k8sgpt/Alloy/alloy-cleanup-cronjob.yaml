@@ -44,11 +44,10 @@ spec:
                   CUTOFF=$(date -u -d "${RETENTION_HOURS} hours ago" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-${RETENTION_HOURS}H +%Y-%m-%dT%H:%M:%SZ)
                   echo "Deleting K8sGPT Results older than ${RETENTION_HOURS}h (before ${CUTOFF})"
 
-                  kubectl get results.core.k8sgpt.ai --all-namespaces -o json | \
-                  kubectl version --client -o json > /dev/null
-
                   DELETED=0
-                  while IFS= read -r line; do
+                  kubectl get results.core.k8sgpt.ai --all-namespaces \
+                    -o custom-columns='NAME:.metadata.name,NS:.metadata.namespace,CREATED:.metadata.creationTimestamp' \
+                    --no-headers | awk '{print $1"|"$2"|"$3}' | while IFS= read -r line; do
                     NAME=$(echo "$line" | cut -d'|' -f1)
                     NS=$(echo "$line" | cut -d'|' -f2)
                     CREATED=$(echo "$line" | cut -d'|' -f3)
@@ -56,8 +55,6 @@ spec:
                       echo "Deleting Result ${NS}/${NAME} (created ${CREATED})"
                       kubectl delete result.core.k8sgpt.ai "$NAME" -n "$NS" --ignore-not-found && DELETED=$((DELETED + 1))
                     fi
-                  done < <(kubectl get results.core.k8sgpt.ai --all-namespaces \
-                    -o custom-columns='NAME:.metadata.name,NS:.metadata.namespace,CREATED:.metadata.creationTimestamp' \
-                    --no-headers | awk '{print $1"|"$2"|"$3}')
+                  done
 
                   echo "Cleanup complete. Deleted ${DELETED} Result(s)."

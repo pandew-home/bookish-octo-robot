@@ -48,33 +48,59 @@ spec:
                   data = json.load(sys.stdin)
                   streams = []
 
-                  for item in data['items']:
+                  # Use current time as the Loki push timestamp so that every
+                  # CronJob run (which may carry updated AI analysis in 'details')
+                  # is always ingested — Loki deduplicates by stream+timestamp,
+                  # so reusing creationTimestamp silently drops re-analysis updates.
+                  now_ns = int(time.time() * 1e9)
+
+                  for idx, item in enumerate(data['items']):
                       spec    = item['spec']
                       meta    = item['metadata']
                       created = meta.get('creationTimestamp', '')
-                      try:
-                          dt    = datetime.datetime.strptime(created, '%Y-%m-%dT%H:%M:%SZ')
-                          ts_ns = str(int(dt.replace(tzinfo=datetime.timezone.utc).timestamp() * 1e9))
-                      except Exception:
-                          ts_ns = str(int(time.time() * 1e9))
+
+                      # Parse parentObject (format: 'Kind/namespace/name' or just 'Kind')
+                      # to get the actual namespace of the failing resource, not the CRD namespace.
+                      parent = spec.get('parentObject', '')
+                      parts  = parent.split('/')
+                      if len(parts) >= 3:
+                          resource_ns   = parts[1]
+                          resource_name = parts[2]
+                      else:
+                          resource_ns   = 'default'
+                          resource_name = spec.get('name', '')
+
+                      # Unique nanosecond timestamp per entry within this run.
+                      ts_ns = str(now_ns + idx * 1000)
 
                       error_text = ' | '.join(e.get('text', '') for e in spec.get('error', []))
                       details    = spec.get('details', '')
-                      fix        = details[details.index('Solution:'):] if 'Solution:' in details else details
+
+                      # Extract fix suggestion — LLM output may use several markers.
+                      fix = ''
+                      for marker in ('Solution:', 'Recommended action:', 'Recommendation:', 'Fix:'):
+                          if marker in details:
+                              fix = details[details.index(marker) + len(marker):].strip()
+                              break
+                      # If no marker found, store the full details in its own field.
+                      fix = fix or ''
 
                       log_entry = {
-                          'found_at': created,
-                          'kind':     spec.get('kind', ''),
-                          'resource': spec.get('name', ''),
-                          'backend':  spec.get('backend', ''),
-                          'error':    error_text,
-                          'fix':      fix,
+                          'found_at':      created,
+                          'kind':          spec.get('kind', ''),
+                          'resource':      resource_name,
+                          'resource_ns':   resource_ns,
+                          'resource_path': parent or spec.get('name', ''),
+                          'backend':       spec.get('backend', ''),
+                          'error':         error_text,
+                          'details':       details,
+                          'fix':           fix,
                       }
                       streams.append({
                           'stream': {
-                              'source':    'k8sgpt-result',
-                              'kind':      spec.get('kind', 'unknown'),
-                              'namespace': meta.get('namespace', 'unknown'),
+                              'source':       'k8sgpt-result',
+                              'kind':         spec.get('kind', 'unknown'),
+                              'resource_ns':  resource_ns,
                           },
                           'values': [[ts_ns, json.dumps(log_entry)]]
                       })
@@ -91,9 +117,6 @@ spec:
                           print(f'Pushed {len(streams)} results to Loki (HTTP {resp.status})')
                   except urllib.error.HTTPError as e:
                       body = e.read().decode()
-                      if e.code == 400 and ('out of order' in body or 'ignored' in body):
-                          print('Results already ingested (duplicate), skipping')
-                      else:
-                          print(f'Loki push failed: {e.code} {body}', file=sys.stderr)
-                          sys.exit(1)
+                      print(f'Loki push failed: {e.code} {body}', file=sys.stderr)
+                      sys.exit(1)
                   "

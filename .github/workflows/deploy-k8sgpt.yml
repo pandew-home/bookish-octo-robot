@@ -170,7 +170,7 @@ dashboard = {
             "gridPos": {"h": 20, "w": 24, "x": 0, "y": 8},
             "datasource": {"type": "loki", "uid": "loki"},
             "options": {"dedupStrategy": "none", "enableLogDetails": True, "prettifyLogMessage": True, "showLabels": False, "showTime": True, "sortOrder": "Descending", "wrapLogMessage": True},
-            "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": '{source="k8sgpt-result"} | json | line_format "\ud83d\udd34 {{.kind}} \u2014 {{.resource}}\\n\u274c ERROR: {{.error}}\\n\u2705 FIX: {{.fix}}\\n\ud83d\udd50 Found: {{.found_at}}"', "refId": "A"}]
+            "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": '{source="k8sgpt-result"} | json | line_format "\ud83d\udd34 {{.kind}} \u2014 {{.resource_ns}}/{{.resource}}\\n\u274c ERROR: {{.error}}\\n\u2705 FIX: {{.fix}}\\n\ud83d\udcdd DETAILS: {{.details}}\\n\ud83d\udd50 Found: {{.found_at}}"', "refId": "A"}]
         },
         {
             "id": 5, "type": "table", "title": "Findings Table (sortable)",
@@ -181,13 +181,16 @@ dashboard = {
                 {"matcher": {"id": "byName", "options": "fix"}, "properties": [{"id": "custom.width", "value": 500}, {"id": "custom.displayMode", "value": "color-background"}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "dark-green"}}]},
                 {"matcher": {"id": "byName", "options": "error"}, "properties": [{"id": "custom.width", "value": 400}, {"id": "custom.displayMode", "value": "color-background"}, {"id": "color", "value": {"mode": "fixed", "fixedColor": "dark-red"}}]},
                 {"matcher": {"id": "byName", "options": "kind"}, "properties": [{"id": "custom.width", "value": 90}]},
-                {"matcher": {"id": "byName", "options": "resource"}, "properties": [{"id": "custom.width", "value": 250}]},
+                {"matcher": {"id": "byName", "options": "resource"}, "properties": [{"id": "custom.width", "value": 200}]},
+                {"matcher": {"id": "byName", "options": "resource_ns"}, "properties": [{"id": "custom.width", "value": 120}]},
+                {"matcher": {"id": "byName", "options": "resource_path"}, "properties": [{"id": "custom.width", "value": 280}]},
+                {"matcher": {"id": "byName", "options": "details"}, "properties": [{"id": "custom.width", "value": 400}]},
                 {"matcher": {"id": "byName", "options": "found_at"}, "properties": [{"id": "custom.width", "value": 160}]},
                 {"matcher": {"id": "byName", "options": "Time"}, "properties": [{"id": "custom.hidden", "value": True}]},
                 {"matcher": {"id": "byName", "options": "source"}, "properties": [{"id": "custom.hidden", "value": True}]},
                 {"matcher": {"id": "byName", "options": "namespace"}, "properties": [{"id": "custom.hidden", "value": True}]},
             ]},
-            "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": '{source="k8sgpt-result"} | json found_at="found_at", kind="kind", resource="resource", error="error", fix="fix", backend="backend"', "instant": False, "refId": "A"}]
+            "targets": [{"datasource": {"type": "loki", "uid": "loki"}, "expr": '{source="k8sgpt-result"} | json found_at="found_at", kind="kind", resource="resource", resource_ns="resource_ns", resource_path="resource_path", error="error", fix="fix", details="details", backend="backend"', "instant": False, "refId": "A"}]
         }
     ]
 }

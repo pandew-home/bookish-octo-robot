@@ -31,6 +31,7 @@ spec:
   # Explicitly list to ensure HorizontalPodAutoscaler and Node are included.
   filters:
     - Pod
+    - Log
     - Deployment
     - ReplicaSet
     - StatefulSet
@@ -39,6 +40,9 @@ spec:
     - PersistentVolumeClaim
     - Service
     - Ingress
+    - CronJob
+    - Job
+    - NetworkPolicy
     - PodDisruptionBudget
     - MutatingWebhookConfiguration
     - ValidatingWebhookConfiguration
