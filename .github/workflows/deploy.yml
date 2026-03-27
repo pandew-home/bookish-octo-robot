@@ -72,37 +72,92 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: changes
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'Dockerfile'
+              - 'docker/**'
+            frontend:
+              - 'frontend/**'
+            auth:
+              - 'backend/api/credentials.py'
+              - 'backend/credential_store.py'
+              - 'backend/middleware/**'
+              - 'backend/eks_auth.py'
+              - 'backend/local_k8s_auth.py'
+              - 'backend/tests/test_credentials_api.py'
+              - 'backend/tests/test_auth_flows.py'
+              - 'backend/tests/test_cluster_isolation.py'
+            chat:
+              - 'backend/api/chat.py'
+              - 'backend/enrichment_engine.py'
+              - 'backend/agentic_engine.py'
+              - 'backend/query_router.py'
+              - 'backend/tests/test_chat_api.py'
+              - 'backend/tests/test_enrichment_timeout.py'
+            operator:
+              - 'libs/**'
 
       - name: Setup Python
+        if: steps.changes.outputs.backend == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
           cache: 'pip'
           cache-dependency-path: backend/requirements.txt
 
-      - name: Backend tests
+      - name: Install backend deps
+        if: steps.changes.outputs.backend == 'true'
         run: |
           pip install -r backend/requirements.txt
-          pip install -e libs/devops-k8s -e libs/devops-kb -e libs/devops-prompts -e libs/devops-rag
           pip install "httpx<0.28"
-          cd backend
 
       - name: Run critical security & auth tests
+        if: steps.changes.outputs.auth == 'true'
         run: |
           cd backend
           python -m pytest tests/test_credentials_api.py tests/test_auth_flows.py tests/test_cluster_isolation.py -v --tb=short --no-cov
 
       - name: Run chat API & integration tests
+        if: steps.changes.outputs.chat == 'true'
         run: |
           cd backend
           python -m pytest tests/test_chat_api.py tests/test_enrichment_timeout.py -v --tb=short --no-cov
 
       - name: Run all backend tests
+        if: steps.changes.outputs.backend == 'true'
         run: |
           cd backend
           python -m pytest --tb=short -q --no-cov
 
+      - name: Setup Python for operator libs
+        if: steps.changes.outputs.operator == 'true' && steps.changes.outputs.backend != 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install operator lib deps
+        if: steps.changes.outputs.operator == 'true' && steps.changes.outputs.backend != 'true'
+        run: pip install -r backend/requirements.txt "httpx<0.28"
+
+      - name: Run operator lib tests
+        if: steps.changes.outputs.operator == 'true'
+        run: |
+          pip install -e libs/devops-k8s -e libs/devops-kb -e libs/devops-prompts -e libs/devops-rag
+          python -m pytest libs/devops-k8s/tests libs/devops-kb/tests libs/devops-prompts/tests libs/devops-rag/tests \
+            -v --tb=short -q --no-cov
+
       - name: Setup Node.js
+        if: steps.changes.outputs.frontend == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -110,6 +165,7 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Frontend tests
+        if: steps.changes.outputs.frontend == 'true'
         run: |
           cd frontend
           npm install
