@@ -22,6 +22,16 @@ uv tool install specify-cli --from git+https://github.com/github/spec-kit.git@v0
 4. `/speckit.tasks` - Generate task list
 5. `/speckit.implement` - Execute implementation
 
+## Deployment & Testing Workflow
+
+1. **Branch per feature** - All work on dedicated feature branches
+2. **Create PR when ready** - Open merge request for review
+3. **Trigger GitHub Actions** - Run CI/CD workflows for deployment
+4. **Test in cluster** - Agents can deploy and test in dev/test clusters
+5. **Merge to main** - Only after review and successful tests
+
+**Never push directly to main. All changes go through PR review.**
+
 ## Project Context
 
 - k8sgpt operator runs cluster analyzers every few minutes
