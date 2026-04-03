@@ -38,7 +38,7 @@ class RAGEngine:
         self.max_retries = max_retries
         self.aws_mcp_client = aws_mcp_client or AWSMCPClient()
         self.k8sgpt_mcp_client = k8sgpt_mcp_client or K8sGPTMCPClient()
-        self.api_reference_builder = APIReferenceBuilder(cluster_version or "v1.28")
+        self.api_reference_builder = APIReferenceBuilder(cluster_version or "v1.34")
         self.errors: List[Dict[str, Any]] = []
 
     def process_query(
@@ -225,16 +225,21 @@ class RAGEngine:
             Formatted prompt string
         """
         prompt_parts = [
-            "You are a DevOps expert assistant. Provide clear, actionable advice.",
-            "When recommending solutions, prefer Kubernetes API calls over kubectl commands.",
-            "Strongly prefer using the in-cluster K8sGPT MCP server for supported diagnostics and troubleshooting.",
-            "If K8sGPT MCP is unavailable or lacks a tool, silently fall back to Kubernetes API data.",
+            "You are a Kubernetes SRE Assistant operating in **READ-ONLY MODE**.",
+            "**Context:** Use the provided CLUSTER CONTEXT (Events, Logs, Resource Specs) as the single source of truth.",
+            "**Task:** Diagnose issues by correlating Kubernetes Events with Pod/Node status and Logs.",
+            "**Output Format:**",
+            "1. **Status**: (Healthy/Degraded/Down)",
+            "2. **Evidence**: (Specific Events/Log snippets)",
+            "3. **Root Cause**: (Technical explanation)",
+            "4. **Recommendation**:",
+            "**Reference:** [Kubernetes Troubleshooting](https://kubernetes.io/docs/tasks/debug/)",
             "",
             "KUBERNETES API DOCUMENTATION:",
         ]
 
-        # Add API documentation links
-        api_links = self.api_reference_builder.get_documentation_links()
+        # Add API documentation links with safe fallbacks
+        api_links = self._get_api_documentation_links()
         prompt_parts.extend([
             f"API Overview: {api_links['api_overview']}",
             f"API Reference ({api_links['cluster_version']}): {api_links['api_reference']}",
@@ -252,6 +257,10 @@ class RAGEngine:
                     [f"{t.get('name')} {t.get('version')}" for t in cluster_context.get("cluster_tools", [])]
                 )
                 prompt_parts.append(f"Installed Tools: {tools_str}")
+
+            # Include summarized Kubernetes API payloads so the model can answer from live cluster data.
+            for section in self._format_cluster_context_sections(cluster_context):
+                prompt_parts.append(section)
 
         # AWS context is now handled as a document in context_documents
         # Look for AWS context document
@@ -314,6 +323,45 @@ class RAGEngine:
         prompt_parts.append("RESPONSE:")
 
         return "\n".join(prompt_parts)
+
+    def _format_cluster_context_sections(self, cluster_context: Dict[str, Any]) -> List[str]:
+        """Format cluster context into compact prompt sections.
+
+        Args:
+            cluster_context: Cluster context payload from enrichment engine
+
+        Returns:
+            List of formatted section strings
+        """
+        excluded_keys = {"cluster_name", "cluster_version", "cluster_tools"}
+        sections: List[str] = []
+
+        for key, value in cluster_context.items():
+            if key in excluded_keys or value in (None, "", [], {}):
+                continue
+
+            label = key.replace("_", " ").upper()
+            sections.append(f"{label}:")
+
+            if isinstance(value, dict):
+                for item_key, item_value in list(value.items())[:12]:
+                    sections.append(f"- {item_key}: {self._truncate_value(item_value)}")
+            elif isinstance(value, list):
+                for item in value[:12]:
+                    sections.append(f"- {self._truncate_value(item)}")
+            else:
+                sections.append(f"- {self._truncate_value(value)}")
+
+            sections.append("")
+
+        return sections
+
+    def _truncate_value(self, value: Any, max_len: int = 320) -> str:
+        """Convert value to a compact string representation for prompt inclusion."""
+        text = str(value).replace("\n", " ").strip()
+        if len(text) <= max_len:
+            return text
+        return text[:max_len] + "..."
 
     def _enrich_selected_error_context(self, selected_error: Dict[str, Any]) -> Dict[str, Any]:
         """Enrich selected error with MCP-first context and silent kube fallback.
@@ -426,6 +474,45 @@ class RAGEngine:
                 "timestamp": datetime.utcnow().isoformat(),
             }
         )
+
+    def _get_api_documentation_links(self) -> Dict[str, str]:
+        """Safely retrieve API documentation links with fallbacks.
+
+        Returns:
+            Dictionary with 'api_overview', 'api_reference', and 'cluster_version' keys.
+            Returns default values if the builder fails or returns incomplete data.
+        """
+        # Get actual cluster version from builder, fallback to v1.34
+        cluster_version = getattr(
+            self.api_reference_builder, 
+            "major_minor_version", 
+            "v1.34"
+        ) if self.api_reference_builder else "v1.34"
+
+        DEFAULT_LINKS = {
+            "api_overview": "https://kubernetes.io/docs/concepts/overview/kubernetes-api/",
+            "api_reference": f"https://kubernetes.io/docs/reference/generated/kubernetes-api/{cluster_version}/",
+            "cluster_version": cluster_version,
+        }
+
+        try:
+            if self.api_reference_builder is None:
+                logger.warning("API reference builder not initialized, using default links")
+                return DEFAULT_LINKS
+
+            links = self.api_reference_builder.get_documentation_links()
+
+            # Validate required keys exist and are non-empty
+            if not links:
+                logger.warning("API documentation links empty, using defaults")
+                return DEFAULT_LINKS
+
+            # Merge with defaults to ensure all keys present
+            return {**DEFAULT_LINKS, **links}
+
+        except Exception as e:
+            logger.error(f"Failed to get API documentation links: {e}")
+            return DEFAULT_LINKS
 
     def get_api_call_example(self, resource_kind: str, operation: str = "get") -> str:
         """Get API call example for a resource.

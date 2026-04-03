@@ -55,11 +55,11 @@ class APIReferenceBuilder:
         "serviceaccounts": "serviceaccount-v1-core",
     }
 
-    def __init__(self, cluster_version: str = "v1.28"):
+    def __init__(self, cluster_version: str = "v1.34"):
         """Initialize API reference builder.
 
         Args:
-            cluster_version: Kubernetes cluster version (e.g., "v1.28.5")
+            cluster_version: Kubernetes cluster version (e.g., "v1.34.5")
         """
         self.cluster_version = cluster_version
         self.major_minor_version = self._extract_major_minor_version(cluster_version)
@@ -68,16 +68,16 @@ class APIReferenceBuilder:
         """Extract major.minor version from full version string.
 
         Args:
-            version: Full version string (e.g., "v1.28.5")
+            version: Full version string (e.g., "v1.34.5")
 
         Returns:
-            Major.minor version (e.g., "v1.28")
+            Major.minor version (e.g., "v1.34")
         """
-        # Match pattern like v1.28.5 or 1.28.5
+        # Match pattern like v1.34.5 or 1.34.5
         match = re.match(r"v?(\d+\.\d+)", version)
         if match:
             return f"v{match.group(1)}"
-        return "v1.28"  # Default fallback
+        return "v1.34"  # Default fallback
 
     def get_api_overview_url(self) -> str:
         """Get Kubernetes API overview URL.
