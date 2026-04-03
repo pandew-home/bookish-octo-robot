@@ -10,7 +10,7 @@ metadata:
     traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
   rules:
-  - host: 5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com
+  - host: 17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com
     http:
       paths:
       - path: /

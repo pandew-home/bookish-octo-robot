@@ -6,7 +6,6 @@ from unittest.mock import Mock, MagicMock, patch
 from datetime import datetime, timedelta
 
 from rag_integration import RAGIntegration, get_rag_integration
-from enrichment_engine import EnrichedContext
 
 
 @pytest.fixture
@@ -66,31 +65,6 @@ def mock_rag_engine():
     return engine
 
 
-@pytest.fixture
-def enriched_context():
-    """Create sample enriched context."""
-    context = EnrichedContext()
-    context.pod_data = {
-        'pods': [
-            {
-                'name': 'test-pod',
-                'namespace': 'default',
-                'phase': 'Running'
-            }
-        ]
-    }
-    context.k8sgpt_results = [
-        {
-            'kind': 'Pod',
-            'resource_name': 'test-pod',
-            'details': 'Pod is running normally',
-            'error': [],
-            'backend': 'openai'
-        }
-    ]
-    return context
-
-
 class TestRAGIntegration:
     """Test RAGIntegration class."""
 
@@ -142,114 +116,6 @@ class TestRAGIntegration:
 
         assert rag.kb is None
         assert rag.vector_store is None
-
-    def test_format_cluster_context(self, enriched_context):
-        """Test formatting enriched context to cluster context."""
-        with patch('rag_integration.OpenAIClient'), \
-             patch('rag_integration.RAGEngine'):
-            rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-            cluster_context = rag._format_cluster_context(enriched_context)
-
-            assert 'pods' in cluster_context
-            assert cluster_context['pods'] == enriched_context.pod_data
-
-    def test_format_cluster_context_with_errors(self):
-        """Test formatting cluster context with enrichment errors."""
-        context = EnrichedContext()
-        context.errors = ['Error 1', 'Error 2']
-
-        with patch('rag_integration.OpenAIClient'), \
-             patch('rag_integration.RAGEngine'):
-            rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-            cluster_context = rag._format_cluster_context(context)
-
-            assert 'enrichment_errors' in cluster_context
-            assert len(cluster_context['enrichment_errors']) == 2
-
-    def test_format_k8sgpt_errors(self, enriched_context):
-        """Test formatting K8sGPT results to error format."""
-        with patch('rag_integration.OpenAIClient'), \
-             patch('rag_integration.RAGEngine'):
-            rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-            errors = rag._format_k8sgpt_errors(enriched_context.k8sgpt_results)
-
-            assert len(errors) == 1
-            assert errors[0]['resource_kind'] == 'Pod'
-            assert errors[0]['resource_name'] == 'test-pod'
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_process_query(self, mock_rag_class, mock_openai, enriched_context):
-        """Test processing query with enriched context."""
-        mock_openai.return_value = Mock()
-        mock_rag_engine = Mock()
-        mock_rag_engine.process_query.return_value = {
-            'query': 'test query',
-            'response': 'test response',
-            'citations': [],
-            'errors': [],
-            'metadata': {}
-        }
-        mock_rag_class.return_value = mock_rag_engine
-
-        rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        response = rag.process_query(
-            query="Why is my pod failing?",
-            enriched_context=enriched_context
-        )
-
-        assert response['query'] == 'test query'
-        assert response['response'] == 'test response'
-        mock_rag_engine.process_query.assert_called_once()
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_process_query_with_export(self, mock_rag_class, mock_openai, enriched_context):
-        """Test processing query for export (is_export=True forwarded to engine)."""
-        mock_openai.return_value = Mock()
-        mock_rag_engine = Mock()
-        mock_rag_engine.process_query.return_value = {
-            'query': 'test',
-            'response': 'test',
-            'citations': [],
-            'errors': [],
-            'metadata': {}
-        }
-        mock_rag_class.return_value = mock_rag_engine
-
-        rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        rag.process_query(
-            query="Test query",
-            enriched_context=enriched_context,
-            is_export=True
-        )
-
-        call_kwargs = mock_rag_engine.process_query.call_args[1]
-        assert call_kwargs['is_export'] is True
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_process_query_error_handling(self, mock_rag_class, mock_openai, enriched_context):
-        """Test error handling in process_query."""
-        mock_openai.return_value = Mock()
-        mock_rag_engine = Mock()
-        mock_rag_engine.process_query.side_effect = Exception("Test error")
-        mock_rag_class.return_value = mock_rag_engine
-
-        rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        response = rag.process_query(
-            query="Test query",
-            enriched_context=enriched_context
-        )
-
-        assert 'error' in response['response'].lower()
-        assert len(response['errors']) > 0
 
     @patch('rag_integration.OpenAIClient')
     @patch('rag_integration.VectorStore')
@@ -468,68 +334,6 @@ class TestEnhancedErrorHandling:
         )
 
         assert rag.vector_store is None
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_process_query_rate_limit_error(self, mock_rag_class, mock_openai, enriched_context):
-        """Test query processing with rate limit error."""
-        mock_openai.return_value = Mock()
-        mock_rag_engine = Mock()
-        mock_rag_engine.process_query.side_effect = Exception("Rate limit exceeded")
-        mock_rag_class.return_value = mock_rag_engine
-
-        rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        response = rag.process_query("test", enriched_context)
-
-        assert "rate" in response['response'].lower()
-        assert response['errors'][0]['severity'] == 'error'
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_process_query_timeout_error(self, mock_rag_class, mock_openai, enriched_context):
-        """Test query processing with timeout error."""
-        mock_openai.return_value = Mock()
-        mock_rag_engine = Mock()
-        mock_rag_engine.process_query.side_effect = Exception("Request timeout")
-        mock_rag_class.return_value = mock_rag_engine
-
-        rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        response = rag.process_query("test", enriched_context)
-
-        assert "timed out" in response['response'].lower()
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_process_query_auth_error(self, mock_rag_class, mock_openai, enriched_context):
-        """Test query processing with authentication error."""
-        mock_openai.return_value = Mock()
-        mock_rag_engine = Mock()
-        # Use a message that matches the handler's "api_key" or "authentication" check
-        mock_rag_engine.process_query.side_effect = Exception("authentication failed: invalid credentials")
-        mock_rag_class.return_value = mock_rag_engine
-
-        rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        response = rag.process_query("test", enriched_context)
-
-        assert "authentication" in response['response'].lower()
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_process_query_connection_error(self, mock_rag_class, mock_openai, enriched_context):
-        """Test query processing with connection error."""
-        mock_openai.return_value = Mock()
-        mock_rag_engine = Mock()
-        mock_rag_engine.process_query.side_effect = Exception("Connection refused")
-        mock_rag_class.return_value = mock_rag_engine
-
-        rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        response = rag.process_query("test", enriched_context)
-
-        assert "connect" in response['response'].lower()
 
     @patch('rag_integration.OpenAIClient')
     @patch('rag_integration.VectorStore')

@@ -95,6 +95,24 @@ CronJob → deletes Results older than 24h
 - [Security](docs/security.md)
 - [Usage](docs/usage.md)
 
+## Endpoints
+
+### Ingresses by Cluster
+
+#### Civo Staging (2nd Stage Testing)
+- **DevOps Chatbot:** `http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com` (Traefik)
+  - Backend: `devops-chatbot:80` → Pods: `10.0.1.18:8080`, `10.0.0.169:8080`
+- **Grafana:** `http://grafana.k8s.civo.com` (Traefik)
+  - Credentials: see Vault / k8s secret
+- **Prometheus:** ClusterIP only (port-forward to access)
+
+### Local Development
+- **Frontend:** `http://localhost:3000`
+- **Backend API:** `http://localhost:8000`
+- **API Docs:** `http://localhost:8000/docs`
+- **DevOps Chatbot (Port-Forward):** `kubectl port-forward svc/devops-chatbot 8080:80 -n devops-chatbot`
+- **Grafana (Port-Forward):** `kubectl port-forward svc/prometheus-grafana 30300:80 -n monitoring`
+
 ## Testing
 
 ```bash

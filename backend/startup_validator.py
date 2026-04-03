@@ -180,51 +180,10 @@ class StartupValidator:
     
     def _validate_prompt_templates(self) -> None:
         """
-        Validate prompt templates can be loaded.
-        
-        Checks:
-        - Template directory exists
-        - Required templates are present
-        - Templates can be loaded and parsed
+        Prompt templates are no longer used — the agentic engine
+        builds its own system prompt at runtime.
         """
-        logger.info("Checking prompt templates...")
-        
-        templates_path = Path("/data/knowledge_base/templates")
-        
-        # Check if templates directory exists
-        if not templates_path.exists():
-            self.warnings.append(
-                f"Templates directory not found: {templates_path}. "
-                "Templates will be loaded from default location."
-            )
-            logger.warning(f"⚠ Templates directory not found: {templates_path}")
-            # This is a warning, not an error - templates can be loaded from defaults
-            return
-        
-        logger.info(f"✓ Templates directory exists: {templates_path}")
-        
-        # Try to load templates using TemplateEngine
-        try:
-            from template_engine import TemplateEngine
-            
-            template_engine = TemplateEngine(str(templates_path))
-            is_valid, error_msg = template_engine.validate_templates()
-            
-            if not is_valid:
-                self.warnings.append(
-                    f"Template validation failed: {error_msg}. "
-                    "Will attempt to use default templates."
-                )
-                logger.warning(f"⚠ Template validation failed: {error_msg}")
-            else:
-                logger.info("✓ All required templates loaded and validated")
-                
-        except Exception as e:
-            self.warnings.append(
-                f"Could not validate templates: {str(e)}. "
-                "Will attempt to use default templates."
-            )
-            logger.warning(f"⚠ Template validation error: {e}")
+        logger.info("Prompt template validation skipped (agentic engine handles prompts)")
     
     def _validate_faiss_index(self) -> None:
         """

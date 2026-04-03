@@ -15,7 +15,6 @@ import asyncio
 from typing import Dict, Any
 
 from conversation_history import ConversationHistory, Conversation, ChatMessage
-from enrichment_engine import EnrichedContext
 
 
 @pytest.fixture
@@ -36,12 +35,6 @@ def conversation_history(user_id, tmp_path):
     # Mock the base path for testing
     history = ConversationHistory(data_dir=str(tmp_path))
     return history
-
-
-@pytest.fixture
-def enriched_context():
-    """Create enriched context."""
-    return EnrichedContext()
 
 
 class TestConversationHistoryIsolation:
@@ -140,69 +133,6 @@ class TestConversationHistoryIsolation:
         assert len(retrieved2.messages) == 1
 
 
-class TestEnrichedContextIsolation:
-    """Test enriched context isolation per cluster."""
-
-    def test_enriched_context_per_cluster(self):
-        """Test that enriched context is isolated per cluster."""
-        context1 = EnrichedContext()
-        context2 = EnrichedContext()
-
-        # Set different data
-        context1.pod_data = {
-            "pods": [{"name": "pod-1", "cluster": "cluster-1"}]
-        }
-        context2.pod_data = {
-            "pods": [{"name": "pod-2", "cluster": "cluster-2"}]
-        }
-
-        # Verify isolation
-        assert context1.pod_data["pods"][0]["name"] == "pod-1"
-        assert context2.pod_data["pods"][0]["name"] == "pod-2"
-        assert context1 is not context2
-
-    def test_enriched_context_independent_k8sgpt_results(self):
-        """Test that K8sGPT results are isolated per context."""
-        context1 = EnrichedContext()
-        context2 = EnrichedContext()
-
-        # Set different K8sGPT results (as K8sGPTResult objects)
-        from k8sgpt_reader import K8sGPTResult
-        
-        context1.k8sgpt_results = [
-            K8sGPTResult(
-                name="pod-1",
-                kind="Pod",
-                namespace="default",
-                severity="high",
-                problem="CrashLoopBackOff",
-                solution="Check logs",
-                analyzer="Pod",
-                timestamp=datetime.now(),
-                details={"cluster": "cluster-1"}
-            )
-        ]
-        context2.k8sgpt_results = [
-            K8sGPTResult(
-                name="pod-2",
-                kind="Pod",
-                namespace="default",
-                severity="critical",
-                problem="OOMKilled",
-                solution="Increase memory",
-                analyzer="Pod",
-                timestamp=datetime.now(),
-                details={"cluster": "cluster-2"}
-            )
-        ]
-
-        # Verify isolation
-        assert context1.k8sgpt_results[0].name == "pod-1"
-        assert context2.k8sgpt_results[0].name == "pod-2"
-        assert context1.k8sgpt_results[0].severity == "high"
-        assert context2.k8sgpt_results[0].severity == "critical"
-
-
 class TestClusterSwitching:
     """Test cluster switching behavior."""
 
@@ -210,18 +140,14 @@ class TestClusterSwitching:
         """Test that switching clusters properly manages state."""
         cluster1, cluster2, _ = cluster_names
         
-        # Create enriched context for cluster 1
-        context1 = EnrichedContext()
-        context1.pod_data = {"pods": [{"name": "pod-1"}]}
-        
-        # Create enriched context for cluster 2
-        context2 = EnrichedContext()
-        context2.pod_data = {"pods": [{"name": "pod-2"}]}
+        # Create independent context dicts for each cluster
+        context1 = {"pods": [{"name": "pod-1"}]}
+        context2 = {"pods": [{"name": "pod-2"}]}
         
         # Verify they're independent
-        assert context1.pod_data != context2.pod_data
-        assert context1.pod_data["pods"][0]["name"] == "pod-1"
-        assert context2.pod_data["pods"][0]["name"] == "pod-2"
+        assert context1 != context2
+        assert context1["pods"][0]["name"] == "pod-1"
+        assert context2["pods"][0]["name"] == "pod-2"
 
     def test_k8s_clients_refreshed_on_cluster_switch(self):
         """Test that K8s clients are refreshed when switching clusters."""

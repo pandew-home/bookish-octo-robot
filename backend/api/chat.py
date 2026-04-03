@@ -2,7 +2,6 @@
 Chat API endpoint for DevOps Chatbot v2.
 
 Integrates all components:
-- Query routing and classification
 - Cluster context enrichment
 - RAG-powered response generation
 - Conversation history management
@@ -15,15 +14,12 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from api.credentials import get_credentials_for_session
-from cluster_manager import get_k8s_clients
+from k8s_client import get_k8s_client
 from agentic_engine import AgentEngine
 from rag_integration import get_rag_integration
 from k8sgpt_reader import K8sGPTReader
 from conversation_history import ConversationHistory
-from input_sanitizer import InputSanitizer
 from middleware.rate_limiter import rate_limiter
-from response_parser import ResponseParser
 from utils.error_handler import handle_generic_error
 
 logger = logging.getLogger(__name__)
@@ -32,25 +28,18 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 # Initialize shared components
 conversation_history = ConversationHistory()
-input_sanitizer = InputSanitizer()
-response_parser = ResponseParser()
 
 
 class ChatRequest(BaseModel):
     """Chat request model."""
 
     query: str = Field(..., min_length=1, max_length=2000, description="User query")
-    session_id: str = Field(..., description="Session ID for credential lookup")
     user_id: str = Field(..., description="User ID for conversation history")
     conversation_id: Optional[str] = Field(
         None, description="Conversation ID (creates new if not provided)"
     )
-    cluster_name: Optional[str] = Field(None, description="Target cluster name")
     max_tokens: int = Field(
         500, ge=100, le=2000, description="Maximum tokens for response"
-    )
-    is_export: bool = Field(
-        False, description="Whether this is for export (uses more tokens)"
     )
 
 
@@ -60,10 +49,7 @@ class ChatResponse(BaseModel):
     query: str
     response: str
     conversation_id: str
-    citations: list = []
     k8sgpt_findings: list = []
-    safety_warnings: list = []
-    enrichment_plan: dict = {}
     token_usage: dict = {}
     errors: list = []
     metadata: dict = {}
@@ -72,46 +58,32 @@ class ChatResponse(BaseModel):
 @router.post("/query", response_model=ChatResponse)
 async def process_chat_query(request: ChatRequest) -> ChatResponse:
     """
-    Process a chat query with full RAG pipeline.
+    Process a chat query with the agentic pipeline.
 
     Flow:
-    1. Validate input and check rate limits
-    2. Validate credentials and cluster selection
+    1. Check rate limits
+    2. Get in-cluster K8s client
     3. Read K8sGPT Result CRDs
-    4. Route and classify query
-    5. Enrich with cluster context
-    6. Retrieve KB results via RAG
-    7. Render prompt with template engine
-    8. Generate response with LLM
-    9. Parse response for safety warnings
-    10. Save conversation to history
-    11. Return formatted response
+    4. Search knowledge base via RAG
+    5. Run single LLM call with K8sGPT + KB context
+    6. Save conversation to history
+    7. Return formatted response
 
     Args:
-        request: Chat request with query and session info
+        request: Chat request with query and user info
 
     Returns:
         ChatResponse with answer and metadata
 
     Raises:
-        HTTPException: If credentials invalid, cluster not selected, or processing fails
+        HTTPException: If rate limited or processing fails
     """
     try:
         logger.info("=" * 80)
-        logger.info(f"[CHAT_QUERY] Processing chat query for session {request.session_id[:8]}...")
+        logger.info(f"[CHAT_QUERY] Processing query from user {request.user_id}")
         logger.info(f"[CHAT_QUERY] Input: {request.query[:100]}...")
 
-        # Step 1: Validate input and clean backticks
-        logger.info(f"[STEP_1] Validating and sanitizing input...")
-        is_valid, error_msg, cleaned_query = input_sanitizer.validate_query(
-            request.query
-        )
-        if not is_valid:
-            logger.error(f"[STEP_1] Validation failed: {error_msg}")
-            raise HTTPException(status_code=400, detail=error_msg)
-        logger.info(f"[STEP_1] ✓ Sanitized: {cleaned_query[:100]}...")
-
-        # Check rate limits
+        # Step 1: Check rate limits
         allowed, retry_after, remaining = await rate_limiter.check_rate_limit(
             user_id=request.user_id, max_requests=20, window_seconds=60, endpoint="chat"
         )
@@ -122,186 +94,95 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 headers={"Retry-After": str(retry_after)},
             )
 
-        # Step 2: Validate credentials
-        creds = get_credentials_for_session(request.session_id)
-        if not creds:
-            raise HTTPException(
-                status_code=401,
-                detail="No credentials found. Please authenticate first.",
+        # Step 2: Get in-cluster K8s client
+        k8s_client = get_k8s_client()
+        k8s_clients = k8s_client.get_clients()
+        logger.info("[STEP_2] ✓ K8s client ready")
+
+        # Step 3: Read K8sGPT Result CRDs
+        k8sgpt_reader = K8sGPTReader(k8s_clients["custom_objects"])
+        k8sgpt_results = await k8sgpt_reader.read_results()
+        logger.info(f"[STEP_3] ✓ Found {len(k8sgpt_results)} K8sGPT results")
+
+        # Step 4: Search knowledge base via RAG
+        llm_provider = os.getenv("LLM_PROVIDER", "openai")
+        rag = get_rag_integration(
+            llm_provider=llm_provider,
+            api_key=None,
+        )
+        kb_results = rag.search_knowledge_base(request.query, top_k=5)
+        logger.info(f"[STEP_4] ✓ RAG returned {len(kb_results)} KB results")
+
+        # Step 5: Run LLM analysis
+        logger.info("[STEP_5] Starting LLM analysis...")
+        agent = AgentEngine(
+            llm_client=rag.llm_client,
+            k8sgpt_results=k8sgpt_results,
+            kb_results=kb_results,
+        )
+        rag_response = await agent.run(query=request.query)
+        logger.info(f"[STEP_5] ✓ Agent done: {len(rag_response['response'])} chars")
+
+        # Step 6: Save conversation to history
+        conversation_id = request.conversation_id
+        if not conversation_id:
+            conversation_id = conversation_history.create_conversation(
+                user_id=request.user_id,
+                title=request.query[:50],
             )
 
-        # Check if credentials are expiring soon
-        if creds.is_expiring_soon():
-            logger.warning(
-                f"Credentials expiring soon for session {request.session_id[:8]}"
-            )
-
-        # Step 3: Validate cluster selection
-        if not request.cluster_name:
-            raise HTTPException(
-                status_code=400,
-                detail="No cluster selected. Please select a cluster first.",
-            )
-
-        # Get K8s clients for target cluster (delegate based on auth_mode)
-        from api.clusters import (
-            _discover_kubeconfig_clusters,
-            _get_kubeconfig_k8s_clients,
+        conversation_history.save_message(
+            user_id=request.user_id,
+            conversation_id=conversation_id,
+            role="user",
+            content=request.query,
         )
 
-        if creds.auth_mode == "kubeconfig":
-            clusters = _discover_kubeconfig_clusters(creds)
-        else:
-            from cluster_manager import discover_clusters
+        conversation_history.save_message(
+            user_id=request.user_id,
+            conversation_id=conversation_id,
+            role="assistant",
+            content=rag_response["response"],
+        )
 
-            clusters = await discover_clusters(creds)
+        # Step 7: Build response
+        response = ChatResponse(
+            query=request.query,
+            response=rag_response["response"],
+            conversation_id=conversation_id,
+            k8sgpt_findings=[
+                {
+                    "name": r.name,
+                    "kind": r.kind,
+                    "severity": r.severity,
+                    "problem": r.problem,
+                    "solution": r.solution,
+                }
+                for r in k8sgpt_results[:5]
+            ],
+            token_usage=rag.get_token_usage(),
+            errors=rag_response.get("errors", []),
+            metadata={
+                "k8sgpt_result_count": len(k8sgpt_results),
+                "rag_metadata": rag_response.get("metadata", {}),
+                "rate_limit_remaining": remaining,
+            },
+        )
 
-        target_cluster = None
-        for cluster in clusters:
-            if cluster["name"] == request.cluster_name:
-                target_cluster = cluster
-                break
-
-        if not target_cluster:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Cluster '{request.cluster_name}' not found or not accessible",
-            )
-
-        # Create K8s clients based on auth mode
-        if creds.auth_mode == "kubeconfig":
-            k8s_clients = _get_kubeconfig_k8s_clients(creds, target_cluster)
-        else:
-            k8s_clients = get_k8s_clients(creds, target_cluster)
-
-        try:
-            # Step 4: Read K8sGPT Result CRDs
-            k8sgpt_reader = K8sGPTReader(k8s_clients["custom_objects"])
-            k8sgpt_results = await k8sgpt_reader.read_results()
-            logger.info(f"Found {len(k8sgpt_results)} K8sGPT results")
-
-            # Step 5: Run agentic investigation
-            logger.info(f"[STEP_5] Starting agentic K8s investigation...")
-            cluster_version = target_cluster.get("version", "v1.34")
-            llm_provider = os.getenv("LLM_PROVIDER", "openai")
-            rag = get_rag_integration(
-                llm_provider=llm_provider,
-                api_key=None,
-                cluster_version=cluster_version,
-            )
-            kb_results = rag.search_knowledge_base(cleaned_query, top_k=5)
-            agent = AgentEngine(
-                k8s_clients=k8s_clients,
-                llm_client=rag.llm_client,
-                k8sgpt_results=k8sgpt_results,
-                kb_results=kb_results,
-                cluster_version=cluster_version,
-                cluster_name=request.cluster_name,
-            )
-            rag_response = await agent.run(query=cleaned_query)
-            logger.info(
-                f"[STEP_5] ✓ Agent done: {rag_response['iterations']} iteration(s), "
-                f"{len(rag_response['tool_calls_made'])} tool call(s)"
-            )
-
-            # Step 8: Parse response for safety warnings
-            parsed_response = response_parser.parse(rag_response["response"])
-
-            # Step 9: Save conversation to history
-            conversation_id = request.conversation_id
-            if not conversation_id:
-                conversation_id = conversation_history.create_conversation(
-                    user_id=request.user_id,
-                    title=cleaned_query[:50],  # Use first 50 chars as title
-                    cluster_name=request.cluster_name,  # Per-cluster isolation
-                )
-
-            # Save user message
-            conversation_history.save_message(
-                user_id=request.user_id,
-                conversation_id=conversation_id,
-                role="user",
-                content=cleaned_query,
-                cluster_name=request.cluster_name,  # Per-cluster isolation
-            )
-
-            # Save assistant message
-            conversation_history.save_message(
-                user_id=request.user_id,
-                conversation_id=conversation_id,
-                role="assistant",
-                content=rag_response["response"],
-                cluster_name=request.cluster_name,  # Per-cluster isolation
-            )
-
-            # Step 10: Build response
-            response = ChatResponse(
-                query=cleaned_query,
-                response=rag_response["response"],
-                conversation_id=conversation_id,
-                citations=rag_response.get("citations", []),
-                k8sgpt_findings=[
-                    {
-                        "name": r.name,
-                        "kind": r.kind,
-                        "severity": r.severity,
-                        "problem": r.problem,
-                        "solution": r.solution,
-                    }
-                    for r in k8sgpt_results[:5]  # Top 5 findings
-                ],
-                safety_warnings=parsed_response.safety_notices,
-                enrichment_plan={
-                    "tool_calls": rag_response.get("tool_calls_made", []),
-                    "iterations": rag_response.get("iterations", 0),
-                },
-                token_usage=rag.get_token_usage(),
-                errors=rag_response.get("errors", []),
-                metadata={
-                    "cluster": request.cluster_name,
-                    "cluster_version": target_cluster.get("version"),
-                    "k8sgpt_result_count": len(k8sgpt_results),
-                    "rag_metadata": rag_response.get("metadata", {}),
-                    "credentials_expiring_soon": creds.is_expiring_soon(),
-                    "rate_limit_remaining": remaining,
-                },
-            )
-
-            logger.info(f"Query processed successfully: {len(response.response)} chars")
-            return response
-
-        finally:
-            # Cleanup K8s clients (only for AWS mode which uses temp files)
-            if creds.auth_mode == "aws":
-                from cluster_manager import cleanup_k8s_clients
-
-                cleanup_k8s_clients(k8s_clients)
+        logger.info(f"Query processed successfully: {len(response.response)} chars")
+        return response
 
     except HTTPException:
-        # Re-raise HTTP exceptions
         raise
     except ConnectionError as e:
-        # Cluster unreachable
         logger.error(f"Cluster connection error: {e}")
         raise HTTPException(
             status_code=503,
             detail="Cluster not responding. Please verify the cluster is accessible and try again.",
             headers={"X-Error-Code": "cluster_unreachable"},
         )
-    except ValueError as e:
-        # Input validation errors
-        logger.warning(f"Validation error: {e}")
-        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        # Check for Kubernetes API auth errors
         error_str = str(e).lower()
-        if "401" in error_str or "unauthorized" in error_str:
-            logger.warning(f"Auth error: {e}")
-            raise HTTPException(
-                status_code=401,
-                detail="Authentication failed. Please re-authenticate.",
-                headers={"X-Error-Code": "cluster_auth_failed"},
-            )
         if "403" in error_str or "forbidden" in error_str:
             logger.warning(f"RBAC error: {e}")
             raise HTTPException(
@@ -309,7 +190,6 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 detail="Access denied. Check your RBAC permissions.",
                 headers={"X-Error-Code": "rbac_forbidden"},
             )
-        # Unexpected errors
         logger.error(f"Error processing chat query: {e}", exc_info=True)
         raise handle_generic_error(
             e,
@@ -334,8 +214,6 @@ async def chat_health() -> dict:
         return {
             "status": "healthy",
             "components": {
-                "query_router": {"status": "healthy"},
-                "enrichment_engine": {"status": "healthy"},
                 "rag_integration": {
                     "status": (
                         "healthy" if rag_status["fully_functional"] else "degraded"
