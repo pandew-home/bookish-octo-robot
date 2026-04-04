@@ -388,6 +388,48 @@ deploy:
 
 ---
 
+### [X] TASK-021a — Add operator-first deploy job in `deploy.yml`
+
+**File**: `.github/workflows/deploy.yml`  
+**Action**: Add a dedicated `deploy-k8sgpt-operator` job in the main `Build & Deploy` workflow that runs after `build,test` and before chatbot deploy.
+
+Required behaviour:
+- Uses Helm to install/upgrade `k8sgpt-operator` chart `0.2.27`
+- Creates `k8sgpt-ai-secret` from `${{ secrets.OPENROUTER_API_KEY }}`
+- Applies `k8sgpt/rbac.yaml` and `k8sgpt/k8sgpt-openrouter-cr.yaml`
+- Waits for K8sGPT CR readiness
+
+**Done when**: `deploy` job has `needs: [build, test, deploy-k8sgpt-operator]` and does not run if operator stage fails.
+
+---
+
+### [X] TASK-021b — Add observability deploy steps to operator-first job
+
+**File**: `.github/workflows/deploy.yml`  
+**Action**: Add observability steps to the operator-first job in the main workflow:
+
+- `helm upgrade --install alloy grafana/alloy --values k8sgpt/Alloy/alloy-values.yaml`
+- `kubectl apply -f k8sgpt/Alloy/alloy-cleanup-cronjob.yaml`
+- `kubectl apply -f k8sgpt/Alloy/k8sgpt-result-scraper.yaml`
+- `helm upgrade --install kube-prometheus-stack ... --reuse-values`
+
+**Done when**: operator-first job provisions Alloy and applies cronjob/scraper manifests successfully.
+
+---
+
+### [X] TASK-021c — Add Grafana datasource + dashboard provisioning steps
+
+**File**: `.github/workflows/deploy.yml`  
+**Action**: In operator-first job, register Loki datasource and push dashboard via Grafana API (using existing payload builder script).
+
+Required behaviour:
+- Graceful skip when Grafana external IP is unavailable
+- Emits clear status lines for datasource and dashboard operations
+
+**Done when**: workflow contains both "Register Loki datasource" and "Push dashboard to Grafana" steps under operator-first job.
+
+---
+
 ## Group 4: `deploy-k8sgpt.yml` GitHub Actions Updates
 
 > **Prerequisite**: None — independent of Group 3.

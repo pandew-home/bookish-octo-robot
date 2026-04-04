@@ -24,6 +24,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
   CLUSTER_NAME: bookish-octo-robot
   NAMESPACE: devops-chatbot
+  OPERATOR_NAMESPACE: k8sgpt-operator-system
 
 permissions:
   contents: read
@@ -239,13 +240,172 @@ jobs:
 
           echo "✓ All smoke tests passed!"
 
+  deploy-k8sgpt-operator:
+    name: Deploy K8sGPT Operator
+    runs-on: ubuntu-latest
+    needs: [build, test]
+    if: success() && github.event.inputs.skip_deploy != 'true'
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.14.0'
+
+      - name: Install Civo CLI
+        run: |
+          curl -sL https://civo.com/get | sh
+          civo version
+
+      - name: Configure Civo + kubectl
+        run: |
+          civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
+          civo apikey current deploy-key
+          civo kubernetes config ${{ env.CLUSTER_NAME }} --save
+
+      - name: Verify cluster access
+        run: kubectl get nodes
+
+      - name: Add Helm repos
+        run: |
+          helm repo add k8sgpt-operator https://charts.k8sgpt.ai/
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Create operator namespace
+        run: kubectl create namespace ${{ env.OPERATOR_NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create k8sgpt AI secret
+        run: |
+          kubectl create secret generic k8sgpt-ai-secret \
+            --from-literal=openai-api-key=${{ secrets.OPENROUTER_API_KEY }} \
+            -n ${{ env.OPERATOR_NAMESPACE }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy K8sGPT operator (Helm)
+        run: |
+          helm upgrade --install k8sgpt-operator k8sgpt-operator/k8sgpt-operator \
+            -n ${{ env.OPERATOR_NAMESPACE }} \
+            --version 0.2.27 \
+            --values k8sgpt/helm-values.yaml \
+            --wait \
+            --timeout=120s
+
+      - name: Apply custom RBAC and K8sGPT CR
+        run: |
+          kubectl apply -f k8sgpt/rbac.yaml
+          kubectl apply -f k8sgpt/k8sgpt-openrouter-cr.yaml
+
+      - name: Wait for K8sGPT CR ready
+        run: |
+          kubectl wait k8sgpt/k8sgpt-openrouter \
+            -n ${{ env.OPERATOR_NAMESPACE }} \
+            --for=condition=Ready \
+            --timeout=120s \
+          || kubectl describe k8sgpt/k8sgpt-openrouter -n ${{ env.OPERATOR_NAMESPACE }}
+
+      - name: Deploy Alloy and observability manifests
+        run: |
+          kubectl apply -f k8sgpt/Alloy/alloy-rbac.yaml
+          helm upgrade --install alloy grafana/alloy \
+            -n monitoring --create-namespace \
+            --values k8sgpt/Alloy/alloy-values.yaml \
+            --wait --timeout=120s
+          kubectl apply -f k8sgpt/Alloy/alloy-cleanup-cronjob.yaml
+          kubectl apply -f k8sgpt/Alloy/k8sgpt-result-scraper.yaml
+
+      - name: Apply monitoring stack Helm overrides
+        run: |
+          if helm status kube-prometheus-stack -n monitoring > /dev/null 2>&1; then
+            helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+              -n monitoring --create-namespace --reuse-values \
+              --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
+          else
+            helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+              -n monitoring --create-namespace \
+              --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
+          fi
+          # Loki already deployed in loki namespace - skip upgrade
+
+      - name: Register Loki datasource in Grafana via API
+        run: |
+          GRAFANA_IP=$(kubectl get svc prometheus-grafana -n monitoring \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          if [ -z "$GRAFANA_IP" ]; then
+            echo "Grafana IP not available, skipping Loki datasource registration"
+            exit 0
+          fi
+          GRAFANA_URL="http://${GRAFANA_IP}"
+          GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
+            -o jsonpath='{.data.admin-password}' | base64 -d)
+
+          for i in $(seq 1 6); do
+            if curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for Grafana... attempt $i"
+            sleep 5
+          done
+
+          curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -u "admin:${GRAFANA_PASS}" \
+            -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
+            "${GRAFANA_URL}/api/datasources" \
+            || curl -s -X PUT \
+              -H "Content-Type: application/json" \
+              -u "admin:${GRAFANA_PASS}" \
+              -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
+              "${GRAFANA_URL}/api/datasources/uid/loki" \
+            || echo "Loki datasource registration skipped"
+          echo "Loki datasource step completed"
+
+      - name: Push dashboard to Grafana via API
+        run: |
+          GRAFANA_IP=$(kubectl get svc prometheus-grafana -n monitoring \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          if [ -z "$GRAFANA_IP" ]; then
+            echo "Grafana IP not available, skipping dashboard push"
+            exit 0
+          fi
+          GRAFANA_URL="http://${GRAFANA_IP}"
+          GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
+            -o jsonpath='{.data.admin-password}' | base64 -d)
+
+          for i in $(seq 1 12); do
+            curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" && break
+            echo "Waiting for Grafana... attempt $i"
+            sleep 10
+          done
+
+          python3 scripts/build_grafana_dashboard.py
+
+          RESULT=$(curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -u "admin:${GRAFANA_PASS}" \
+            -d @/tmp/grafana-payload.json \
+            "${GRAFANA_URL}/api/dashboards/db")
+          echo "Dashboard import: ${RESULT}"
+          echo "URL: ${GRAFANA_URL}/d/k8sgpt-findings-v2"
+
+      - name: Verify operator and observability deployment
+        run: |
+          kubectl get pods -n ${{ env.OPERATOR_NAMESPACE }}
+          kubectl get pods -n monitoring
+          kubectl get cronjob -n monitoring | grep alloy-cleanup || true
+
   deploy:
     name: Deploy to bookish-octo
     concurrency:
       group: deploy-production
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    needs: [build, test]
+    needs: [build, test, deploy-k8sgpt-operator]
     if: success() && github.event.inputs.skip_deploy != 'true'
     environment: production
 
@@ -379,7 +539,12 @@ jobs:
 
       - name: Wait for public endpoint to stabilise
         run: |
-          URL="http://17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com"
+          HOST=$(kubectl get ingress -n ${{ env.NAMESPACE }} devops-chatbot -o jsonpath='{.spec.rules[0].host}')
+          if [ -z "$HOST" ]; then
+            echo "✗ Ingress host not found"
+            exit 1
+          fi
+          URL="http://${HOST}"
 
           echo "=== Public health check (with retries) ==="
           curl -sf --retry 10 --retry-delay 5 --retry-connrefused \
@@ -393,7 +558,12 @@ jobs:
 
       - name: Run real endpoint smoke tests
         run: |
-          URL="http://17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com"
+          HOST=$(kubectl get ingress -n ${{ env.NAMESPACE }} devops-chatbot -o jsonpath='{.spec.rules[0].host}')
+          if [ -z "$HOST" ]; then
+            echo "✗ Ingress host not found"
+            exit 1
+          fi
+          URL="http://${HOST}"
           echo "=== Running functional smoke tests against $URL/devops-chatbot ==="
           python backend/tests/smoke_post_deploy.py "$URL/devops-chatbot"
 

@@ -34,9 +34,9 @@ A platform engineer merges a change to `main`. GitHub Actions builds the contain
 
 ---
 
-### User Story 2 — Platform Engineer Deploys K8sGPT Operator via Helm (Priority: P2)
+### User Story 2 — Platform Engineer Deploys K8sGPT Operator First via Helm (Priority: P2)
 
-A platform engineer changes `k8sgpt/helm-values.yaml` or the K8sGPT custom resource. The `Deploy K8sGPT Operator & Observability` workflow runs `helm upgrade --install` for the operator (replacing the existing `kubectl apply -f` calls for the CR and secret). The operator secret is injected via `--set` from GitHub Actions secrets, not written to any file.
+A platform engineer changes `k8sgpt/helm-values.yaml` or the K8sGPT custom resource. The main `Build & Deploy` workflow runs an operator-first stage (`deploy-k8sgpt-operator`) that executes `helm upgrade --install` for the operator before chatbot application deployment. The operator secret is injected from GitHub Actions secrets, not written to any file.
 
 **Why this priority**: K8sGPT results drive the cluster health widget and chat enrichment — breakages here surface as degraded functionality.
 
@@ -44,16 +44,17 @@ A platform engineer changes `k8sgpt/helm-values.yaml` or the K8sGPT custom resou
 
 **Acceptance Scenarios**:
 
-1. **Given** `k8sgpt/helm-values.yaml` is updated, **When** the workflow runs, **Then** `helm upgrade --install k8sgpt-operator` exits 0 using `k8sgpt/helm-values.yaml` plus `--set ai.secret.name=k8sgpt-ai-secret`.
+1. **Given** `k8sgpt/helm-values.yaml` is updated, **When** the workflow runs, **Then** `helm upgrade --install k8sgpt-operator` exits 0 using `k8sgpt/helm-values.yaml`.
 2. **Given** the `k8sgpt-ai-secret` Kubernetes Secret does not exist, **When** the workflow runs, **Then** the secret is created via `kubectl create secret --dry-run=client | kubectl apply` before the Helm release, and its value is sourced exclusively from the `OPENROUTER_API_KEY` GitHub Actions secret.
 3. **Given** the K8sGPT custom resource (`k8sgpt-openrouter-cr.yaml`) is applied after operator install, **When** `kubectl wait k8sgpt/k8sgpt-openrouter --for=condition=Ready --timeout=120s` runs, **Then** it exits 0 within 120 seconds.
 4. **Given** the operator Helm release is in a `FAILED` state from a prior run, **When** the workflow runs `helm upgrade --install`, **Then** the upgrade succeeds without requiring manual `helm delete` or `--force`.
+5. **Given** both operator and chatbot deploy stages are in the same workflow, **When** operator deployment fails, **Then** chatbot deployment is blocked and does not run.
 
 ---
 
-### User Story 3 — Platform Engineer Deploys Alloy Observability Stack (Priority: P3)
+### User Story 3 — Platform Engineer Provisions Observability and Grafana Dashboards (Priority: P3)
 
-The Grafana Alloy observability stack is deployed (or upgraded) in the `monitoring` namespace using a dedicated `helm upgrade --install alloy` step. Raw manifest files (`alloy-rbac.yaml`, `alloy-cleanup-cronjob.yaml`, `k8sgpt-result-scraper.yaml`) that cannot be expressed as Helm values remain as supplementary `kubectl apply` calls in the same CI step, explicitly noted as out-of-chart scope in the spec.
+The Grafana Alloy observability stack is deployed (or upgraded) in the `monitoring` namespace from the same operator-first stage in the main workflow. Raw manifest files (`alloy-rbac.yaml`, `alloy-cleanup-cronjob.yaml`, `k8sgpt-result-scraper.yaml`) remain supplementary `kubectl apply` calls. After observability provisioning, the workflow registers a Loki datasource and pushes the Grafana dashboard via API.
 
 **Why this priority**: Observability is secondary to the chatbot and operator being healthy. Alloy failures must not block chatbot or K8sGPT deployment steps.
 
@@ -62,8 +63,9 @@ The Grafana Alloy observability stack is deployed (or upgraded) in the `monitori
 **Acceptance Scenarios**:
 
 1. **Given** `k8sgpt/Alloy/alloy-values.yaml` is changed, **When** the K8sGPT workflow runs, **Then** `helm upgrade --install alloy grafana/alloy --values k8sgpt/Alloy/alloy-values.yaml` exits 0.
-2. **Given** the Alloy Helm step fails, **When** the workflow evaluates job status, **Then** the chatbot deploy job and K8sGPT operator deploy job are unaffected (Alloy is a separate, non-blocking job or a `continue-on-error: true` step).
+2. **Given** the Alloy Helm step fails, **When** the workflow evaluates job status, **Then** the operator-first stage fails and chatbot deployment is blocked.
 3. **Given** the `kube-prometheus-stack` upgrade step runs, **When** it completes, **Then** it uses `--reuse-values` so that existing Grafana dashboards and datasources are not reset.
+4. **Given** Grafana becomes reachable, **When** datasource and dashboard API steps run, **Then** Loki datasource registration and dashboard import complete or emit explicit skip messages when Grafana has no external IP.
 
 ---
 
@@ -118,7 +120,7 @@ A developer runs `helm lint helm/devops-chatbot/` and `helm template helm/devops
 - **FR-H-011**: The `Build & Deploy` workflow MUST include a `Helm Validate` step that runs both of the following commands before any cluster connection is established. If either exits non-zero the workflow MUST fail and skip all subsequent deploy steps:
   1. `helm lint --strict helm/devops-chatbot/`
   2. `helm template helm/devops-chatbot/ --set image.tag=lint-check > /dev/null`
-- **FR-H-012**: The `Deploy K8sGPT Operator & Observability` workflow MUST NOT require `helm lint` for the upstream `k8sgpt-operator` chart (it is an external chart). It MUST verify `helm repo update` succeeds before running `helm upgrade --install`.
+- **FR-H-012**: The operator-first stage in `Build & Deploy` MUST NOT require `helm lint` for the upstream `k8sgpt-operator` chart (it is an external chart). It MUST verify `helm repo update` succeeds before running `helm upgrade --install`.
 - **FR-H-013**: The `helm` CLI MUST be installed on the GitHub Actions runner via `azure/setup-helm@v4` with a pinned minimum version of `3.14.0`. The version MUST be specified explicitly; the runner default MUST NOT be relied upon.
 
 #### Deployment Behaviour
@@ -133,6 +135,8 @@ A developer runs `helm lint helm/devops-chatbot/` and `helm template helm/devops
 
 - **FR-H-019**: A failed `helm upgrade --atomic` MUST automatically roll back to the most recent successful revision. The rollback is performed by Helm internally; no additional `helm rollback` step is needed in the workflow.
 - **FR-H-020**: The workflow MUST emit the output of `helm history devops-chatbot -n devops-chatbot` in the workflow log after every deploy step (success or failure) for audit and debugging purposes.
+- **FR-H-025**: The `Build & Deploy` workflow MUST deploy K8sGPT operator and observability before chatbot application deployment. The chatbot deploy job MUST declare an explicit dependency on the operator-first stage.
+- **FR-H-026**: The operator-first stage MUST include: Alloy Helm deployment, `alloy-cleanup-cronjob.yaml` apply, `k8sgpt-result-scraper.yaml` apply, Loki datasource registration in Grafana, and Grafana dashboard push via API.
 
 #### Idempotency
 
@@ -147,7 +151,7 @@ A developer runs `helm lint helm/devops-chatbot/` and `helm template helm/devops
 ### Key Entities
 
 - **Helm Release `devops-chatbot`**: Manages all chatbot application resources in the `devops-chatbot` namespace. Owns: Deployment, Service, Ingress, PVC (with `keep` policy), ServiceAccount, PDB, ResourceQuota, Secret.
-- **Helm Release `k8sgpt-operator`**: Manages the K8sGPT operator in the `k8sgpt-operator-system` namespace. Values sourced from `k8sgpt/helm-values.yaml`. Secret (`k8sgpt-ai-secret`) created outside the chart via `kubectl`.
+- **Helm Release `k8sgpt-operator`**: Manages the K8sGPT operator in the `k8sgpt-operator-system` namespace. Values sourced from `k8sgpt/helm-values.yaml`. Secret (`k8sgpt-ai-secret`) created outside the chart via `kubectl`. Must complete before chatbot deployment in the main workflow.
 - **Helm Release `alloy`**: Manages Grafana Alloy in the `monitoring` namespace. Values sourced from `k8sgpt/Alloy/alloy-values.yaml`. Supplementary raw manifests (`alloy-rbac.yaml`, `alloy-cleanup-cronjob.yaml`, `k8sgpt-result-scraper.yaml`) remain as `kubectl apply` calls.
 - **`values.yaml`**: Committed defaults for the `devops-chatbot` Helm chart. Contains no secrets. Is the single source of truth for all non-secret, non-ephemeral configuration.
 - **CI Secret Injection Layer**: GitHub Actions secrets passed as `--set` flags at deploy time. Includes: `LLM_API_KEY`, `LLM_PROVIDER`, `LLM_MODEL`, `DEFAULT_REGION`, `OPENROUTER_API_KEY`, `CIVO_API_KEY`. Never written to disk or logged.
@@ -175,7 +179,7 @@ A developer runs `helm lint helm/devops-chatbot/` and `helm template helm/devops
 
 - **ASM-001**: The override strategy covers **secrets and per-deploy ephemeral values only** (image tag, secret keys). It does NOT cover multiple environments (dev/staging/prod). The single Civo cluster is the only deployment target. If multi-environment support is added in future, a `values-<env>.yaml` file pattern can be layered on top without breaking this spec.
 - **ASM-002**: The `helm` CLI minimum version is **3.14.0**. The `--atomic` flag combining rollback with `--wait` is available from Helm 3.2+. Version 3.14+ is chosen as the minimum to align with current LTS and avoid known bugs in `--wait` behaviour present in earlier 3.x minor versions.
-- **ASM-003**: The K8sGPT operator CI workflow (`deploy-k8sgpt.yml`) already uses `helm upgrade --install` for the operator itself. The scope of this migration for that workflow is: (a) ensuring `azure/setup-helm` is used with a pinned version, (b) replacing `kubectl apply -f k8sgpt/ai-secret.yaml` with the `kubectl create secret --dry-run | kubectl apply` pattern, and (c) confirming the existing `--wait --timeout=120s` flags are sufficient.
+- **ASM-003**: The primary deployment path is the main `Build & Deploy` workflow with an operator-first stage. `deploy-k8sgpt.yml` may be retained as a targeted/manual workflow, but production sequencing must be enforced in the main workflow.
 - **ASM-004**: The `kyverno-policies.yaml` file contains `ClusterPolicy` resources that are cluster-scoped and apply globally. These are intentionally excluded from the `devops-chatbot` Helm chart to avoid coupling cluster-wide policies to an application release. They continue to be applied via `kubectl apply` in CI.
 - **ASM-005**: The `ClusterIssuer` from `cert-issuer.yaml` is cluster-scoped and shared with other workloads. It is excluded from the `devops-chatbot` Helm chart for the same reason as Kyverno policies. It is applied as a pre-deploy `kubectl apply` step with the existing `|| echo` fallback.
 - **ASM-006**: GitHub Actions `environment: production` concurrency is configured to **queue** (not cancel) concurrent runs, so that two near-simultaneous pushes cannot produce a split-brain Helm release state. This is a GitHub Actions configuration requirement outside the Helm chart scope.
@@ -189,4 +193,4 @@ A developer runs `helm lint helm/devops-chatbot/` and `helm template helm/devops
 - **DEP-002**: The Civo CLI (`civo kubernetes config`) kubeconfig generation step is retained unchanged. The kubeconfig it produces is sufficient for `helm` CLI usage; no additional cluster authentication changes are required.
 - **DEP-003**: The `ghcr.io` container registry is the only registry in use. The `imagePullSecrets` reference in `values.yaml` (`imagePullSecrets[0].name: ghcr-pull-secret`) must match the secret name created by CI before chart install.
 - **DEP-004**: `helm repo add k8sgpt-operator` and `helm repo add grafana` must be called before their respective `helm upgrade --install` commands. These are already present in the K8sGPT workflow and must be retained.
-- **DEP-005**: The `k8sgpt-operator` Helm chart version is currently pinned to `0.2.26` in the K8sGPT workflow. This pin must be preserved in the migrated workflow and documented in the workflow file with a comment indicating the pin date and minimum tested version.
+- **DEP-005**: The `k8sgpt-operator` Helm chart version is pinned to `0.2.27`. This pin must be preserved and documented in workflow files.

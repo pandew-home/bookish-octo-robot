@@ -8,7 +8,7 @@
 
 ## Summary
 
-Migrate the bookish-octo-robot CI/CD pipeline from raw `kubectl apply` to `helm upgrade --install` for three components: the **devops-chatbot** application, the **k8sgpt operator**, and the **Grafana Alloy** observability stack. Simultaneously upgrade the k8sgpt-operator Helm chart from `0.2.26` → `0.2.27`, add `ConfigMap` analyzer and Trivy integration to the K8sGPT CR, and clean up all raw manifests that can be absorbed into Helm templates or replaced by `kubectl create secret --dry-run` patterns.
+Migrate the bookish-octo-robot CI/CD pipeline from raw `kubectl apply` to `helm upgrade --install` for three components: the **devops-chatbot** application, the **k8sgpt operator**, and the **Grafana Alloy** observability stack. Enforce operator-first sequencing in the main `Build & Deploy` workflow, including Grafana datasource and dashboard provisioning, then deploy the chatbot application. Simultaneously upgrade the k8sgpt-operator Helm chart from `0.2.26` → `0.2.27`, add `ConfigMap` analyzer and Trivy integration to the K8sGPT CR, and clean up all raw manifests that can be absorbed into Helm templates or replaced by `kubectl create secret --dry-run` patterns.
 
 **Primary driver**: Replace fragile `sed -i` image tag injection and scattered `kubectl apply` calls with a reproducible, atomic, rollback-capable Helm-based pipeline that passes `helm lint --strict` as a hard CI gate.
 
@@ -170,7 +170,7 @@ Milestones:
 
 ### Phase 2: CI Workflow Migration (deploy.yml)
 
-**Goal**: Replace `kubectl apply` pattern in `deploy.yml` with `helm upgrade --install`.
+**Goal**: Replace `kubectl apply` pattern in `deploy.yml` with `helm upgrade --install` and enforce operator-first sequencing.
 
 Milestones:
 1. Add `azure/setup-helm@v4` step with `helm-version: '3.14.0'`
@@ -181,15 +181,17 @@ Milestones:
 6. Retain `kubectl apply` for `cert-issuer.yaml` and `kyverno-policies.yaml` as explicit pre-steps
 7. Set `concurrency: cancel-in-progress: false` on deploy job
 8. Validate: `grep -r "sed.*image" .github/` returns empty
+9. Add `deploy-k8sgpt-operator` job in `deploy.yml` and make chatbot deploy depend on it (`needs`)
+10. Add observability steps to the operator-first job: Alloy Helm release, alloy cleanup cronjob, scraper ConfigMap, Loki datasource registration, and Grafana dashboard push
 
 ### Phase 3: k8sgpt Operator Config Updates
 
-**Goal**: Upgrade operator chart version, add analyzer and Trivy integration, update CI workflow.
+**Goal**: Upgrade operator chart version, add analyzer and Trivy integration, and align targeted operator workflow with main pipeline sequencing.
 
 Milestones:
 1. Update `k8sgpt/helm-values.yaml` — add `dynamicRBAC: true`; update chart version comment to `0.2.27`
 2. Update `k8sgpt/k8sgpt-openrouter-cr.yaml` — add `ConfigMap` to filters; add `integrations.trivy` block
-3. Update `deploy-k8sgpt.yml` — add `azure/setup-helm@v4`; bump chart `--version` to `0.2.27`
+3. Update `deploy-k8sgpt.yml` — add `azure/setup-helm@v4`; bump chart `--version` to `0.2.27`; keep parity with observability steps used in the main workflow
 4. Replace `kubectl apply -f k8sgpt/ai-secret.yaml` with `kubectl create secret --dry-run | kubectl apply` sourced from `${{ secrets.OPENROUTER_API_KEY }}`
 5. Confirm `helm upgrade --install alloy grafana/alloy --values k8sgpt/Alloy/alloy-values.yaml` is correctly sequenced with supplementary `kubectl apply` steps
 
