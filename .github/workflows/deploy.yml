@@ -75,6 +75,13 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Secret scanning (TruffleHog)
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+
       - name: Detect changed paths
         id: changes
         uses: dorny/paths-filter@v3

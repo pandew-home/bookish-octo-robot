@@ -15,7 +15,8 @@ serviceMonitor:
 metrics:
   enabled: true
 
-dynamicRBAC: true
+dynamicRBAC:
+  enabled: true
 
 # resultLogging creates a k8sgpt-metrics Service in the same namespace, which
 # causes K8s to inject K8SGPT_METRICS_PORT=tcp://... into the k8sgpt pod.

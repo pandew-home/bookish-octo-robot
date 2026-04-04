@@ -1,6 +1,8 @@
 image:
   repository: ghcr.io/pandew-home/bookish-octo-robot
   tag: latest
+  # pullPolicy: IfNotPresent keeps images cached locally after first pull.
+  # For multi-cluster deployments with different registries, consider changing to Always.
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
@@ -36,6 +38,10 @@ ingress:
   enabled: true
   className: traefik
   host: 17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com
+  # TLS is disabled for test/dev clusters. For production clusters:
+  # 1. Set tls.enabled: true
+  # 2. Ensure cert-manager ClusterIssuer "letsencrypt-prod" exists
+  # 3. Update host to your production domain
   tls:
     enabled: false
     secretName: devops-chatbot-tls
