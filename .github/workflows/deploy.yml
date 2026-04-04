@@ -101,7 +101,6 @@ jobs:
               - 'backend/agentic_engine.py'
               - 'backend/query_router.py'
               - 'backend/tests/test_chat_api.py'
-              - 'backend/tests/test_enrichment_timeout.py'
             operator:
               - 'libs/**'
 
@@ -129,7 +128,7 @@ jobs:
         if: steps.changes.outputs.chat == 'true'
         run: |
           cd backend
-          python -m pytest tests/test_chat_api.py tests/test_enrichment_timeout.py -v --tb=short --no-cov
+          python -m pytest tests/test_chat_api.py -v --tb=short --no-cov
 
       - name: Run all backend tests
         if: steps.changes.outputs.backend == 'true'
