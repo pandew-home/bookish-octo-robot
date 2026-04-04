@@ -16,9 +16,8 @@ Tests cover:
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock, patch, AsyncMock, call
-from datetime import datetime, timedelta
-from fastapi.testclient import TestClient
+from unittest.mock import Mock, patch, AsyncMock
+from datetime import datetime, timezone
 from fastapi import HTTPException
 from pydantic import ValidationError
 
@@ -28,14 +27,11 @@ from api.chat import (
     FeedbackRequest,
     ExportRequest,
     process_chat_query,
-    submit_feedback,
-    export_conversation,
     get_chat_history,
     get_conversation_list,
     get_conversation,
 )
 from k8sgpt_reader import K8sGPTResult
-from conversation_history import ConversationHistory, Conversation, ChatMessage
 from credential_store import StoredCredentials
 from input_sanitizer import InputSanitizer
 
@@ -76,7 +72,7 @@ def mock_k8sgpt_results():
             problem="Pod nginx is in CrashLoopBackOff",
             solution="Check pod logs with 'kubectl logs nginx' and fix the issue",
             analyzer="Pod",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={
                 "resource_name": "nginx",
                 "error": ["CrashLoopBackOff"],
@@ -91,7 +87,7 @@ def mock_k8sgpt_results():
             problem="Pod worker was OOMKilled",
             solution="Increase memory limit in pod spec",
             analyzer="Pod",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={
                 "resource_name": "worker",
                 "error": ["OOMKilled"],
@@ -106,7 +102,7 @@ def mock_k8sgpt_results():
             problem="Deployment replicas are pending",
             solution="Check node capacity and add more nodes if needed",
             analyzer="Deployment",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={
                 "resource_name": "app",
                 "error": ["Pending"],
@@ -273,7 +269,7 @@ class TestChatQueryEndpoint:
         assert response.k8sgpt_findings[1]["problem"] == "Pod was OOMKilled"
 
         # Verify serialization to dict works
-        response_dict = response.dict()
+        response_dict = response.model_dump()
         assert "k8sgpt_findings" in response_dict
         assert len(response_dict["k8sgpt_findings"]) == 2
 
@@ -352,7 +348,7 @@ class TestK8sGPTFindings:
             problem="CrashLoopBackOff",
             solution="Check logs",
             analyzer="Pod",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={"error": ["CrashLoopBackOff"]},
         )
 
@@ -396,7 +392,7 @@ class TestK8sGPTFindings:
                 problem="Minor issue",
                 solution="Minor fix",
                 analyzer="Pod",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details={},
             ),
             K8sGPTResult(
@@ -407,7 +403,7 @@ class TestK8sGPTFindings:
                 problem="Critical issue",
                 solution="Critical fix",
                 analyzer="Pod",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details={},
             ),
             K8sGPTResult(
@@ -418,7 +414,7 @@ class TestK8sGPTFindings:
                 problem="Medium issue",
                 solution="Medium fix",
                 analyzer="Pod",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details={},
             ),
         ]
@@ -452,13 +448,6 @@ class TestErrorHandling:
 
     def test_http_exception_for_auth_errors(self):
         """Test that RBAC errors return HTTP 403 based on code structure."""
-        import inspect
-        source = inspect.getsource(process_chat_query)
-        assert "403" in source or "forbidden" in source.lower()
-
-    def test_http_exception_for_rbac_errors(self):
-        """Test that RBAC errors would return HTTP 403 based on code structure."""
-        # The chat.py code at lines 350-356 handles 403 Forbidden
         import inspect
         source = inspect.getsource(process_chat_query)
         assert "403" in source or "forbidden" in source.lower()
@@ -510,8 +499,8 @@ class TestConversationHistoryIntegration:
         mock_conv = Mock()
         mock_conv.id = "conv_123"
         mock_conv.messages = [
-            Mock(role="user", content="test", timestamp=datetime.utcnow()),
-            Mock(role="assistant", content="response", timestamp=datetime.utcnow()),
+            Mock(role="user", content="test", timestamp=datetime.now(timezone.utc)),
+            Mock(role="assistant", content="response", timestamp=datetime.now(timezone.utc)),
         ]
 
         mock_hist.get_user_conversations.return_value = [mock_conv]
@@ -535,15 +524,15 @@ class TestConversationHistoryIntegration:
         mock_conv1.id = "conv_1"
         mock_conv1.title = "First Conversation"
         mock_conv1.messages = [Mock(content="test message")]
-        mock_conv1.created_at = datetime.utcnow()
-        mock_conv1.updated_at = datetime.utcnow()
+        mock_conv1.created_at = datetime.now(timezone.utc)
+        mock_conv1.updated_at = datetime.now(timezone.utc)
 
         mock_conv2 = Mock()
         mock_conv2.id = "conv_2"
         mock_conv2.title = "Second Conversation"
         mock_conv2.messages = [Mock(content="another message")]
-        mock_conv2.created_at = datetime.utcnow()
-        mock_conv2.updated_at = datetime.utcnow()
+        mock_conv2.created_at = datetime.now(timezone.utc)
+        mock_conv2.updated_at = datetime.now(timezone.utc)
 
         mock_hist.get_user_conversations.return_value = [mock_conv1, mock_conv2]
 
@@ -564,11 +553,11 @@ class TestConversationHistoryIntegration:
         mock_conv = Mock()
         mock_conv.id = "conv_123"
         mock_conv.title = "Test Conversation"
-        mock_conv.created_at = datetime.utcnow()
-        mock_conv.updated_at = datetime.utcnow()
+        mock_conv.created_at = datetime.now(timezone.utc)
+        mock_conv.updated_at = datetime.now(timezone.utc)
         mock_conv.messages = [
-            Mock(role="user", content="question", timestamp=datetime.utcnow()),
-            Mock(role="assistant", content="answer", timestamp=datetime.utcnow()),
+            Mock(role="user", content="question", timestamp=datetime.now(timezone.utc)),
+            Mock(role="assistant", content="answer", timestamp=datetime.now(timezone.utc)),
         ]
 
         mock_hist.get_conversation.return_value = mock_conv

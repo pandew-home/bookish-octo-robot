@@ -150,6 +150,7 @@ venv/
 backend/venv/
 ENV/
 env.bak/
+backend/test_env/
 venv.bak/
 
 # Secrets and credentials
