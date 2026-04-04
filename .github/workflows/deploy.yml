@@ -372,23 +372,23 @@ jobs:
 
       - name: Wait for public endpoint to stabilise
         run: |
-          URL="http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com"
+          URL="http://17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com"
 
           echo "=== Public health check (with retries) ==="
           curl -sf --retry 10 --retry-delay 5 --retry-connrefused \
-            "$URL/api/health" | jq . || { echo "✗ Public health endpoint unreachable"; exit 1; }
+            "$URL/devops-chatbot/api/health" | jq . || { echo "✗ Public health endpoint unreachable"; exit 1; }
 
           echo "=== Public frontend check ==="
           curl -sf --retry 5 --retry-delay 3 \
-            "$URL/" -o /dev/null -w "HTTP %{http_code}\n" || { echo "✗ Public frontend unreachable"; exit 1; }
+            "$URL/devops-chatbot/" -o /dev/null -w "HTTP %{http_code}\n" || { echo "✗ Public frontend unreachable"; exit 1; }
 
           echo "✓ Public endpoint is up"
 
       - name: Run real endpoint smoke tests
         run: |
-          URL="http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com"
-          echo "=== Running functional smoke tests against $URL ==="
-          python backend/tests/smoke_post_deploy.py "$URL"
+          URL="http://17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com"
+          echo "=== Running functional smoke tests against $URL/devops-chatbot ==="
+          python backend/tests/smoke_post_deploy.py "$URL/devops-chatbot"
 
       - name: Verify K8s resources
         run: |
