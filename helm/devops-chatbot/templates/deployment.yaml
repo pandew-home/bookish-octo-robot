@@ -1,0 +1,140 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "devops-chatbot.name" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "devops-chatbot.labels" . | nindent 4 }}
+    app: devops-chatbot
+    version: v2.0
+    git-sha: {{ .Values.podLabels.gitSha | default "" | quote }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app: devops-chatbot
+  template:
+    metadata:
+      labels:
+        app: devops-chatbot
+        version: v2.0
+        git-sha: {{ .Values.podLabels.gitSha | default "" | quote }}
+      annotations:
+        seccomp.security.alpha.kubernetes.io/pod: runtime/default
+    spec:
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      serviceAccountName: {{ include "devops-chatbot.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: setup-dirs
+          image: busybox:1.35
+          command: ["sh", "-c", "mkdir -p /tmp/supervisor /tmp/envoy /var/log/supervisor /var/run/supervisor"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            - name: log
+              mountPath: /var/log
+            - name: run
+              mountPath: /var/run
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsUser: 1000
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+      containers:
+        - name: chatbot
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8080
+              name: http
+              protocol: TCP
+          env:
+            - name: LLM_PROVIDER
+              valueFrom:
+                secretKeyRef:
+                  name: devops-chatbot-secrets
+                  key: llm-provider
+            - name: LLM_MODEL
+              valueFrom:
+                secretKeyRef:
+                  name: devops-chatbot-secrets
+                  key: llm-model
+            - name: LLM_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: devops-chatbot-secrets
+                  key: llm-api-key
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: devops-chatbot-secrets
+                  key: llm-api-key
+            - name: OPENAI_BASE_URL
+              value: "https://openrouter.ai/api/v1"
+            - name: DEFAULT_REGION
+              value: {{ .Values.llm.defaultRegion | quote }}
+            - name: KB_SEEDING_ENABLED
+              value: "true"
+            - name: KB_FORCE_RESEED
+              value: "false"
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            - name: log
+              mountPath: /var/log
+            - name: run
+              mountPath: /var/run
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/health/ready
+              port: 8080
+            initialDelaySeconds: 90
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.pvc.name }}
+        - name: tmp
+          emptyDir: {}
+        - name: log
+          emptyDir: {}
+        - name: run
+          emptyDir: {}

@@ -1,3 +1,4 @@
+# Chart version: k8sgpt-operator/k8sgpt-operator v0.2.27
 replicaCount: 1
 
 resources:
@@ -13,6 +14,8 @@ serviceMonitor:
 
 metrics:
   enabled: true
+
+dynamicRBAC: true
 
 # resultLogging creates a k8sgpt-metrics Service in the same namespace, which
 # causes K8s to inject K8SGPT_METRICS_PORT=tcp://... into the k8sgpt pod.

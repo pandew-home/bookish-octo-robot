@@ -6,7 +6,7 @@ on:
     paths:
       - 'backend/**'
       - 'frontend/**'
-      - 'libs/**'
+      - 'helm/**'
       - 'k8s/**'
       - 'Dockerfile'
       - 'docker/**'
@@ -235,6 +235,9 @@ jobs:
 
   deploy:
     name: Deploy to bookish-octo
+    concurrency:
+      group: deploy-production
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     needs: [build, test]
     if: success() && github.event.inputs.skip_deploy != 'true'
@@ -243,6 +246,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.14.0'
+
+      - name: Helm Validate
+        run: |
+          helm lint --strict helm/devops-chatbot/
+          helm template helm/devops-chatbot/ --set image.tag=lint-check > /dev/null
 
       - name: Install Civo CLI
         run: |
@@ -258,14 +271,8 @@ jobs:
       - name: Verify cluster access
         run: kubectl get nodes
 
-      - name: Update image tag in manifests
-        run: |
-          sed -i "s|image: .*ghcr.io/.*/bookish-octo-robot:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}|" k8s/deployment.yaml
-          sed -i "s|git-sha: .*|git-sha: \"${{ needs.build.outputs.image_tag }}\"|g" k8s/deployment.yaml
-
-      # --- Pre-requisites ---
       - name: Create namespace
-        run: kubectl apply -f k8s/namespace.yaml
+        run: kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Create secrets
         run: |
@@ -275,35 +282,28 @@ jobs:
             --docker-password=${{ secrets.GHCR_PULL_TOKEN }} \
             -n ${{ env.NAMESPACE }} \
             --dry-run=client -o yaml | kubectl apply -f -
-          kubectl create secret generic devops-chatbot-secrets \
-            --from-literal=llm-api-key=${{ secrets.OPENROUTER_API_KEY }} \
-            --from-literal=llm-provider=openrouter \
-            --from-literal=llm-model=mistralai/devstral-2512 \
-            -n ${{ env.NAMESPACE }} \
-            --dry-run=client -o yaml | kubectl apply -f -
 
-      # --- HTTPS/TLS Setup ---
       - name: Deploy cert-manager ClusterIssuers
         run: |
-          # Wait for cert-manager to be ready (should be pre-installed on Civo)
-          echo "Deploying Let's Encrypt certificate issuers..."
           kubectl apply -f k8s/cert-issuer.yaml || echo "cert-manager not installed - HTTPS will not be available"
 
-      # --- Application ---
-      - name: Deploy application
-        run: |
-          kubectl apply -f k8s/serviceaccount.yaml
-          kubectl apply -f k8s/pvc.yaml
-          kubectl apply -f k8s/deployment.yaml
-           kubectl apply -f k8s/service.yaml
-           kubectl apply -f k8s/ingress.yaml
-           kubectl apply -f k8s/pdb.yaml
-          kubectl apply -f k8s/resourcequota.yaml
+      - name: Apply Kyverno policies
+        run: kubectl apply -f k8s/kyverno-policies.yaml || true
 
-      - name: Wait for rollout
+      - name: Deploy application (Helm)
         run: |
-          kubectl rollout status deployment/devops-chatbot \
-            -n ${{ env.NAMESPACE }} \
+          helm upgrade --install devops-chatbot helm/devops-chatbot/ \
+            --namespace ${{ env.NAMESPACE }} \
+            --create-namespace \
+            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+            --set image.tag=${{ needs.build.outputs.image_tag }} \
+            --set podLabels.gitSha=${{ needs.build.outputs.image_tag }} \
+            --set llm.apiKey=${{ secrets.OPENROUTER_API_KEY }} \
+            --set llm.provider=openrouter \
+            --set llm.model=mistralai/devstral-2512 \
+            --set llm.defaultRegion=us-east-1 \
+            --atomic \
+            --wait \
             --timeout=300s
 
       - name: Verify deployment
@@ -315,6 +315,10 @@ jobs:
         run: |
           POD=$(kubectl get pod -n ${{ env.NAMESPACE }} -l app=devops-chatbot -o jsonpath='{.items[0].metadata.name}')
           kubectl exec -n ${{ env.NAMESPACE }} $POD -- curl -sf http://localhost:8080/api/health || echo "Health check pending (pod may still be starting)"
+
+      - name: Helm release history
+        if: always()
+        run: helm history devops-chatbot -n ${{ env.NAMESPACE }} || true
 
   smoke-test:
     name: Post-Deploy Smoke Tests
