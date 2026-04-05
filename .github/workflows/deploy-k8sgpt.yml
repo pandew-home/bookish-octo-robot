@@ -54,6 +54,24 @@ jobs:
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
 
+      - name: Validate K8sGPT and Alloy safety config
+        run: |
+          set -euo pipefail
+
+          # Operator v0.2.27 currently panics in AddIntegration when spec.integrations is present.
+          # Keep integrations entirely unset until upstream fix is released.
+          if grep -En '^[[:space:]]*integrations:' k8sgpt/k8sgpt-openrouter-cr.yaml; then
+            echo "ERROR: k8sgpt-openrouter-cr.yaml must not define spec.integrations (operator v0.2.27 AddIntegration panic)."
+            exit 1
+          fi
+
+          # Loki ingestion is CR-only: result-scraper pushes Result CR payloads.
+          # Do not re-introduce direct k8sgpt operator pod log scraping in Alloy.
+          if grep -En 'k8sgpt_pods|loki\.source\.kubernetes|k8sgpt_results|source[[:space:]]*=[[:space:]]*"k8sgpt"' k8sgpt/Alloy/alloy-values.yaml; then
+            echo "ERROR: alloy-values.yaml must remain CR-only ingestion (no direct operator pod log scraping)."
+            exit 1
+          fi
+
       - name: Create namespace
         run: kubectl apply -f k8sgpt/namespace.yaml
 

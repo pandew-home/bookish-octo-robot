@@ -51,5 +51,5 @@ spec:
     - GatewayClass
     - Gateway
     - HTTPRoute
-  # Disabled due to operator panic in AddIntegration path when trivy integration is enabled.
-  integrations: {}
+  # Do not set integrations at all. Any non-null integrations block currently
+  # triggers operator AddIntegration and panics on nil Trivy response.
