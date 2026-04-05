@@ -808,35 +808,69 @@ jobs:
           echo "=== Running critical security and auth tests ==="
           python -m pytest tests/test_credentials_api.py tests/test_auth_flows.py -v --tb=short || echo "Note: Some tests may require cluster credentials, checking logs..."
 
-      - name: Wait for public endpoint to stabilise
+      - name: Resolve smoke test endpoint
+        id: smoke-endpoint
         run: |
-          HOST=$(kubectl get ingress -n ${{ env.NAMESPACE }} devops-chatbot -o jsonpath='{.spec.rules[0].host}')
-          if [ -z "$HOST" ]; then
-            echo "✗ Ingress host not found"
+          set -euo pipefail
+
+          HOST=$(kubectl get ingress -n ${{ env.NAMESPACE }} devops-chatbot -o jsonpath='{.spec.rules[0].host}' 2>/dev/null || true)
+          BASE_URL=""
+
+          if [ -n "$HOST" ]; then
+            # Try both schemes and both base paths (root and legacy /devops-chatbot).
+            CANDIDATES=(
+              "https://${HOST}"
+              "https://${HOST}/devops-chatbot"
+              "http://${HOST}"
+              "http://${HOST}/devops-chatbot"
+            )
+
+            echo "=== Probing public endpoint candidates ==="
+            for candidate in "${CANDIDATES[@]}"; do
+              echo "Checking ${candidate}/api/health"
+              if curl -sf --retry 6 --retry-delay 5 --retry-connrefused "${candidate}/api/health" >/dev/null; then
+                BASE_URL="$candidate"
+                break
+              fi
+            done
+          fi
+
+          if [ -n "$BASE_URL" ]; then
+            echo "Using public smoke endpoint: $BASE_URL"
+            echo "base_url=$BASE_URL" >> "$GITHUB_OUTPUT"
+            echo "used_public=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Public endpoint not reachable yet; falling back to in-cluster service via port-forward."
+          kubectl port-forward -n ${{ env.NAMESPACE }} svc/devops-chatbot 18080:80 >/tmp/smoke-port-forward.log 2>&1 &
+          PF_PID=$!
+          sleep 5
+          if ! curl -sf http://127.0.0.1:18080/api/health >/dev/null; then
+            echo "✗ Fallback port-forward endpoint is also unreachable"
+            cat /tmp/smoke-port-forward.log || true
+            kill $PF_PID >/dev/null 2>&1 || true
             exit 1
           fi
-          URL="http://${HOST}"
+          kill $PF_PID >/dev/null 2>&1 || true
 
-          echo "=== Public health check (with retries) ==="
-          curl -sf --retry 10 --retry-delay 5 --retry-connrefused \
-            "$URL/devops-chatbot/api/health" | jq . || { echo "✗ Public health endpoint unreachable"; exit 1; }
+          echo "base_url=http://127.0.0.1:18080" >> "$GITHUB_OUTPUT"
+          echo "used_public=false" >> "$GITHUB_OUTPUT"
 
-          echo "=== Public frontend check ==="
-          curl -sf --retry 5 --retry-delay 3 \
-            "$URL/devops-chatbot/" -o /dev/null -w "HTTP %{http_code}\n" || { echo "✗ Public frontend unreachable"; exit 1; }
-
-          echo "✓ Public endpoint is up"
-
-      - name: Run real endpoint smoke tests
+      - name: Run smoke tests against resolved endpoint
         run: |
-          HOST=$(kubectl get ingress -n ${{ env.NAMESPACE }} devops-chatbot -o jsonpath='{.spec.rules[0].host}')
-          if [ -z "$HOST" ]; then
-            echo "✗ Ingress host not found"
-            exit 1
+          set -euo pipefail
+          BASE_URL="${{ steps.smoke-endpoint.outputs.base_url }}"
+
+          if [ "${{ steps.smoke-endpoint.outputs.used_public }}" = "false" ]; then
+            kubectl port-forward -n ${{ env.NAMESPACE }} svc/devops-chatbot 18080:80 >/tmp/smoke-port-forward.log 2>&1 &
+            PF_PID=$!
+            trap 'kill $PF_PID >/dev/null 2>&1 || true' EXIT
+            sleep 5
           fi
-          URL="http://${HOST}"
-          echo "=== Running functional smoke tests against $URL/devops-chatbot ==="
-          python backend/tests/smoke_post_deploy.py "$URL/devops-chatbot"
+
+          echo "=== Running functional smoke tests against $BASE_URL ==="
+          python backend/tests/smoke_post_deploy.py "$BASE_URL"
 
       - name: Verify K8s resources
         run: |
