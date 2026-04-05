@@ -32,7 +32,3 @@ grafana:
       # traefik.ingress.kubernetes.io/router.tls: "true"
       # traefik.ingress.kubernetes.io/router.tls.certresolver: "letsencrypt"
 
-prometheus:
-  prometheusSpec:
-    # Traefik-specific config can go here if needed (e.g., service monitor selectors)
-    pass
