@@ -82,6 +82,7 @@ jobs:
 
       - name: Deploy Alloy & observability manifests
         run: |
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
           kubectl apply -f k8sgpt/Alloy/alloy-rbac.yaml
           helm upgrade --install alloy grafana/alloy \
             -n monitoring --create-namespace \
@@ -105,9 +106,21 @@ jobs:
 
       - name: Register Loki datasource in Grafana via API
         run: |
-          GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
+          if kubectl get svc -n monitoring prometheus-grafana >/dev/null 2>&1; then
+            GRAFANA_SERVICE=prometheus-grafana
+            GRAFANA_SECRET=prometheus-grafana
+          elif kubectl get svc -n monitoring kube-prometheus-stack-grafana >/dev/null 2>&1; then
+            GRAFANA_SERVICE=kube-prometheus-stack-grafana
+            GRAFANA_SECRET=kube-prometheus-stack-grafana
+          else
+            echo "Grafana service not found in monitoring namespace"
+            kubectl get svc -n monitoring || true
+            exit 1
+          fi
+
+          GRAFANA_PASS=$(kubectl get secret "$GRAFANA_SECRET" -n monitoring \
             -o jsonpath='{.data.admin-password}' | base64 -d)
-          GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:prometheus-grafana:80/proxy"
+          GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
 
           kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
           PROXY_PID=$!
@@ -140,9 +153,21 @@ jobs:
 
       - name: Push dashboard to Grafana via API
         run: |
-          GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
+          if kubectl get svc -n monitoring prometheus-grafana >/dev/null 2>&1; then
+            GRAFANA_SERVICE=prometheus-grafana
+            GRAFANA_SECRET=prometheus-grafana
+          elif kubectl get svc -n monitoring kube-prometheus-stack-grafana >/dev/null 2>&1; then
+            GRAFANA_SERVICE=kube-prometheus-stack-grafana
+            GRAFANA_SECRET=kube-prometheus-stack-grafana
+          else
+            echo "Grafana service not found in monitoring namespace"
+            kubectl get svc -n monitoring || true
+            exit 1
+          fi
+
+          GRAFANA_PASS=$(kubectl get secret "$GRAFANA_SECRET" -n monitoring \
             -o jsonpath='{.data.admin-password}' | base64 -d)
-          GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:prometheus-grafana:80/proxy"
+          GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
 
           kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
           PROXY_PID=$!
