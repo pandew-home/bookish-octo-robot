@@ -8,10 +8,23 @@
       name="description"
       content="DevOps Chatbot v2 - Kubernetes troubleshooting assistant"
     />
+    <!-- Dynamic base href for subpath deployment support -->
+    <!-- Format: window.__PUBLIC_URL__ set by frontend runtime env config -->
+    <base id="dynamic-base" href="/" />
     <title>DevOps Chatbot v2</title>
   </head>
   <body>
     <noscript>You need to enable JavaScript to run this app.</noscript>
     <div id="root"></div>
+    <script>
+      // Support subpath deployments by dynamically updating base href
+      // Reads REACT_APP_PUBLIC_URL from window.__CONFIG__ (injected by backend)
+      // or falls back to "/" for root-path deployments
+      if (window.__CONFIG__ && window.__CONFIG__.publicUrl) {
+        const pathSegments = window.__CONFIG__.publicUrl.split('/').filter(s => s);
+        const publicUrl = pathSegments.length > 0 ? '/' + pathSegments.join('/') + '/' : '/';
+        document.getElementById('dynamic-base').href = publicUrl;
+      }
+    </script>
   </body>
 </html>
