@@ -37,11 +37,11 @@ spec:
           command: ["sh", "-c", "mkdir -p /tmp/supervisor /tmp/envoy /var/log/supervisor /var/run/supervisor"]
           resources:
             requests:
-              cpu: 100m
-              memory: 64Mi
+              cpu: 10m
+              memory: 32Mi
             limits:
-              cpu: 200m
-              memory: 128Mi
+              cpu: 50m
+              memory: 64Mi
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -98,6 +98,8 @@ spec:
               value: {{ .Values.app.apiBaseUrl | quote }}
             - name: REACT_APP_PUBLIC_URL
               value: {{ .Values.app.publicUrl | quote }}
+            - name: ALLOWED_ORIGINS
+              value: {{ .Values.app.allowedOrigins | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

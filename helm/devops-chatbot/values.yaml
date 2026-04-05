@@ -1,6 +1,7 @@
 image:
   repository: ghcr.io/pandew-home/bookish-octo-robot
-  tag: latest
+  # CI always overrides this with --set image.tag=<git-sha>. Never deploy with "latest".
+  tag: "0.0.0-dev"
   # pullPolicy: IfNotPresent keeps images cached locally after first pull.
   # For multi-cluster deployments with different registries, consider changing to Always.
   pullPolicy: IfNotPresent
@@ -18,12 +19,20 @@ namespace: devops-chatbot
 podLabels:
   gitSha: ""
 
+# Resource sizing: g4s.kube.medium nodes (2 vCPU / 3.7GB RAM).
+# Cluster co-tenants: openfang (128Mi/512Mi), gastown (256Mi/768Mi).
+# Observed idle: 4m CPU, 146Mi memory.
 resources:
   requests:
+    # Generous vs idle (4m) but gives scheduler an accurate bin-pack signal.
     cpu: "100m"
+    # Above observed idle (146Mi) to absorb FAISS index load and conversation cache.
     memory: "256Mi"
   limits:
-    cpu: "500m"
+    # Python + FAISS + asyncio can spike during RAG queries and LLM streaming.
+    # Matches openfang/gastown ceiling; all three are bursty, not concurrent.
+    cpu: "1000m"
+    # Covers FAISS vector ops, LLM response buffering, and KB seeding peaks.
     memory: "512Mi"
 
 serviceAccount:
@@ -94,3 +103,7 @@ app:
   # Frontend PUBLIC_URL for static assets and SPA routing
   # Example: "/" for root, "/chatbot" for subpath
   publicUrl: "/"
+  # Comma-separated list of allowed CORS origins.
+  # Set to the public ingress URL in production.
+  # CI sets this to the cluster ingress URL via --set app.allowedOrigins=...
+  allowedOrigins: "http://localhost:3000"

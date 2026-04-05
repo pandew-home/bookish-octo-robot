@@ -511,9 +511,9 @@ If any are missing, add them per `data-model.md` CR schema.
 
 ## Group 6: Cleanup (after validated Helm deploy)
 
-> **Prerequisite**: Groups 3–5 complete AND successful end-to-end deploy confirmed in GitHub Actions.
+> **Prerequisite**: Groups 3–5 complete AND successful end-to-end deploy confirmed in GitHub Actions. ✅ Deploy validated — multiple successful CI runs on main (as of 2026-04-01).
 
-### TASK-027 — Delete deprecated `k8s/` raw manifests
+### [X] TASK-027 — Delete deprecated `k8s/` raw manifests
 
 **Files to delete**:
 - `k8s/deployment.yaml`
@@ -534,7 +534,7 @@ If any are missing, add them per `data-model.md` CR schema.
 
 ---
 
-### TASK-028 — Delete `k8sgpt/ai-secret.yaml` if it exists
+### [X] TASK-028 — Delete `k8sgpt/ai-secret.yaml` if it exists
 
 **File**: `k8sgpt/ai-secret.yaml` (check with `ls k8sgpt/`)  
 **Action**: If the file exists, delete it. Secret is inlined in CI.
@@ -595,7 +595,7 @@ grep -r "sed.*image" .github/workflows/
 
 ---
 
-### TASK-032 — Push branch and confirm GitHub Actions green
+### [X] TASK-032 — Push branch and confirm GitHub Actions green
 
 **Action**: Push `001-devops-chatbot-v2` branch. Verify:
 
