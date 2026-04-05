@@ -335,12 +335,12 @@ jobs:
 
       - name: Register Loki datasource in Grafana via API
         run: |
-          if kubectl get svc -n monitoring prometheus-grafana >/dev/null 2>&1; then
-            GRAFANA_SERVICE=prometheus-grafana
-            GRAFANA_SECRET=prometheus-grafana
-          elif kubectl get svc -n monitoring kube-prometheus-stack-grafana >/dev/null 2>&1; then
+          if kubectl get svc -n monitoring kube-prometheus-stack-grafana >/dev/null 2>&1; then
             GRAFANA_SERVICE=kube-prometheus-stack-grafana
             GRAFANA_SECRET=kube-prometheus-stack-grafana
+          elif kubectl get svc -n monitoring prometheus-grafana >/dev/null 2>&1; then
+            GRAFANA_SERVICE=prometheus-grafana
+            GRAFANA_SECRET=prometheus-grafana
           else
             echo "Grafana service not found in monitoring namespace"
             kubectl get svc -n monitoring || true
@@ -349,11 +349,22 @@ jobs:
 
           GRAFANA_PASS=$(kubectl get secret "$GRAFANA_SECRET" -n monitoring \
             -o jsonpath='{.data.admin-password}' | base64 -d)
-          GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
-
-          kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
-          PROXY_PID=$!
-          trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
+          SVC_TYPE=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.type}')
+          NODE_PORT=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.ports[0].nodePort}')
+          if [ "$SVC_TYPE" = "NodePort" ] && [ -n "$NODE_PORT" ]; then
+            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+            if [ -z "$NODE_IP" ]; then
+              NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+            fi
+            GRAFANA_URL="http://${NODE_IP}:${NODE_PORT}"
+            echo "Using Grafana NodePort endpoint: ${GRAFANA_URL}"
+          else
+            GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
+            kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
+            PROXY_PID=$!
+            trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
+            echo "Using Grafana API service proxy endpoint"
+          fi
 
           for i in $(seq 1 12); do
             if curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
@@ -363,30 +374,40 @@ jobs:
             sleep 5
           done
 
-          curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
+          curl -sS -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
             || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log || true; exit 1; }
 
-          curl -s -X POST \
+          DS_CODE=$(curl -sS -o /tmp/grafana-ds-response.json -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             -u "admin:${GRAFANA_PASS}" \
             -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
-            "${GRAFANA_URL}/api/datasources" \
-            || curl -s -X PUT \
+            "${GRAFANA_URL}/api/datasources")
+
+          if [ "$DS_CODE" = "200" ]; then
+            echo "Loki datasource created"
+          else
+            DS_PUT_CODE=$(curl -sS -o /tmp/grafana-ds-response.json -w "%{http_code}" -X PUT \
               -H "Content-Type: application/json" \
               -u "admin:${GRAFANA_PASS}" \
               -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
-              "${GRAFANA_URL}/api/datasources/uid/loki" \
-            || echo "Loki datasource registration skipped"
+              "${GRAFANA_URL}/api/datasources/uid/loki")
+            if [ "$DS_PUT_CODE" != "200" ]; then
+              echo "Loki datasource registration failed (POST ${DS_CODE}, PUT ${DS_PUT_CODE})"
+              cat /tmp/grafana-ds-response.json || true
+              exit 1
+            fi
+            echo "Loki datasource updated"
+          fi
           echo "Loki datasource step completed"
 
       - name: Push dashboard to Grafana via API
         run: |
-          if kubectl get svc -n monitoring prometheus-grafana >/dev/null 2>&1; then
-            GRAFANA_SERVICE=prometheus-grafana
-            GRAFANA_SECRET=prometheus-grafana
-          elif kubectl get svc -n monitoring kube-prometheus-stack-grafana >/dev/null 2>&1; then
+          if kubectl get svc -n monitoring kube-prometheus-stack-grafana >/dev/null 2>&1; then
             GRAFANA_SERVICE=kube-prometheus-stack-grafana
             GRAFANA_SECRET=kube-prometheus-stack-grafana
+          elif kubectl get svc -n monitoring prometheus-grafana >/dev/null 2>&1; then
+            GRAFANA_SERVICE=prometheus-grafana
+            GRAFANA_SECRET=prometheus-grafana
           else
             echo "Grafana service not found in monitoring namespace"
             kubectl get svc -n monitoring || true
@@ -395,11 +416,22 @@ jobs:
 
           GRAFANA_PASS=$(kubectl get secret "$GRAFANA_SECRET" -n monitoring \
             -o jsonpath='{.data.admin-password}' | base64 -d)
-          GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
-
-          kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
-          PROXY_PID=$!
-          trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
+          SVC_TYPE=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.type}')
+          NODE_PORT=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.ports[0].nodePort}')
+          if [ "$SVC_TYPE" = "NodePort" ] && [ -n "$NODE_PORT" ]; then
+            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+            if [ -z "$NODE_IP" ]; then
+              NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+            fi
+            GRAFANA_URL="http://${NODE_IP}:${NODE_PORT}"
+            echo "Using Grafana NodePort endpoint: ${GRAFANA_URL}"
+          else
+            GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
+            kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
+            PROXY_PID=$!
+            trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
+            echo "Using Grafana API service proxy endpoint"
+          fi
 
           for i in $(seq 1 12); do
             curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" && break
@@ -407,17 +439,22 @@ jobs:
             sleep 10
           done
 
-          curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
+          curl -sS -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
             || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log || true; exit 1; }
 
           python3 scripts/build_grafana_dashboard.py
 
-          RESULT=$(curl -sf -X POST \
+          DASH_CODE=$(curl -sS -o /tmp/grafana-dashboard-response.json -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
             -u "admin:${GRAFANA_PASS}" \
             -d @/tmp/grafana-payload.json \
             "${GRAFANA_URL}/api/dashboards/db")
-          echo "Dashboard import: ${RESULT}"
+          if [ "$DASH_CODE" != "200" ]; then
+            echo "Dashboard import failed (HTTP ${DASH_CODE})"
+            cat /tmp/grafana-dashboard-response.json || true
+            exit 1
+          fi
+          echo "Dashboard import successful"
           echo "URL: ${GRAFANA_URL}/d/k8sgpt-findings-v2"
 
       - name: Verify operator and observability deployment
