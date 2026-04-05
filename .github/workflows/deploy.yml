@@ -18,6 +18,11 @@ on:
         required: false
         default: false
         type: boolean
+      image_tag:
+        description: 'Existing image tag to deploy without rebuilding'
+        required: false
+        default: ''
+        type: string
 
 env:
   REGISTRY: ghcr.io
@@ -37,27 +42,141 @@ permissions:
   packages: write
 
 jobs:
+  detect:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    outputs:
+      backend_changed: ${{ steps.changes.outputs.backend_changed }}
+      frontend_changed: ${{ steps.changes.outputs.frontend_changed }}
+      libs_changed: ${{ steps.changes.outputs.libs_changed }}
+      helm_changed: ${{ steps.changes.outputs.helm_changed }}
+      k8s_changed: ${{ steps.changes.outputs.k8s_changed }}
+      docker_changed: ${{ steps.changes.outputs.docker_changed }}
+      auth_changed: ${{ steps.changes.outputs.auth_changed }}
+      chat_changed: ${{ steps.changes.outputs.chat_changed }}
+      operator_changed: ${{ steps.changes.outputs.operator_changed }}
+      app_image_changed: ${{ steps.changes.outputs.app_image_changed }}
+      app_deploy_changed: ${{ steps.changes.outputs.app_deploy_changed }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed files
+        id: changes
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EVENT_BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags --prune origin "$DEFAULT_BRANCH"
+
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ -n "$EVENT_BEFORE" ] && [ "$EVENT_BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            DIFF_BASE="$EVENT_BEFORE"
+          else
+            DIFF_BASE="$(git merge-base HEAD "origin/$DEFAULT_BRANCH")"
+          fi
+
+          git diff --name-only "$DIFF_BASE" HEAD > /tmp/changed-files.txt
+
+          echo "Changed files since $DIFF_BASE:"
+          cat /tmp/changed-files.txt || true
+
+          has_match() {
+            local pattern="$1"
+            if grep -Eq "$pattern" /tmp/changed-files.txt; then
+              echo true
+            else
+              echo false
+            fi
+          }
+
+          backend_changed="$(has_match '^backend/')"
+          frontend_changed="$(has_match '^frontend/')"
+          libs_changed="$(has_match '^libs/')"
+          helm_changed="$(has_match '^helm/')"
+          k8s_changed="$(has_match '^k8s/')"
+          docker_changed="$(has_match '^(Dockerfile$|docker/)')"
+          auth_changed="$(has_match '^(backend/api/credentials.py|backend/credential_store.py|backend/middleware/|backend/eks_auth.py|backend/local_k8s_auth.py|backend/tests/test_credentials_api.py|backend/tests/test_auth_flows.py|backend/tests/test_cluster_isolation.py)')"
+          chat_changed="$(has_match '^(backend/api/chat.py|backend/enrichment_engine.py|backend/agentic_engine.py|backend/query_router.py|backend/tests/test_chat_api.py)')"
+          operator_changed="$(has_match '^(k8sgpt/|\.github/workflows/deploy-k8sgpt.yml$)')"
+
+          if [ "$backend_changed" = "true" ] || [ "$frontend_changed" = "true" ] || [ "$libs_changed" = "true" ] || [ "$docker_changed" = "true" ]; then
+            app_image_changed=true
+          else
+            app_image_changed=false
+          fi
+
+          if [ "$app_image_changed" = "true" ] || [ "$helm_changed" = "true" ] || [ "$k8s_changed" = "true" ]; then
+            app_deploy_changed=true
+          else
+            app_deploy_changed=false
+          fi
+
+          {
+            echo "backend_changed=$backend_changed"
+            echo "frontend_changed=$frontend_changed"
+            echo "libs_changed=$libs_changed"
+            echo "helm_changed=$helm_changed"
+            echo "k8s_changed=$k8s_changed"
+            echo "docker_changed=$docker_changed"
+            echo "auth_changed=$auth_changed"
+            echo "chat_changed=$chat_changed"
+            echo "operator_changed=$operator_changed"
+            echo "app_image_changed=$app_image_changed"
+            echo "app_deploy_changed=$app_deploy_changed"
+          } >> "$GITHUB_OUTPUT"
+
   build:
     name: Build & Push Image
     runs-on: ubuntu-latest
+    needs: detect
     outputs:
       image_tag: ${{ github.sha }}
+      image_exists: ${{ steps.image-check.outputs.exists }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
       - name: Log in to GHCR
+        if: github.event.inputs.image_tag == ''
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Skip build for manual image tag
+        if: github.event.inputs.image_tag != ''
+        id: manual-image
+        run: |
+          echo "Using manually supplied image tag: ${{ github.event.inputs.image_tag }}"
+          echo "exists=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check for existing image tag
+        id: image-check
+        if: github.event.inputs.image_tag == ''
+        run: |
+          IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
+
+          if docker manifest inspect "$IMAGE" > /dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Reusing existing image: $IMAGE"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Image does not exist yet: $IMAGE"
+          fi
+
+      - name: Set up Docker Buildx
+        if: github.event.inputs.image_tag == '' && needs.detect.outputs.app_image_changed == 'true' && steps.image-check.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and push
+        if: github.event.inputs.image_tag == '' && needs.detect.outputs.app_image_changed == 'true' && steps.image-check.outputs.exists != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -71,10 +190,22 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
 
+      - name: Report image selection
+        run: |
+          if [ "${{ github.event.inputs.image_tag }}" != "" ]; then
+            echo "Using manually supplied image tag ${{ github.event.inputs.image_tag }}"
+          elif [ "${{ needs.detect.outputs.app_image_changed }}" != "true" ]; then
+            echo "No image-affecting changes detected; build skipped"
+          elif [ "${{ steps.image-check.outputs.exists }}" = "true" ]; then
+            echo "Using previously published image for ${{ github.sha }}"
+          else
+            echo "Built and pushed new image for ${{ github.sha }}"
+          fi
+
   test:
     name: Run Tests
     runs-on: ubuntu-latest
-    needs: build
+    needs: [detect, build]
 
     steps:
       - name: Checkout
@@ -89,37 +220,8 @@ jobs:
           base: ${{ github.event.repository.default_branch }}
           head: HEAD
 
-      - name: Detect changed paths
-        id: changes
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            backend:
-              - 'backend/**'
-              - 'Dockerfile'
-              - 'docker/**'
-            frontend:
-              - 'frontend/**'
-            auth:
-              - 'backend/api/credentials.py'
-              - 'backend/credential_store.py'
-              - 'backend/middleware/**'
-              - 'backend/eks_auth.py'
-              - 'backend/local_k8s_auth.py'
-              - 'backend/tests/test_credentials_api.py'
-              - 'backend/tests/test_auth_flows.py'
-              - 'backend/tests/test_cluster_isolation.py'
-            chat:
-              - 'backend/api/chat.py'
-              - 'backend/enrichment_engine.py'
-              - 'backend/agentic_engine.py'
-              - 'backend/query_router.py'
-              - 'backend/tests/test_chat_api.py'
-            operator:
-              - 'libs/**'
-
       - name: Setup Python
-        if: steps.changes.outputs.backend == 'true'
+        if: needs.detect.outputs.backend_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -127,31 +229,31 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Install backend deps
-        if: steps.changes.outputs.backend == 'true'
+        if: needs.detect.outputs.backend_changed == 'true'
         run: |
           pip install -r backend/requirements.txt
           pip install "httpx<0.28"
 
       - name: Run critical security & auth tests
-        if: steps.changes.outputs.auth == 'true'
+        if: needs.detect.outputs.auth_changed == 'true'
         run: |
           cd backend
           python -m pytest tests/test_credentials_api.py tests/test_auth_flows.py tests/test_cluster_isolation.py -v --tb=short --no-cov
 
       - name: Run chat API & integration tests
-        if: steps.changes.outputs.chat == 'true'
+        if: needs.detect.outputs.chat_changed == 'true'
         run: |
           cd backend
           python -m pytest tests/test_chat_api.py -v --tb=short --no-cov
 
       - name: Run all backend tests
-        if: steps.changes.outputs.backend == 'true'
+        if: needs.detect.outputs.backend_changed == 'true'
         run: |
           cd backend
           python -m pytest --tb=short -q --no-cov
 
       - name: Setup Python for operator libs
-        if: steps.changes.outputs.operator == 'true' && steps.changes.outputs.backend != 'true'
+        if: needs.detect.outputs.libs_changed == 'true' && needs.detect.outputs.backend_changed != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -159,18 +261,18 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Install operator lib deps
-        if: steps.changes.outputs.operator == 'true' && steps.changes.outputs.backend != 'true'
+        if: needs.detect.outputs.libs_changed == 'true' && needs.detect.outputs.backend_changed != 'true'
         run: pip install -r backend/requirements.txt "httpx<0.28"
 
       - name: Run operator lib tests
-        if: steps.changes.outputs.operator == 'true'
+        if: needs.detect.outputs.libs_changed == 'true'
         run: |
           pip install -e libs/devops-k8s -e libs/devops-kb -e libs/devops-prompts -e libs/devops-rag
           python -m pytest libs/devops-k8s/tests libs/devops-kb/tests libs/devops-prompts/tests libs/devops-rag/tests \
             -v --tb=short -q --no-cov
 
       - name: Setup Node.js
-        if: steps.changes.outputs.frontend == 'true'
+        if: needs.detect.outputs.frontend_changed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -178,16 +280,29 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Frontend tests
-        if: steps.changes.outputs.frontend == 'true'
+        if: needs.detect.outputs.frontend_changed == 'true'
         run: |
           cd frontend
           npm install
           npm test -- --watchAll=false
 
+      - name: Setup Helm for chart tests
+        uses: azure/setup-helm@v4
+        with:
+          version: '3.14.0'
+
+      - name: Run Helm chart tests
+        if: needs.detect.outputs.app_deploy_changed == 'true'
+        run: |
+          pip install pytest pyyaml --quiet
+          python -m pytest tests/test_helm_chart.py -v --tb=short
+
       - name: Set up Docker Buildx
+        if: needs.detect.outputs.app_image_changed == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
+        if: needs.detect.outputs.app_image_changed == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -195,6 +310,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker Image Smoke Test
+        if: needs.detect.outputs.app_image_changed == 'true'
         run: |
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
@@ -249,8 +365,8 @@ jobs:
   deploy-k8sgpt-operator:
     name: Deploy K8sGPT Operator
     runs-on: ubuntu-latest
-    needs: [build, test]
-    if: success() && github.event.inputs.skip_deploy != 'true'
+    needs: [detect, test]
+    if: success() && github.event.inputs.skip_deploy != 'true' && needs.detect.outputs.operator_changed == 'true'
     environment: production
 
     steps:
@@ -493,8 +609,8 @@ jobs:
       group: deploy-production
       cancel-in-progress: false
     runs-on: ubuntu-latest
-    needs: [build, test, deploy-k8sgpt-operator]
-    if: success() && github.event.inputs.skip_deploy != 'true'
+    needs: [detect, build, test]
+    if: success() && github.event.inputs.skip_deploy != 'true' && (needs.detect.outputs.app_deploy_changed == 'true' || github.event.inputs.image_tag != '')
     environment: production
 
     steps:
@@ -544,14 +660,40 @@ jobs:
       - name: Apply Kyverno policies
         run: kubectl apply -f k8s/kyverno-policies.yaml || true
 
+      - name: Resolve image tag for deploy
+        id: resolve-image
+        run: |
+          set -euo pipefail
+
+          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
+            TAG="${{ github.event.inputs.image_tag }}"
+            echo "Using manually requested image tag: $TAG"
+          elif [ "${{ needs.detect.outputs.app_image_changed }}" = "true" ]; then
+            TAG="${{ github.sha }}"
+            echo "Using image built for current commit: $TAG"
+          else
+            CURRENT_IMAGE=$(kubectl get deployment -n ${{ env.NAMESPACE }} devops-chatbot -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null || true)
+            CURRENT_TAG="${CURRENT_IMAGE##*:}"
+
+            if [ -z "$CURRENT_IMAGE" ] || [ "$CURRENT_TAG" = "$CURRENT_IMAGE" ]; then
+              echo "Unable to infer existing deployed image tag. Provide workflow_dispatch input image_tag to deploy config-only changes."
+              exit 1
+            fi
+
+            TAG="$CURRENT_TAG"
+            echo "Reusing currently deployed image tag for config-only deploy: $TAG"
+          fi
+
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
       - name: Deploy application (Helm)
         run: |
           helm upgrade --install devops-chatbot helm/devops-chatbot/ \
             --namespace ${{ env.NAMESPACE }} \
             --create-namespace \
             --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
-            --set image.tag=${{ needs.build.outputs.image_tag }} \
-            --set podLabels.gitSha=${{ needs.build.outputs.image_tag }} \
+            --set image.tag=${{ steps.resolve-image.outputs.tag }} \
+            --set podLabels.gitSha=${{ steps.resolve-image.outputs.tag }} \
             --set llm.apiKey=${{ secrets.OPENROUTER_API_KEY }} \
             --set llm.provider=openrouter \
             --set llm.model=mistralai/devstral-2512 \
@@ -581,7 +723,7 @@ jobs:
     name: Post-Deploy Smoke Tests
     runs-on: ubuntu-latest
     needs: deploy
-    if: success()
+    if: needs.deploy.result == 'success'
 
     steps:
       - name: Checkout
