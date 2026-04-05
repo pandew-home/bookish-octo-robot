@@ -13,6 +13,11 @@ on:
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
+      deploy_only:
+        description: 'Skip build and test jobs and run deployment steps only'
+        required: false
+        default: false
+        type: boolean
       skip_deploy:
         description: 'Build only, skip deploy'
         required: false
@@ -139,11 +144,16 @@ jobs:
       image_exists: ${{ steps.image-check.outputs.exists }}
 
     steps:
+      - name: Skip build for deploy-only run
+        if: github.event.inputs.deploy_only == 'true'
+        run: echo "Deploy-only run requested; skipping image build."
+
       - name: Checkout
+        if: github.event.inputs.deploy_only != 'true'
         uses: actions/checkout@v4
 
       - name: Log in to GHCR
-        if: github.event.inputs.image_tag == ''
+        if: github.event.inputs.deploy_only != 'true' && github.event.inputs.image_tag == ''
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -151,7 +161,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Skip build for manual image tag
-        if: github.event.inputs.image_tag != ''
+        if: github.event.inputs.deploy_only != 'true' && github.event.inputs.image_tag != ''
         id: manual-image
         run: |
           echo "Using manually supplied image tag: ${{ github.event.inputs.image_tag }}"
@@ -159,7 +169,7 @@ jobs:
 
       - name: Check for existing image tag
         id: image-check
-        if: github.event.inputs.image_tag == ''
+        if: github.event.inputs.deploy_only != 'true' && github.event.inputs.image_tag == ''
         run: |
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.sha }}"
 
@@ -172,11 +182,11 @@ jobs:
           fi
 
       - name: Set up Docker Buildx
-        if: github.event.inputs.image_tag == '' && needs.detect.outputs.app_image_changed == 'true' && steps.image-check.outputs.exists != 'true'
+        if: github.event.inputs.deploy_only != 'true' && github.event.inputs.image_tag == '' && needs.detect.outputs.app_image_changed == 'true' && steps.image-check.outputs.exists != 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Build and push
-        if: github.event.inputs.image_tag == '' && needs.detect.outputs.app_image_changed == 'true' && steps.image-check.outputs.exists != 'true'
+        if: github.event.inputs.deploy_only != 'true' && github.event.inputs.image_tag == '' && needs.detect.outputs.app_image_changed == 'true' && steps.image-check.outputs.exists != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -192,7 +202,9 @@ jobs:
 
       - name: Report image selection
         run: |
-          if [ "${{ github.event.inputs.image_tag }}" != "" ]; then
+          if [ "${{ github.event.inputs.deploy_only }}" = "true" ]; then
+            echo "Deploy-only run requested; no image build performed"
+          elif [ "${{ github.event.inputs.image_tag }}" != "" ]; then
             echo "Using manually supplied image tag ${{ github.event.inputs.image_tag }}"
           elif [ "${{ needs.detect.outputs.app_image_changed }}" != "true" ]; then
             echo "No image-affecting changes detected; build skipped"
@@ -208,12 +220,18 @@ jobs:
     needs: [detect, build]
 
     steps:
+      - name: Skip tests for deploy-only run
+        if: github.event.inputs.deploy_only == 'true'
+        run: echo "Deploy-only run requested; skipping tests."
+
       - name: Checkout
+        if: github.event.inputs.deploy_only != 'true'
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
       - name: Secret scanning (TruffleHog)
+        if: github.event.inputs.deploy_only != 'true'
         uses: trufflesecurity/trufflehog@main
         with:
           path: ./
@@ -221,7 +239,7 @@ jobs:
           head: HEAD
 
       - name: Setup Python
-        if: needs.detect.outputs.backend_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.backend_changed == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -229,31 +247,31 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Install backend deps
-        if: needs.detect.outputs.backend_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.backend_changed == 'true'
         run: |
           pip install -r backend/requirements.txt
           pip install "httpx<0.28"
 
       - name: Run critical security & auth tests
-        if: needs.detect.outputs.auth_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.auth_changed == 'true'
         run: |
           cd backend
           python -m pytest tests/test_credentials_api.py tests/test_auth_flows.py tests/test_cluster_isolation.py -v --tb=short --no-cov
 
       - name: Run chat API & integration tests
-        if: needs.detect.outputs.chat_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.chat_changed == 'true'
         run: |
           cd backend
           python -m pytest tests/test_chat_api.py -v --tb=short --no-cov
 
       - name: Run all backend tests
-        if: needs.detect.outputs.backend_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.backend_changed == 'true'
         run: |
           cd backend
           python -m pytest --tb=short -q --no-cov
 
       - name: Setup Python for operator libs
-        if: needs.detect.outputs.libs_changed == 'true' && needs.detect.outputs.backend_changed != 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.libs_changed == 'true' && needs.detect.outputs.backend_changed != 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
@@ -261,18 +279,18 @@ jobs:
           cache-dependency-path: backend/requirements.txt
 
       - name: Install operator lib deps
-        if: needs.detect.outputs.libs_changed == 'true' && needs.detect.outputs.backend_changed != 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.libs_changed == 'true' && needs.detect.outputs.backend_changed != 'true'
         run: pip install -r backend/requirements.txt "httpx<0.28"
 
       - name: Run operator lib tests
-        if: needs.detect.outputs.libs_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.libs_changed == 'true'
         run: |
           pip install -e libs/devops-k8s -e libs/devops-kb -e libs/devops-prompts -e libs/devops-rag
           python -m pytest libs/devops-k8s/tests libs/devops-kb/tests libs/devops-prompts/tests libs/devops-rag/tests \
             -v --tb=short -q --no-cov
 
       - name: Setup Node.js
-        if: needs.detect.outputs.frontend_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.frontend_changed == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -280,29 +298,30 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Frontend tests
-        if: needs.detect.outputs.frontend_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.frontend_changed == 'true'
         run: |
           cd frontend
           npm install
           npm test -- --watchAll=false
 
       - name: Setup Helm for chart tests
+        if: github.event.inputs.deploy_only != 'true'
         uses: azure/setup-helm@v4
         with:
           version: '3.14.0'
 
       - name: Run Helm chart tests
-        if: needs.detect.outputs.app_deploy_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.app_deploy_changed == 'true'
         run: |
           pip install pytest pyyaml --quiet
           python -m pytest tests/test_helm_chart.py -v --tb=short
 
       - name: Set up Docker Buildx
-        if: needs.detect.outputs.app_image_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.app_image_changed == 'true'
         uses: docker/setup-buildx-action@v3
 
       - name: Log in to GHCR
-        if: needs.detect.outputs.app_image_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.app_image_changed == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -310,7 +329,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Docker Image Smoke Test
-        if: needs.detect.outputs.app_image_changed == 'true'
+        if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.app_image_changed == 'true'
         run: |
           IMAGE_TAG="${{ needs.build.outputs.image_tag }}"
           IMAGE="${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${IMAGE_TAG}"
@@ -701,6 +720,7 @@ jobs:
             --set ingress.path=/ \
             --set app.apiBaseUrl=/ \
             --set app.publicUrl=/ \
+            --set app.allowedOrigins="http://$(civo kubernetes show ${{ env.CLUSTER_NAME }} -o custom -f DNSEntry 2>/dev/null || echo localhost)" \
             --atomic \
             --wait \
             --timeout=300s
