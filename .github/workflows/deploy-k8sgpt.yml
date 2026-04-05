@@ -92,31 +92,38 @@ jobs:
 
       - name: Apply monitoring stack Helm overrides
         run: |
-          helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
-            -n monitoring --create-namespace --reuse-values \
-            --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
+          if helm status kube-prometheus-stack -n monitoring > /dev/null 2>&1; then
+            helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+              -n monitoring --create-namespace --reuse-values \
+              --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
+          else
+            helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+              -n monitoring --create-namespace \
+              --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
+          fi
           # Loki already deployed in loki namespace - skip upgrade
 
       - name: Register Loki datasource in Grafana via API
         run: |
-          GRAFANA_IP=$(kubectl get svc prometheus-grafana -n monitoring \
-            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          if [ -z "$GRAFANA_IP" ]; then
-            echo "Grafana IP not available, skipping Loki datasource registration"
-            exit 0
-          fi
-          GRAFANA_URL="http://${GRAFANA_IP}"
           GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
             -o jsonpath='{.data.admin-password}' | base64 -d)
+          GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:prometheus-grafana:80/proxy"
+
+          kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
+          PROXY_PID=$!
+          trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
 
           # Wait for Grafana to be reachable
-          for i in $(seq 1 6); do
+          for i in $(seq 1 12); do
             if curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
               break
             fi
             echo "Waiting for Grafana... attempt $i"
             sleep 5
           done
+
+          curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
+            || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log || true; exit 1; }
 
           curl -s -X POST \
             -H "Content-Type: application/json" \
@@ -133,12 +140,13 @@ jobs:
 
       - name: Push dashboard to Grafana via API
         run: |
-          # Get Grafana external IP and admin password
-          GRAFANA_IP=$(kubectl get svc prometheus-grafana -n monitoring \
-            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          GRAFANA_URL="http://${GRAFANA_IP}"
           GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
             -o jsonpath='{.data.admin-password}' | base64 -d)
+          GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:prometheus-grafana:80/proxy"
+
+          kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
+          PROXY_PID=$!
+          trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
 
           # Wait for Grafana to be reachable
           for i in $(seq 1 12); do
@@ -146,6 +154,9 @@ jobs:
             echo "Waiting for Grafana... attempt $i"
             sleep 10
           done
+
+          curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
+            || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log || true; exit 1; }
 
           # Build and push K8sGPT Findings & Fixes dashboard
           python3 scripts/build_grafana_dashboard.py
