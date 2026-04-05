@@ -114,6 +114,8 @@ jobs:
 
       - name: Register Loki datasource in Grafana via API
         run: |
+          PROXY_PID=""
+
           if kubectl get svc -n monitoring kube-prometheus-stack-grafana >/dev/null 2>&1; then
             GRAFANA_SERVICE=kube-prometheus-stack-grafana
             GRAFANA_SECRET=kube-prometheus-stack-grafana
@@ -163,6 +165,22 @@ jobs:
             sleep 5
           done
 
+          if ! curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
+            echo "Ingress/NodePort endpoint unreachable; falling back to kubectl proxy"
+            GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
+            kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
+            PROXY_PID=$!
+            trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
+
+            for i in $(seq 1 12); do
+              if curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
+                break
+              fi
+              echo "Waiting for Grafana via kubectl proxy... attempt $i"
+              sleep 5
+            done
+          fi
+
           curl -sS -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
             || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log 2>/dev/null || true; exit 1; }
 
@@ -191,6 +209,8 @@ jobs:
 
       - name: Push dashboard to Grafana via API
         run: |
+          PROXY_PID=""
+
           if kubectl get svc -n monitoring kube-prometheus-stack-grafana >/dev/null 2>&1; then
             GRAFANA_SERVICE=kube-prometheus-stack-grafana
             GRAFANA_SECRET=kube-prometheus-stack-grafana
@@ -235,6 +255,22 @@ jobs:
             echo "Waiting for Grafana... attempt $i"
             sleep 10
           done
+
+          if ! curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
+            echo "Ingress/NodePort endpoint unreachable; falling back to kubectl proxy"
+            GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
+            kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
+            PROXY_PID=$!
+            trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
+
+            for i in $(seq 1 12); do
+              if curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
+                break
+              fi
+              echo "Waiting for Grafana via kubectl proxy... attempt $i"
+              sleep 5
+            done
+          fi
 
           curl -sS -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
             || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log 2>/dev/null || true; exit 1; }
