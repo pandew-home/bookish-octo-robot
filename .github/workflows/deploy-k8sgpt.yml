@@ -128,8 +128,29 @@ jobs:
             exit 1
           fi
 
-          GRAFANA_PASS=$(kubectl get secret "$GRAFANA_SECRET" -n monitoring \
-            -o jsonpath='{.data.admin-password}' | base64 -d)
+          # Resolve working Grafana credentials from secrets.
+          GRAFANA_USER=""
+          GRAFANA_PASS=""
+
+          try_secret_creds() {
+            local secret_name="$1"
+            local user pass
+
+            user=$(kubectl get secret "$secret_name" -n monitoring -o jsonpath='{.data.admin-user}' 2>/dev/null | base64 -d 2>/dev/null || true)
+            pass=$(kubectl get secret "$secret_name" -n monitoring -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+            if [ -z "$user" ]; then
+              user="admin"
+            fi
+
+            if [ -z "$pass" ]; then
+              return 1
+            fi
+
+            GRAFANA_USER="$user"
+            GRAFANA_PASS="$pass"
+            return 0
+          }
 
           # Construct Grafana URL based on access mode
           if [ "${{ env.GRAFANA_ACCESS_MODE }}" = "ingress-subpath" ]; then
@@ -165,7 +186,7 @@ jobs:
             sleep 5
           done
 
-          if ! curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
+          if ! curl -sf "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
             echo "Ingress/NodePort endpoint unreachable; falling back to kubectl proxy"
             GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
             kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
@@ -181,12 +202,31 @@ jobs:
             done
           fi
 
-          curl -sS -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
+          curl -sS "${GRAFANA_URL}/api/health" > /dev/null \
             || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log 2>/dev/null || true; exit 1; }
+
+          # Find credentials that can access authenticated Grafana API endpoints.
+          CANDIDATE_SECRETS=$(printf "%s\n" "$GRAFANA_SECRET" && kubectl get secrets -n monitoring -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep -E 'grafana' || true)
+          AUTH_OK=false
+          for secret_name in $CANDIDATE_SECRETS; do
+            if try_secret_creds "$secret_name"; then
+              if curl -sf -u "${GRAFANA_USER}:${GRAFANA_PASS}" "${GRAFANA_URL}/api/user" > /dev/null 2>&1; then
+                AUTH_OK=true
+                echo "Using Grafana credentials from secret: ${secret_name}"
+                break
+              fi
+            fi
+          done
+
+          if [ "$AUTH_OK" != "true" ]; then
+            echo "Unable to authenticate to Grafana API with discovered secrets."
+            kubectl get secrets -n monitoring | grep -i grafana || true
+            exit 1
+          fi
 
           DS_CODE=$(curl -sS -o /tmp/grafana-ds-response.json -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
-            -u "admin:${GRAFANA_PASS}" \
+            -u "${GRAFANA_USER}:${GRAFANA_PASS}" \
             -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
             "${GRAFANA_URL}/api/datasources")
 
@@ -195,7 +235,7 @@ jobs:
           else
             DS_PUT_CODE=$(curl -sS -o /tmp/grafana-ds-response.json -w "%{http_code}" -X PUT \
               -H "Content-Type: application/json" \
-              -u "admin:${GRAFANA_PASS}" \
+              -u "${GRAFANA_USER}:${GRAFANA_PASS}" \
               -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
               "${GRAFANA_URL}/api/datasources/uid/loki")
             if [ "$DS_PUT_CODE" != "200" ]; then
@@ -223,8 +263,28 @@ jobs:
             exit 1
           fi
 
-          GRAFANA_PASS=$(kubectl get secret "$GRAFANA_SECRET" -n monitoring \
-            -o jsonpath='{.data.admin-password}' | base64 -d)
+          GRAFANA_USER=""
+          GRAFANA_PASS=""
+
+          try_secret_creds() {
+            local secret_name="$1"
+            local user pass
+
+            user=$(kubectl get secret "$secret_name" -n monitoring -o jsonpath='{.data.admin-user}' 2>/dev/null | base64 -d 2>/dev/null || true)
+            pass=$(kubectl get secret "$secret_name" -n monitoring -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)
+
+            if [ -z "$user" ]; then
+              user="admin"
+            fi
+
+            if [ -z "$pass" ]; then
+              return 1
+            fi
+
+            GRAFANA_USER="$user"
+            GRAFANA_PASS="$pass"
+            return 0
+          }
 
           # Construct Grafana URL (same as datasource registration)
           if [ "${{ env.GRAFANA_ACCESS_MODE }}" = "ingress-subpath" ]; then
@@ -272,15 +332,33 @@ jobs:
             done
           fi
 
-          curl -sS -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
+          curl -sS "${GRAFANA_URL}/api/health" > /dev/null \
             || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log 2>/dev/null || true; exit 1; }
+
+          CANDIDATE_SECRETS=$(printf "%s\n" "$GRAFANA_SECRET" && kubectl get secrets -n monitoring -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep -E 'grafana' || true)
+          AUTH_OK=false
+          for secret_name in $CANDIDATE_SECRETS; do
+            if try_secret_creds "$secret_name"; then
+              if curl -sf -u "${GRAFANA_USER}:${GRAFANA_PASS}" "${GRAFANA_URL}/api/user" > /dev/null 2>&1; then
+                AUTH_OK=true
+                echo "Using Grafana credentials from secret: ${secret_name}"
+                break
+              fi
+            fi
+          done
+
+          if [ "$AUTH_OK" != "true" ]; then
+            echo "Unable to authenticate to Grafana API with discovered secrets."
+            kubectl get secrets -n monitoring | grep -i grafana || true
+            exit 1
+          fi
 
           # Build and push K8sGPT Findings & Fixes dashboard
           python3 scripts/build_grafana_dashboard.py
 
           DASH_CODE=$(curl -sS -o /tmp/grafana-dashboard-response.json -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
-            -u "admin:${GRAFANA_PASS}" \
+            -u "${GRAFANA_USER}:${GRAFANA_PASS}" \
             -d @/tmp/grafana-payload.json \
             "${GRAFANA_URL}/api/dashboards/db")
           if [ "$DASH_CODE" != "200" ]; then
