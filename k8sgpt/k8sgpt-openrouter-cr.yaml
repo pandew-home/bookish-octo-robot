@@ -51,8 +51,5 @@ spec:
     - GatewayClass
     - Gateway
     - HTTPRoute
-  integrations:
-    trivy:
-      enabled: true
-      skipInstall: true
-      namespace: k8sgpt-operator-system
+  # Disabled due to operator panic in AddIntegration path when trivy integration is enabled.
+  integrations: {}
