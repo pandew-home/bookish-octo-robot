@@ -38,6 +38,8 @@ jobs:
           civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
+          chmod 700 ~/.kube || true
+          chmod 600 ~/.kube/config || true
 
       - name: Verify cluster access
         run: kubectl get nodes

@@ -407,9 +407,32 @@ jobs:
           civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
+          chmod 700 ~/.kube || true
+          chmod 600 ~/.kube/config || true
 
       - name: Verify cluster access
         run: kubectl get nodes
+
+      - name: Stabilize Kubernetes API connectivity
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            echo "Kubernetes API connectivity check attempt ${attempt}/5"
+            if kubectl version --request-timeout=20s >/dev/null 2>&1; then
+              echo "Kubernetes API reachable"
+              exit 0
+            fi
+
+            echo "Refreshing kubeconfig from Civo and retrying..."
+            civo kubernetes config ${{ env.CLUSTER_NAME }} --save || true
+            chmod 700 ~/.kube || true
+            chmod 600 ~/.kube/config || true
+            sleep $((attempt * 5))
+          done
+
+          echo "Kubernetes API remained unreachable after retries"
+          kubectl config current-context || true
+          exit 1
 
       - name: Add Helm repos
         run: |
@@ -674,6 +697,8 @@ jobs:
           civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
+          chmod 700 ~/.kube || true
+          chmod 600 ~/.kube/config || true
 
       - name: Verify cluster access
         run: kubectl get nodes
@@ -725,23 +750,44 @@ jobs:
 
       - name: Deploy application (Helm)
         run: |
-          helm upgrade --install devops-chatbot helm/devops-chatbot/ \
-            --namespace ${{ env.NAMESPACE }} \
-            --create-namespace \
-            --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
-            --set image.tag=${{ steps.resolve-image.outputs.tag }} \
-            --set podLabels.gitSha=${{ steps.resolve-image.outputs.tag }} \
-            --set llm.apiKey=${{ secrets.OPENROUTER_API_KEY }} \
-            --set llm.provider=openrouter \
-            --set llm.model=mistralai/devstral-2512 \
-            --set llm.defaultRegion=us-east-1 \
-            --set ingress.path=/ \
-            --set app.apiBaseUrl=/ \
-            --set app.publicUrl=/ \
-            --set app.allowedOrigins="http://$(civo kubernetes show ${{ env.CLUSTER_NAME }} -o custom -f DNSEntry 2>/dev/null || echo localhost)" \
-            --atomic \
-            --wait \
-            --timeout=300s
+          set -euo pipefail
+
+          for attempt in 1 2 3; do
+            echo "Helm deploy attempt ${attempt}/3"
+
+            if helm upgrade --install devops-chatbot helm/devops-chatbot/ \
+              --namespace ${{ env.NAMESPACE }} \
+              --create-namespace \
+              --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
+              --set image.tag=${{ steps.resolve-image.outputs.tag }} \
+              --set podLabels.gitSha=${{ steps.resolve-image.outputs.tag }} \
+              --set llm.apiKey=${{ secrets.OPENROUTER_API_KEY }} \
+              --set llm.provider=openrouter \
+              --set llm.model=mistralai/devstral-2512 \
+              --set llm.defaultRegion=us-east-1 \
+              --set ingress.path=/ \
+              --set app.apiBaseUrl=/ \
+              --set app.publicUrl=/ \
+              --set app.allowedOrigins="http://$(civo kubernetes show ${{ env.CLUSTER_NAME }} -o custom -f DNSEntry 2>/dev/null || echo localhost)" \
+              --atomic \
+              --wait \
+              --timeout=300s; then
+              echo "Helm deploy succeeded"
+              exit 0
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              echo "Helm deploy failed, refreshing kubeconfig before retry"
+              civo kubernetes config ${{ env.CLUSTER_NAME }} --save || true
+              chmod 700 ~/.kube || true
+              chmod 600 ~/.kube/config || true
+              kubectl version --request-timeout=20s || true
+              sleep $((attempt * 10))
+            fi
+          done
+
+          echo "Helm deploy failed after retries"
+          exit 1
 
       - name: Verify deployment
         run: |
@@ -776,6 +822,8 @@ jobs:
           civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
+          chmod 700 ~/.kube || true
+          chmod 600 ~/.kube/config || true
 
       - name: Setup Python for smoke tests
         uses: actions/setup-python@v5
