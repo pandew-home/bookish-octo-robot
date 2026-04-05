@@ -38,6 +38,11 @@ ingress:
   enabled: true
   className: traefik
   host: 17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com
+  # Path configuration for subpath hosting.
+  # Default "/" hosts app at root; override to "/chatbot" for subpath serving.
+  # App and frontend must be aware of the base path via REACT_APP_API_URL and PUBLIC_URL.
+  path: /
+  pathType: Prefix
   # TLS is disabled for test/dev clusters. For production clusters:
   # 1. Set tls.enabled: true
   # 2. Ensure cert-manager ClusterIssuer "letsencrypt-prod" exists
@@ -78,3 +83,14 @@ llm:
   provider: "openrouter"
   model: "mistralai/devstral-2512"
   defaultRegion: "us-east-1"
+
+# Frontend and backend base-path configuration for subpath hosting
+# Set REACT_APP_API_URL so frontend API calls target the correct base path
+# Default: "/" means root path; set to "/chatbot/api" for /chatbot subpath
+app:
+  # Backend API base URL as seen by frontend (for API calls from browser)
+  # Example: "/" for root, "/chatbot/api" for subpath at /chatbot
+  apiBaseUrl: "/"
+  # Frontend PUBLIC_URL for static assets and SPA routing
+  # Example: "/" for root, "/chatbot" for subpath
+  publicUrl: "/"

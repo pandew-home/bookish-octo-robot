@@ -93,6 +93,11 @@ spec:
               value: "true"
             - name: KB_FORCE_RESEED
               value: "false"
+            # Frontend base-path configuration for subpath hosting
+            - name: REACT_APP_API_URL
+              value: {{ .Values.app.apiBaseUrl | quote }}
+            - name: REACT_APP_PUBLIC_URL
+              value: {{ .Values.app.publicUrl | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

@@ -8,9 +8,14 @@ Run against the live public URL to verify real endpoint behaviour:
   - Chat endpoint is reachable and has correct content-type
   - Rate limiting header is present
 
+Supports subpath deployments via BASE_URL parameter:
+  Root deployment:    python tests/smoke_post_deploy.py http://host
+  Subpath deployment: python tests/smoke_post_deploy.py http://host/chatbot
+
 Usage:
     python tests/smoke_post_deploy.py <base_url>
     python tests/smoke_post_deploy.py http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com
+    python tests/smoke_post_deploy.py http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com/chatbot
 """
 import sys
 import json

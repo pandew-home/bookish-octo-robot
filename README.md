@@ -57,13 +57,10 @@ kubectl apply -f k8sgpt/namespace.yaml
 kubectl apply -f k8sgpt/rbac.yaml
 kubectl apply -f k8sgpt/k8sgpt-openrouter-cr.yaml
 
-# Setup Alloy + Grafana integration
-kubectl apply -f k8sgpt/Alloy/alloy-rbac.yaml
-kubectl apply -f k8sgpt/Alloy/loki-datasource-fix.yaml
-kubectl apply -f k8sgpt/Alloy/grafana-nodeport-patch.yaml
-kubectl apply -f k8sgpt/Alloy/alloy-configmap.yaml
-kubectl apply -f k8sgpt/Alloy/alloy-cleanup-cronjob.yaml
-kubectl apply -f k8sgpt/Alloy/grafana-k8sgpt-dashboard.yaml
+# Setup Alloy + Grafana integration (AUTOMATED VIA GITHUB ACTIONS)
+# For manual setup, see k8sgpt/Alloy/ALLOY_INTEGRATION.md
+# Recommendation: Use GitHub Actions workflows instead (deploy-k8sgpt.yml)
+# which handle: Helm chart installation, datasource registration, dashboard import
 ```
 
 See [K8sGPT + Alloy Integration](k8sgpt/Alloy/ALLOY_INTEGRATION.md) for full setup details.
@@ -81,7 +78,7 @@ K8sGPT Operator (per cluster)
     └── Analyzes: Pod, Deployment, Node, HPA, PVC, Service, Ingress
     └── Interval: 2 minutes, noCache: true
 
-Grafana Alloy → Loki → Grafana dashboard (NodePort 30300)
+Grafana Alloy → Loki → Grafana dashboard at http://cluster-host/grafana (Traefik subpath)
 CronJob → deletes Results older than 24h
 ```
 

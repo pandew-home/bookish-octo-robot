@@ -129,6 +129,30 @@ async def readiness_check():
     }
 
 
+@app.get("/api/config")
+async def frontend_config():
+    """
+    Frontend configuration endpoint.
+    
+    Serves runtime environment configuration to the frontend, including base paths
+    for subpath deployment support. This allows the frontend to be built once and
+    deployed to different subpaths without rebuilding.
+    
+    Returns:
+        JSON config with PUBLIC_URL and API_BASE_URL for the frontend
+    """
+    public_url = os.getenv('REACT_APP_PUBLIC_URL', '/')
+    api_base_url = os.getenv('REACT_APP_API_URL', '/api')
+    
+    config = {
+        "publicUrl": public_url,
+        "apiBaseUrl": api_base_url
+    }
+    
+    # Return as JSON that frontend can injected into window.__CONFIG__
+    return config
+
+
 @app.get("/metrics")
 async def metrics():
     """

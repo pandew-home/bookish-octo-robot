@@ -20,8 +20,8 @@ spec:
     - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
-          - path: /
-            pathType: Prefix
+          - path: {{ .Values.ingress.path | quote }}
+            pathType: {{ .Values.ingress.pathType | quote }}
             backend:
               service:
                 name: {{ include "devops-chatbot.name" . }}

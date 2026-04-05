@@ -25,6 +25,12 @@ env:
   CLUSTER_NAME: bookish-octo-robot
   NAMESPACE: devops-chatbot
   OPERATOR_NAMESPACE: k8sgpt-operator-system
+  # Grafana access mode: "ingress-subpath" uses Traefik ingress at /grafana
+  # Other options: "nodeport" (direct NodePort), "proxy" (kubectl port-forward)
+  GRAFANA_ACCESS_MODE: ingress-subpath
+  # Grafana host for Traefik ingress routing (set for ingress-subpath mode)
+  GRAFANA_HOST: 17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com
+  GRAFANA_SUBPATH: /grafana
 
 permissions:
   contents: read
@@ -325,11 +331,13 @@ jobs:
           if helm status kube-prometheus-stack -n monitoring > /dev/null 2>&1; then
             helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
               -n monitoring --create-namespace --reuse-values \
-              --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
+              --values k8sgpt/Alloy/kube-prometheus-stack-values-base.yaml \
+              --values k8sgpt/Alloy/kube-prometheus-stack-values-civo-traefik.yaml
           else
             helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
               -n monitoring --create-namespace \
-              --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
+              --values k8sgpt/Alloy/kube-prometheus-stack-values-base.yaml \
+              --values k8sgpt/Alloy/kube-prometheus-stack-values-civo-traefik.yaml
           fi
           # Loki already deployed in loki namespace - skip upgrade
 
@@ -349,21 +357,30 @@ jobs:
 
           GRAFANA_PASS=$(kubectl get secret "$GRAFANA_SECRET" -n monitoring \
             -o jsonpath='{.data.admin-password}' | base64 -d)
-          SVC_TYPE=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.type}')
-          NODE_PORT=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.ports[0].nodePort}')
-          if [ "$SVC_TYPE" = "NodePort" ] && [ -n "$NODE_PORT" ]; then
-            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
-            if [ -z "$NODE_IP" ]; then
-              NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-            fi
-            GRAFANA_URL="http://${NODE_IP}:${NODE_PORT}"
-            echo "Using Grafana NodePort endpoint: ${GRAFANA_URL}"
+
+          # Construct Grafana URL based on access mode
+          if [ "${{ env.GRAFANA_ACCESS_MODE }}" = "ingress-subpath" ]; then
+            # Traefik ingress at /grafana subpath
+            GRAFANA_URL="http://${{ env.GRAFANA_HOST }}${{ env.GRAFANA_SUBPATH }}"
+            echo "Using Grafana ingress-subpath endpoint: ${GRAFANA_URL}"
           else
-            GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
-            kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
-            PROXY_PID=$!
-            trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
-            echo "Using Grafana API service proxy endpoint"
+            # Fallback to NodePort or kubectl proxy
+            SVC_TYPE=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.type}')
+            NODE_PORT=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.ports[0].nodePort}')
+            if [ "$SVC_TYPE" = "NodePort" ] && [ -n "$NODE_PORT" ]; then
+              NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+              if [ -z "$NODE_IP" ]; then
+                NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+              fi
+              GRAFANA_URL="http://${NODE_IP}:${NODE_PORT}"
+              echo "Using Grafana NodePort endpoint: ${GRAFANA_URL}"
+            else
+              GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
+              kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
+              PROXY_PID=$!
+              trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
+              echo "Using Grafana API service proxy endpoint"
+            fi
           fi
 
           for i in $(seq 1 12); do
@@ -375,7 +392,7 @@ jobs:
           done
 
           curl -sS -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
-            || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log || true; exit 1; }
+            || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log 2>/dev/null || true; exit 1; }
 
           DS_CODE=$(curl -sS -o /tmp/grafana-ds-response.json -w "%{http_code}" -X POST \
             -H "Content-Type: application/json" \
@@ -416,21 +433,28 @@ jobs:
 
           GRAFANA_PASS=$(kubectl get secret "$GRAFANA_SECRET" -n monitoring \
             -o jsonpath='{.data.admin-password}' | base64 -d)
-          SVC_TYPE=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.type}')
-          NODE_PORT=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.ports[0].nodePort}')
-          if [ "$SVC_TYPE" = "NodePort" ] && [ -n "$NODE_PORT" ]; then
-            NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
-            if [ -z "$NODE_IP" ]; then
-              NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
-            fi
-            GRAFANA_URL="http://${NODE_IP}:${NODE_PORT}"
-            echo "Using Grafana NodePort endpoint: ${GRAFANA_URL}"
+
+          # Construct Grafana URL (same as datasource registration)
+          if [ "${{ env.GRAFANA_ACCESS_MODE }}" = "ingress-subpath" ]; then
+            GRAFANA_URL="http://${{ env.GRAFANA_HOST }}${{ env.GRAFANA_SUBPATH }}"
+            echo "Using Grafana ingress-subpath endpoint: ${GRAFANA_URL}"
           else
-            GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
-            kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
-            PROXY_PID=$!
-            trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
-            echo "Using Grafana API service proxy endpoint"
+            SVC_TYPE=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.type}')
+            NODE_PORT=$(kubectl get svc -n monitoring "$GRAFANA_SERVICE" -o jsonpath='{.spec.ports[0].nodePort}')
+            if [ "$SVC_TYPE" = "NodePort" ] && [ -n "$NODE_PORT" ]; then
+              NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="ExternalIP")].address}')
+              if [ -z "$NODE_IP" ]; then
+                NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}')
+              fi
+              GRAFANA_URL="http://${NODE_IP}:${NODE_PORT}"
+              echo "Using Grafana NodePort endpoint: ${GRAFANA_URL}"
+            else
+              GRAFANA_URL="http://127.0.0.1:8001/api/v1/namespaces/monitoring/services/http:${GRAFANA_SERVICE}:80/proxy"
+              kubectl proxy --port=8001 >/tmp/kubectl-proxy.log 2>&1 &
+              PROXY_PID=$!
+              trap 'kill $PROXY_PID >/dev/null 2>&1 || true' EXIT
+              echo "Using Grafana API service proxy endpoint"
+            fi
           fi
 
           for i in $(seq 1 12); do
@@ -440,7 +464,7 @@ jobs:
           done
 
           curl -sS -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null \
-            || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log || true; exit 1; }
+            || { echo "Grafana health probe failed"; cat /tmp/kubectl-proxy.log 2>/dev/null || true; exit 1; }
 
           python3 scripts/build_grafana_dashboard.py
 
@@ -532,6 +556,9 @@ jobs:
             --set llm.provider=openrouter \
             --set llm.model=mistralai/devstral-2512 \
             --set llm.defaultRegion=us-east-1 \
+            --set ingress.path=/ \
+            --set app.apiBaseUrl=/ \
+            --set app.publicUrl=/ \
             --atomic \
             --wait \
             --timeout=300s
