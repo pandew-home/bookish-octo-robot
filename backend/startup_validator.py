@@ -15,6 +15,15 @@ from typing import Tuple, List, Optional
 logger = logging.getLogger(__name__)
 
 
+def get_data_root() -> Path:
+    """Get the root data directory used by startup validation.
+
+    Defaults to /data for cluster deployments, but can be overridden in local
+    development using DATA_ROOT.
+    """
+    return Path(os.getenv("DATA_ROOT", "/data"))
+
+
 class StartupValidator:
     """
     Validates critical configuration and dependencies on startup.
@@ -117,41 +126,40 @@ class StartupValidator:
         - /data is writable
         - Can create test file
         """
-        logger.info("Checking PVC mount at /data...")
-        
-        data_path = Path("/data")
+        data_path = get_data_root()
+        logger.info(f"Checking data directory at {data_path}...")
         
         # Check if directory exists
         if not data_path.exists():
             self.errors.append(
-                "PVC not mounted: /data directory does not exist. "
-                "Ensure PVC is mounted at /data in deployment manifest."
+                f"Data directory not mounted: {data_path} does not exist. "
+                "Set DATA_ROOT for local development or ensure PVC is mounted in deployment."
             )
-            logger.error("✗ /data directory not found")
+            logger.error(f"✗ {data_path} directory not found")
             return
         
-        logger.info("✓ /data directory exists")
+        logger.info(f"✓ {data_path} directory exists")
         
         # Check if directory is writable
         if not os.access(data_path, os.W_OK):
             self.errors.append(
-                "PVC not writable: /data directory exists but is not writable. "
+                f"Data directory not writable: {data_path} exists but is not writable. "
                 "Check volume permissions and security context."
             )
-            logger.error("✗ /data directory not writable")
+            logger.error(f"✗ {data_path} directory not writable")
             return
         
-        logger.info("✓ /data directory is writable")
+        logger.info(f"✓ {data_path} directory is writable")
         
         # Try to create a test file
         test_file = data_path / ".startup_validation_test"
         try:
             test_file.write_text("test")
             test_file.unlink()
-            logger.info("✓ Successfully created and deleted test file in /data")
+            logger.info(f"✓ Successfully created and deleted test file in {data_path}")
         except Exception as e:
             self.errors.append(
-                f"PVC write test failed: Cannot write to /data directory. Error: {str(e)}"
+                f"Data directory write test failed: Cannot write to {data_path}. Error: {str(e)}"
             )
             logger.error(f"✗ Failed to write test file: {e}")
             return
@@ -169,14 +177,14 @@ class StartupValidator:
             if not dir_path.exists():
                 try:
                     dir_path.mkdir(parents=True, exist_ok=True)
-                    logger.info(f"✓ Created directory: /data/{dir_name}")
+                    logger.info(f"✓ Created directory: {data_path / dir_name}")
                 except Exception as e:
                     self.warnings.append(
-                        f"Could not create directory /data/{dir_name}: {str(e)}"
+                        f"Could not create directory {data_path / dir_name}: {str(e)}"
                     )
-                    logger.warning(f"⚠ Failed to create /data/{dir_name}: {e}")
+                    logger.warning(f"⚠ Failed to create {data_path / dir_name}: {e}")
             else:
-                logger.info(f"✓ Directory exists: /data/{dir_name}")
+                logger.info(f"✓ Directory exists: {data_path / dir_name}")
     
     def _validate_prompt_templates(self) -> None:
         """
@@ -196,7 +204,7 @@ class StartupValidator:
         """
         logger.info("Checking FAISS index...")
         
-        faiss_path = Path("/data/faiss_index")
+        faiss_path = Path(os.getenv("FAISS_INDEX_PATH", "/data/faiss_index"))
         
         # Check if FAISS directory exists
         if not faiss_path.exists():
