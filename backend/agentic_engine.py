@@ -20,6 +20,9 @@ MAX_PARALLEL_TOOL_CALLS = 3
 MAX_NO_PROGRESS_ROUNDS = 2
 MAX_DEDUP_ONLY_ROUNDS = 2
 MAX_BLOCKED_ONLY_ROUNDS = 2
+MAX_CONTEXT_TOKENS = 12000
+RECENT_MESSAGES_TO_KEEP = 12
+MAX_COMPACTED_TOOL_RESULTS = 25
 MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 SYSTEM_PROMPT = """You are a Kubernetes troubleshooting assistant with Kubernetes API tool access.
@@ -107,6 +110,14 @@ class AgentEngine:
         result: Dict[str, Any] = {}
         while True:
             rounds += 1
+
+            messages = self._enforce_message_budget(messages)
+            if self._estimate_messages_tokens(messages) > MAX_CONTEXT_TOKENS:
+                stop_reason = "context_budget_exhausted"
+                errors.append(
+                    "Stop condition reached: message context exceeded token budget after compaction."
+                )
+                break
 
             result = await asyncio.to_thread(
                 self.llm_client.generate_with_tools,
@@ -312,6 +323,116 @@ class AgentEngine:
         except Exception:
             normalized = str(args)
         return f"{tool_name}:{normalized}"
+
+    def _estimate_messages_tokens(self, messages: List[Any]) -> int:
+        """Estimate token usage for current message list."""
+        joined = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role", ""))
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                joined.append(f"{role}:{content}")
+            else:
+                joined.append(f"{role}:{json.dumps(content, default=str)}")
+        text = "\n".join(joined)
+
+        count_fn = getattr(self.llm_client, "count_tokens", None)
+        if callable(count_fn):
+            try:
+                return int(count_fn(text))
+            except Exception:
+                pass
+        return max(len(text) // 4, 1) if text else 0
+
+    def _enforce_message_budget(self, messages: List[Any]) -> List[Any]:
+        """Compact older tool results into a single summary block when over budget."""
+        if self._estimate_messages_tokens(messages) <= MAX_CONTEXT_TOKENS:
+            return messages
+
+        if len(messages) <= 3:
+            return messages
+
+        head = messages[:2]
+        tail_count = min(RECENT_MESSAGES_TO_KEEP, max(len(messages) - 2, 1))
+        tail = messages[-tail_count:]
+        middle = messages[2:-tail_count] if len(messages) > 2 + tail_count else []
+
+        summary_lines: List[str] = []
+        compacted_tool_results = 0
+        dropped_messages = 0
+
+        for msg in middle:
+            if not isinstance(msg, dict):
+                dropped_messages += 1
+                continue
+            parsed = self._parse_tool_result_for_summary(msg.get("content", ""))
+            if parsed is None:
+                dropped_messages += 1
+                continue
+            compacted_tool_results += 1
+            if len(summary_lines) < MAX_COMPACTED_TOOL_RESULTS:
+                tool_name, args, result = parsed
+                summary_lines.append(
+                    f"- {tool_name} args={json.dumps(args, default=str)} result={json.dumps(result, default=str)}"
+                )
+
+        if compacted_tool_results == 0 and dropped_messages == 0:
+            return messages
+
+        summary_parts = [
+            "EVIDENCE_SUMMARY",
+            (
+                f"Compacted {compacted_tool_results} tool results and dropped {dropped_messages} older messages "
+                "to stay within token budget."
+            ),
+        ]
+        if summary_lines:
+            summary_parts.append("\n".join(summary_lines))
+
+        summary_message = {
+            "role": "system",
+            "content": "\n".join(summary_parts),
+        }
+
+        rebuilt = head + [summary_message] + tail
+        return rebuilt
+
+    def _parse_tool_result_for_summary(self, content: Any) -> Optional[tuple]:
+        """Parse TOOL_RESULT messages for lightweight evidence compaction."""
+        if not isinstance(content, str):
+            return None
+        if not content.startswith("TOOL_RESULT "):
+            return None
+
+        rest = content[len("TOOL_RESULT "):]
+        first_space = rest.find(" ")
+        if first_space <= 0:
+            return None
+
+        tool_name = rest[:first_space]
+        tail = rest[first_space + 1 :]
+        if not tail.startswith("args="):
+            return None
+
+        split_idx = tail.find(" result=")
+        if split_idx <= len("args="):
+            return None
+
+        args_json = tail[len("args=") : split_idx]
+        result_json = tail[split_idx + len(" result=") :]
+
+        try:
+            args = json.loads(args_json)
+        except Exception:
+            args = {}
+        try:
+            result = json.loads(result_json)
+        except Exception:
+            result = {"raw": result_json}
+
+        return tool_name, args, result
 
     def _get_available_tools(self) -> List[Dict[str, Any]]:
         """Return OpenAI-compatible tool definitions for diagnosis and actions."""

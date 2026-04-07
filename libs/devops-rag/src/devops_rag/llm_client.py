@@ -3,6 +3,7 @@
 import json
 import os
 import re
+from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
 
@@ -246,6 +247,7 @@ class AnthropicClient(LLMClientBase):
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         self._client = None  # Lazy initialization
+        self._pending_tool_uses: List[Dict[str, Any]] = []
 
     @property
     def client(self):
@@ -298,11 +300,15 @@ class AnthropicClient(LLMClientBase):
             for t in tools
         ]
 
+        system_text, anthropic_messages = self._to_anthropic_messages(messages)
+
         kwargs: Dict[str, Any] = {
             "model": self.model,
             "max_tokens": 4096,
-            "messages": messages,
+            "messages": anthropic_messages,
         }
+        if system_text:
+            kwargs["system"] = system_text
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
@@ -314,6 +320,14 @@ class AnthropicClient(LLMClientBase):
         text_blocks = [b for b in response.content if b.type == "text"]
 
         if tool_uses:
+            self._pending_tool_uses = [
+                {
+                    "id": tu.id,
+                    "name": tu.name,
+                    "input": tu.input,
+                }
+                for tu in tool_uses
+            ]
             return {
                 "type": "tool_calls",
                 "tool_calls": [
@@ -322,7 +336,136 @@ class AnthropicClient(LLMClientBase):
                 ],
                 "raw_content": response.content,
             }
+        self._pending_tool_uses = []
         return {"type": "text", "text": text_blocks[0].text if text_blocks else ""}
+
+    def _to_anthropic_messages(self, messages: List[Any]) -> (str, List[Dict[str, Any]]):
+        """Convert engine messages to Anthropic-compatible messages.
+
+        - Folds non-tool system messages into top-level `system`.
+        - Converts `TOOL_RESULT ...` system lines into `tool_result` blocks linked
+          to prior `tool_use` ids from the previous model turn.
+        """
+        system_parts: List[str] = []
+        converted: List[Dict[str, Any]] = []
+
+        tool_use_ids: Dict[str, deque] = defaultdict(deque)
+        for item in self._pending_tool_uses:
+            key = self._tool_signature(item.get("name", ""), item.get("input", {}))
+            tool_use_ids[key].append(str(item.get("id", "")))
+
+        tool_results: List[Dict[str, Any]] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            content = msg.get("content", "")
+
+            if role == "system":
+                parsed = self._parse_tool_result_line(content)
+                if parsed is not None:
+                    tool_name, args, result = parsed
+                    sig = self._tool_signature(tool_name, args)
+                    tool_use_id = tool_use_ids[sig].popleft() if tool_use_ids[sig] else ""
+                    if tool_use_id:
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": json.dumps(result, default=str),
+                            }
+                        )
+                    else:
+                        # Fallback when no matching tool_use id is available.
+                        tool_results.append(
+                            {
+                                "type": "text",
+                                "text": (
+                                    f"UNMATCHED_TOOL_RESULT {tool_name} "
+                                    f"args={json.dumps(args, default=str)} "
+                                    f"result={json.dumps(result, default=str)}"
+                                ),
+                            }
+                        )
+                else:
+                    if isinstance(content, str) and content.strip():
+                        system_parts.append(content)
+                continue
+
+            if role in {"user", "assistant"}:
+                if isinstance(content, str):
+                    converted.append({"role": role, "content": content})
+                elif isinstance(content, list):
+                    converted.append({"role": role, "content": content})
+
+        if tool_results:
+            if self._pending_tool_uses:
+                converted.append(
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": item.get("id", ""),
+                                "name": item.get("name", ""),
+                                "input": item.get("input", {}),
+                            }
+                            for item in self._pending_tool_uses
+                            if item.get("id") and item.get("name")
+                        ],
+                    }
+                )
+            converted.append({"role": "user", "content": tool_results})
+
+        system_text = "\n\n".join(part for part in system_parts if part).strip()
+        return system_text, converted
+
+    def _parse_tool_result_line(self, content: Any) -> Optional[tuple]:
+        """Parse TOOL_RESULT lines emitted by the engine.
+
+        Expected format:
+        TOOL_RESULT <tool_name> args=<json> result=<json>
+        """
+        if not isinstance(content, str):
+            return None
+        if not content.startswith("TOOL_RESULT "):
+            return None
+
+        rest = content[len("TOOL_RESULT "):]
+        first_space = rest.find(" ")
+        if first_space <= 0:
+            return None
+
+        tool_name = rest[:first_space]
+        tail = rest[first_space + 1 :]
+        if not tail.startswith("args="):
+            return None
+
+        split_idx = tail.find(" result=")
+        if split_idx <= len("args="):
+            return None
+
+        args_json = tail[len("args=") : split_idx]
+        result_json = tail[split_idx + len(" result=") :]
+
+        try:
+            args = json.loads(args_json)
+        except Exception:
+            args = {}
+        try:
+            result = json.loads(result_json)
+        except Exception:
+            result = {"raw": result_json}
+
+        return tool_name, args, result
+
+    def _tool_signature(self, name: str, args: Any) -> str:
+        """Build deterministic key for mapping tool_result to tool_use id."""
+        try:
+            norm = json.dumps(args or {}, sort_keys=True, default=str)
+        except Exception:
+            norm = str(args)
+        return f"{name}:{norm}"
 
     def embed(self, text: str) -> list:
         """Generate embedding using Anthropic.
