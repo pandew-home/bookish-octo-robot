@@ -1,11 +1,6 @@
 name: Deploy K8sGPT Operator & Observability
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'k8sgpt/**'
-      - '.github/workflows/deploy-k8sgpt.yml'
   workflow_dispatch:
 
 env:

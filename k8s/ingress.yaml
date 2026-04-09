@@ -1,0 +1,57 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: devops-chatbot
+  namespace: devops-chatbot
+  labels:
+    app: devops-chatbot
+  annotations:
+    # This cluster binds Traefik via annotation. Keep this key present.
+    kubernetes.io/ingress.class: traefik
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+spec:
+  # Intentionally omit ingressClassName for compatibility with current cluster setup.
+  # Adding ingressClassName without a matching IngressClass can lead to public 404s.
+  rules:
+  # Keep this host aligned with helm/devops-chatbot/values.yaml ingress.host.
+  - host: e11d21c7-ff38-487c-8da0-f8b9e51206c3.k8s.civo.com
+    http:
+      paths:
+      # Chatbot is served under /devops-chat to avoid host-root collisions.
+      - path: /devops-chat
+        pathType: Prefix
+        backend:
+          service:
+            name: devops-chatbot
+            port:
+              number: 80
+      # Root-built frontend bundle and backend API currently use root paths.
+      # Keep these passthrough routes to avoid subpath regressions.
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: devops-chatbot
+            port:
+              number: 80
+      - path: /static
+        pathType: Prefix
+        backend:
+          service:
+            name: devops-chatbot
+            port:
+              number: 80
+      - path: /favicon.ico
+        pathType: Prefix
+        backend:
+          service:
+            name: devops-chatbot
+            port:
+              number: 80
+      - path: /manifest.json
+        pathType: Prefix
+        backend:
+          service:
+            name: devops-chatbot
+            port:
+              number: 80

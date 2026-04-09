@@ -87,6 +87,7 @@ CronJob → deletes Results older than 24h
 - [Architecture](docs/architecture.md)
 - [Development](docs/development.md)
 - [Deployment](docs/deployment.md)
+- [Flux GitOps Setup](docs/flux-gitops.md)
 - [K8sGPT Setup](docs/k8sgpt-setup.md)
 - [K8sGPT + Alloy Integration](k8sgpt/Alloy/ALLOY_INTEGRATION.md)
 - [Security](docs/security.md)

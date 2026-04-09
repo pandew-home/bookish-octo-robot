@@ -13,6 +13,11 @@ on:
       - '.github/workflows/deploy.yml'
   workflow_dispatch:
     inputs:
+      direct_deploy:
+        description: 'Enable direct kubectl/helm deploy jobs (deprecated after Flux migration)'
+        required: false
+        default: false
+        type: boolean
       deploy_only:
         description: 'Skip build and test jobs and run deployment steps only'
         required: false
@@ -385,7 +390,7 @@ jobs:
     name: Deploy K8sGPT Operator
     runs-on: ubuntu-latest
     needs: [detect, test]
-    if: success() && github.event.inputs.skip_deploy != 'true' && github.event.inputs.deploy_only != 'true' && needs.detect.outputs.operator_changed == 'true'
+    if: success() && github.event.inputs.direct_deploy == 'true' && github.event.inputs.skip_deploy != 'true' && github.event.inputs.deploy_only != 'true' && needs.detect.outputs.operator_changed == 'true'
     environment: production
 
     steps:
@@ -758,7 +763,7 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     needs: [detect, build, test]
-    if: success() && github.event.inputs.skip_deploy != 'true' && (needs.detect.outputs.app_deploy_changed == 'true' || github.event.inputs.image_tag != '')
+    if: success() && github.event.inputs.direct_deploy == 'true' && github.event.inputs.skip_deploy != 'true' && (needs.detect.outputs.app_deploy_changed == 'true' || github.event.inputs.image_tag != '')
     environment: production
 
     steps:
@@ -990,7 +995,7 @@ jobs:
     name: Post-Deploy Smoke Tests
     runs-on: ubuntu-latest
     needs: deploy
-    if: needs.deploy.result == 'success'
+    if: github.event.inputs.direct_deploy == 'true' && needs.deploy.result == 'success'
 
     steps:
       - name: Checkout

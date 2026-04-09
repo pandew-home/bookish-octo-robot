@@ -97,6 +97,7 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
         # Step 2: Get in-cluster K8s client
         k8s_client = get_k8s_client()
         k8s_clients = k8s_client.get_clients()
+        cluster_version = k8s_client.get_cluster_version()
         logger.info("[STEP_2] ✓ K8s client ready")
 
         # Step 3: Read K8sGPT Result CRDs
@@ -119,6 +120,9 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             llm_client=rag.llm_client,
             k8sgpt_results=k8sgpt_results,
             kb_results=kb_results,
+            k8s_clients=k8s_clients,
+            kb_search_func=rag.search_knowledge_base,
+            cluster_version=cluster_version,
         )
         rag_response = await agent.run(query=request.query)
         logger.info(f"[STEP_5] ✓ Agent done: {len(rag_response['response'])} chars")

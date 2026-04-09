@@ -7,6 +7,8 @@ import App from './App';
 // This allows subpath deployment configuration (PUBLIC_URL, API_BASE_URL)
 // to be injected at runtime rather than build time
 async function initializeApp() {
+  const fallbackApiBaseUrl = process.env.REACT_APP_API_URL || '/api';
+
   try {
     // Fetch frontend config from backend
     const configResponse = await fetch('/api/config', {
@@ -25,7 +27,7 @@ async function initializeApp() {
       console.warn('Failed to load frontend config, using defaults');
       (window as any).__CONFIG__ = {
         publicUrl: '/',
-        apiBaseUrl: '/api'
+        apiBaseUrl: fallbackApiBaseUrl
       };
     }
   } catch (error) {
@@ -33,7 +35,7 @@ async function initializeApp() {
     // Fallback to defaults if config endpoint is unavailable
     (window as any).__CONFIG__ = {
       publicUrl: '/',
-      apiBaseUrl: '/api'
+      apiBaseUrl: fallbackApiBaseUrl
     };
   }
   
