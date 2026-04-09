@@ -3,3 +3,5 @@ kind: Kustomization
 resources:
   - ../../../infrastructure/sources/bookish-octo-robot-gitrepository.yaml
   - ../../../infrastructure/kustomizations/devops-chatbot-kustomization.yaml
+  - ../../../infrastructure/kustomizations/k8sgpt-operator-kustomization.yaml
+  - ../../../infrastructure/kustomizations/k8sgpt-instance-kustomization.yaml
