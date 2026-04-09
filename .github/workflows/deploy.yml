@@ -471,12 +471,56 @@ jobs:
 
       - name: Deploy K8sGPT operator (Helm)
         run: |
-          helm upgrade --install k8sgpt-operator k8sgpt-operator/k8sgpt-operator \
-            -n ${{ env.OPERATOR_NAMESPACE }} \
-            --version 0.2.27 \
-            --values k8sgpt/helm-values.yaml \
-            --wait \
-            --timeout=120s
+          set -euo pipefail
+
+          wait_for_cluster() {
+            local max_attempts=${1:-6}
+            local sleep_seconds=${2:-10}
+            for i in $(seq 1 "$max_attempts"); do
+              if kubectl version --request-timeout=20s >/dev/null 2>&1; then
+                echo "Kubernetes API reachable"
+                return 0
+              fi
+              echo "Kubernetes API not reachable (attempt ${i}/${max_attempts}); refreshing kubeconfig"
+              civo kubernetes config ${{ env.CLUSTER_NAME }} --save || true
+              chmod 700 ~/.kube || true
+              chmod 600 ~/.kube/config || true
+              sleep "$sleep_seconds"
+            done
+            return 1
+          }
+
+          for attempt in 1 2 3; do
+            echo "K8sGPT operator Helm attempt ${attempt}/3"
+
+            if ! wait_for_cluster 6 10; then
+              echo "Cluster API remained unreachable before operator deploy attempt ${attempt}"
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 15))
+                continue
+              fi
+              echo "K8sGPT operator deploy failed after retries"
+              exit 1
+            fi
+
+            if HELM_BURST_LIMIT=200 helm upgrade --install k8sgpt-operator k8sgpt-operator/k8sgpt-operator \
+              -n ${{ env.OPERATOR_NAMESPACE }} \
+              --version 0.2.27 \
+              --values k8sgpt/helm-values.yaml \
+              --wait \
+              --timeout=300s; then
+              echo "K8sGPT operator deploy succeeded"
+              break
+            fi
+
+            if [ "$attempt" -lt 3 ]; then
+              echo "K8sGPT operator deploy failed; retrying after cooldown"
+              sleep $((attempt * 20))
+            else
+              echo "K8sGPT operator deploy failed after retries"
+              exit 1
+            fi
+          done
 
       - name: Apply custom RBAC and K8sGPT CR
         run: |
@@ -862,12 +906,39 @@ jobs:
             fi
           }
 
+          wait_for_cluster() {
+            local max_attempts=${1:-6}
+            local sleep_seconds=${2:-10}
+            for i in $(seq 1 "$max_attempts"); do
+              if kubectl version --request-timeout=20s >/dev/null 2>&1; then
+                echo "Kubernetes API reachable"
+                return 0
+              fi
+              echo "Kubernetes API not reachable (attempt ${i}/${max_attempts}); refreshing kubeconfig"
+              civo kubernetes config ${{ env.CLUSTER_NAME }} --save || true
+              chmod 700 ~/.kube || true
+              chmod 600 ~/.kube/config || true
+              sleep "$sleep_seconds"
+            done
+            return 1
+          }
+
           for attempt in 1 2 3; do
             echo "Helm deploy attempt ${attempt}/3"
 
+            if ! wait_for_cluster 6 10; then
+              echo "Cluster API remained unreachable before app deploy attempt ${attempt}"
+              if [ "$attempt" -lt 3 ]; then
+                sleep $((attempt * 15))
+                continue
+              fi
+              echo "Helm deploy failed after retries"
+              exit 1
+            fi
+
             clear_pending_lock
 
-            if helm upgrade --install devops-chatbot helm/devops-chatbot/ \
+            if HELM_BURST_LIMIT=200 helm upgrade --install devops-chatbot helm/devops-chatbot/ \
               --namespace ${{ env.NAMESPACE }} \
               --create-namespace \
               --set image.repository=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }} \
@@ -883,7 +954,7 @@ jobs:
               --set app.allowedOrigins="http://$(civo kubernetes show ${{ env.CLUSTER_NAME }} -o custom -f DNSEntry 2>/dev/null || echo localhost)" \
               --atomic \
               --wait \
-              --timeout=300s; then
+              --timeout=600s; then
               echo "Helm deploy succeeded"
               exit 0
             fi
