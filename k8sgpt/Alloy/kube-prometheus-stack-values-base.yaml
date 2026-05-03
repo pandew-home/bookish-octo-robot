@@ -4,6 +4,14 @@
 # Applied with: helm upgrade kube-prometheus-stack ... --values base.yaml --values <cluster-override>.yaml
 
 grafana:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
   # Service exposure mode is cluster-specific; see cluster-override values
   # Datasource configuration is shared and applies to all ingress modes (NodePort, Traefik, etc.)
   additionalDataSources:
@@ -40,7 +48,14 @@ grafana:
 
 prometheus:
   prometheusSpec:
-    retention: 15d
+    retention: 2d
+    resources:
+      requests:
+        cpu: 100m
+        memory: 512Mi
+      limits:
+        cpu: 500m
+        memory: 1Gi
     storageSpec:
       volumeClaimTemplate:
         spec:
@@ -54,3 +69,40 @@ loki:
   # This values file assumes Loki is already running at loki.loki.svc.cluster.local:3100
   # via Helm: helm install loki grafana/loki-stack ...
   enabled: false
+
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+alertmanager:
+  alertmanagerSpec:
+    resources:
+      requests:
+        cpu: 25m
+        memory: 64Mi
+      limits:
+        cpu: 100m
+        memory: 128Mi
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 100m
+      memory: 128Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 20m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi

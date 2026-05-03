@@ -38,6 +38,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
   CLUSTER_NAME: bookish-octo-robot
+  CIVO_REGION: NYC1
   NAMESPACE: devops-chatbot
   OPERATOR_NAMESPACE: k8sgpt-operator-system
   # Grafana access mode: "ingress-subpath" uses Traefik ingress at /grafana
@@ -411,6 +412,7 @@ jobs:
         run: |
           civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
+          civo region current ${{ env.CIVO_REGION }}
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
           chmod 700 ~/.kube || true
           chmod 600 ~/.kube/config || true
@@ -789,6 +791,7 @@ jobs:
         run: |
           civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
+          civo region current ${{ env.CIVO_REGION }}
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
           chmod 700 ~/.kube || true
           chmod 600 ~/.kube/config || true
@@ -1009,6 +1012,7 @@ jobs:
         run: |
           civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
+          civo region current ${{ env.CIVO_REGION }}
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
           chmod 700 ~/.kube || true
           chmod 600 ~/.kube/config || true

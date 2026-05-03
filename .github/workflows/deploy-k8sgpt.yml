@@ -5,6 +5,7 @@ on:
 
 env:
   CLUSTER_NAME: bookish-octo-robot
+  CIVO_REGION: NYC1
   # Grafana access mode: "ingress-subpath" uses Traefik ingress at /grafana
   # Other options: "nodeport" (direct NodePort), "proxy" (kubectl port-forward)
   GRAFANA_ACCESS_MODE: ingress-subpath
@@ -32,6 +33,7 @@ jobs:
         run: |
           civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
           civo apikey current deploy-key
+          civo region current ${{ env.CIVO_REGION }}
           civo kubernetes config ${{ env.CLUSTER_NAME }} --save
           chmod 700 ~/.kube || true
           chmod 600 ~/.kube/config || true

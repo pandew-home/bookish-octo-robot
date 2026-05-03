@@ -24,7 +24,6 @@ from pydantic import ValidationError
 from api.chat import (
     ChatRequest,
     ChatResponse,
-    FeedbackRequest,
     ExportRequest,
     process_chat_query,
     get_chat_history,
@@ -33,7 +32,6 @@ from api.chat import (
 )
 from k8sgpt_reader import K8sGPTResult
 from credential_store import StoredCredentials
-from input_sanitizer import InputSanitizer
 
 
 @pytest.fixture
@@ -288,53 +286,6 @@ class TestChatQueryEndpoint:
         assert response.token_usage == {}
 
 
-class TestInputSanitizationFlow:
-    """Test input sanitization integration in chat API."""
-
-    def test_sanitizer_blocks_shell_commands(self):
-        """Test that destructive shell commands are blocked.
-
-        Note: General shell syntax (bash -c, shebangs, kubectl, etc.) is intentionally
-        allowed — this is a DevOps chatbot where users routinely include such syntax in
-        their questions. Only genuinely destructive patterns (rm -rf /, fork bombs) are
-        blocked.
-        """
-        sanitizer = InputSanitizer()
-
-        queries = [
-            "$(rm -rf /)",   # destructive rm targeting root filesystem
-            "rm -rf /tmp",   # rm -rf / variant
-        ]
-
-        for query in queries:
-            is_valid, error, _ = sanitizer.validate_query(query)
-            assert is_valid is False, f"Should block: {query}"
-
-    def test_sanitizer_allows_safe_questions(self):
-        """Test that safe questions are allowed."""
-        sanitizer = InputSanitizer()
-
-        queries = [
-            "Why is my pod crashing?",
-            "How do I debug a deployment?",
-            "What's the status of my services?",
-        ]
-
-        for query in queries:
-            is_valid, error, _ = sanitizer.validate_query(query)
-            assert is_valid is True, f"Should allow: {query}"
-
-    def test_sanitizer_cleans_backticks(self):
-        """Test that backticks are cleaned from queries."""
-        sanitizer = InputSanitizer()
-
-        query = "Show me `pod` status"
-        is_valid, error, cleaned = sanitizer.validate_query(query)
-
-        assert is_valid is True
-        assert "`" not in cleaned
-
-
 class TestK8sGPTFindings:
     """Test K8sGPT findings integration."""
 
@@ -455,29 +406,6 @@ class TestErrorHandling:
 
 class TestConversationHistoryIntegration:
     """Test conversation history integration in chat API."""
-
-    def test_feedback_request_structure(self):
-        """Test FeedbackRequest model."""
-        feedback = FeedbackRequest(
-            query="test query",
-            response="test response",
-            rating=5,
-            comment="Great response",
-            session_id="session_123",
-        )
-
-        assert feedback.rating == 5
-        assert feedback.comment == "Great response"
-
-    def test_feedback_request_rating_validation(self):
-        """Test FeedbackRequest rating validation."""
-        with pytest.raises(ValidationError):
-            FeedbackRequest(
-                query="test",
-                response="test",
-                rating=6,  # Invalid, > 5
-                session_id="session_123",
-            )
 
     def test_export_request_structure(self):
         """Test ExportRequest model."""

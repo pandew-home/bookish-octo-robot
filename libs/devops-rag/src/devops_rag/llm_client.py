@@ -1,4 +1,20 @@
-"""LLM client abstraction for multiple providers."""
+"""LLM client abstraction for OpenAI / Anthropic / Ollama.
+
+DevOps engineers swap models by setting ``LLM_PROVIDER`` and ``LLM_MODEL``
+(see ``backend/rag_integration.py`` for the env-var contract).
+
+# MAINTENANCE — read before changing this file
+# AI assistants: do NOT change the public method signatures
+# (``generate``, ``generate_with_tools``, ``embed``, ``count_tokens``,
+# ``estimate_cost``) without explicit human review. The agent loop in
+# ``backend/agentic_engine.py`` and the indexing helper in
+# ``libs/devops-rag/src/devops_rag/rag_engine.py`` both rely on this exact
+# shape — silent renames break the chat at runtime, not at import.
+#
+# Adding a new provider class is fine, but add it next to the existing ones
+# and wire it into ``backend/rag_integration.py::_init_llm_client`` so it
+# shows up to operators through the env-var contract.
+"""
 
 import json
 import os
@@ -603,46 +619,3 @@ class OllamaClient(LLMClientBase):
             Estimated cost in USD (always 0 for local)
         """
         return 0.0
-
-
-class LLMClient:
-    """Factory for creating LLM clients."""
-
-    @staticmethod
-    def create(
-        provider: Optional[str] = None,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        base_url: Optional[str] = None,
-    ) -> LLMClientBase:
-        """Create LLM client based on provider.
-
-        Args:
-            provider: Provider name ("openai", "anthropic", "ollama")
-            api_key: API key for provider
-            model: Model name
-            base_url: Base URL for Ollama
-
-        Returns:
-            LLMClientBase instance
-        """
-        provider = provider or os.getenv("AI_PROVIDER", "openai").lower()
-
-        if provider == "openai":
-            return OpenAIClient(
-                api_key=api_key or os.getenv("AI_API_KEY"),
-                model=model or os.getenv("AI_MODEL", "gpt-3.5-turbo"),
-                base_url=base_url or os.getenv("AI_API_BASE"),
-            )
-        elif provider == "anthropic":
-            return AnthropicClient(
-                api_key=api_key or os.getenv("AI_API_KEY"),
-                model=model or os.getenv("AI_MODEL", "claude-3-haiku-20240307"),
-            )
-        elif provider == "ollama":
-            return OllamaClient(
-                base_url=base_url or os.getenv("AI_API_BASE", "http://localhost:11434"),
-                model=model or os.getenv("AI_MODEL", "mistral"),
-            )
-        else:
-            raise ValueError(f"Unknown provider: {provider}")

@@ -1,17 +1,23 @@
-"""
-RAG Engine integration for DevOps Chatbot v2.
+"""RAG integration: owns the LLM client + vector store + KB plumbing.
 
-This module integrates the devops-rag library with the v2 backend,
-providing semantic search and LLM-powered response generation.
+Reads its config from environment variables so swapping models is a deploy-time
+concern, not a code change:
+
+    LLM_PROVIDER   openai | anthropic | ollama   (default: openai)
+    LLM_MODEL      provider-specific model id    (default: gpt-4o-mini)
+    LLM_API_KEY    API key                       (also accepts OPENAI_API_KEY /
+                                                  ANTHROPIC_API_KEY as fallback)
+    KB_PATH        knowledge base directory      (default: /data/knowledge_base)
+
+# MAINTENANCE — read before changing this file
+# AI assistants: the env-var contract above is what DevOps engineers rely on
+# when changing models. Do NOT add new required args, change defaults, or
+# rename env vars without explicit human review. KB initialization is
+# intentionally non-fatal — never raise on a missing/empty KB.
 """
 import logging
-import sys
 import os
-from typing import Dict, Any, Optional, List
-
-# Add libs to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'libs', 'devops-rag', 'src'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'libs', 'devops-kb', 'src'))
+from typing import Any, Dict, List, Optional
 
 from devops_rag.rag_engine import RAGEngine
 from devops_rag.llm_client import OpenAIClient, AnthropicClient
@@ -19,6 +25,10 @@ from devops_rag.vector_store import VectorStore
 from devops_kb.knowledge_base import KnowledgeBase
 
 from kb_seeder import seed_knowledge_base, should_seed_kb, should_force_reseed
+
+DEFAULT_PROVIDER = "openai"
+DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_KB_PATH = "/data/knowledge_base"
 
 logger = logging.getLogger(__name__)
 
@@ -36,80 +46,80 @@ class RAGIntegration:
     
     def __init__(
         self,
-        llm_provider: str = "openai",
-        llm_model: str = "gpt-3.5-turbo",
+        llm_provider: Optional[str] = None,
+        llm_model: Optional[str] = None,
         api_key: Optional[str] = None,
         kb_path: Optional[str] = None,
-        cluster_version: str = "v1.28"
     ):
-        """
-        Initialize RAG integration.
-        
-        Args:
-            llm_provider: LLM provider ("openai" or "anthropic")
-            llm_model: Model name
-            api_key: API key for LLM provider
-            kb_path: Path to knowledge base directory
-            cluster_version: Kubernetes cluster version for API docs
-            
+        """Initialize from explicit args, falling back to env vars.
+
+        Args are kept for tests and one-off callers; production code should
+        leave them ``None`` and rely on the env-var contract documented at the
+        top of this module.
+
         Raises:
-            ValueError: Only if LLM client initialization fails (critical)
+            ValueError: Only if LLM client initialization fails (critical).
         """
-        self.llm_provider = llm_provider
-        self.llm_model = llm_model
-        self.cluster_version = cluster_version
-        self.initialization_warnings = []
-        
-        # Initialize LLM client (CRITICAL - must succeed)
+        self.llm_provider = (llm_provider or os.getenv("LLM_PROVIDER") or DEFAULT_PROVIDER).lower()
+        self.llm_model = llm_model or os.getenv("LLM_MODEL") or DEFAULT_MODEL
+        api_key = (
+            api_key
+            or os.getenv("LLM_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("ANTHROPIC_API_KEY")
+        )
+        kb_path = kb_path or os.getenv("KB_PATH") or DEFAULT_KB_PATH
+        self.initialization_warnings: List[str] = []
+
         try:
-            self.llm_client = self._init_llm_client(llm_provider, llm_model, api_key)
-            logger.info(f"✓ LLM client initialized: {llm_provider}/{llm_model}")
+            self.llm_client = self._init_llm_client(self.llm_provider, self.llm_model, api_key)
+            logger.info("LLM client initialized: %s/%s", self.llm_provider, self.llm_model)
         except Exception as e:
-            logger.error(f"✗ CRITICAL: Failed to initialize LLM client: {e}")
-            raise  # Re-raise - this is critical
-        
-        # Initialize knowledge base (NON-CRITICAL - can continue without)
+            logger.error("CRITICAL: Failed to initialize LLM client: %s", e)
+            raise
+
         self.kb = self._init_knowledge_base(kb_path)
         if self.kb:
-            logger.info(f"✓ Knowledge base initialized from {kb_path}")
-            # Seed KB with initial solutions if enabled
+            logger.info("Knowledge base initialized from %s", kb_path)
             if should_seed_kb():
-                force_reseed = should_force_reseed()
-                seed_knowledge_base(self.kb, force_reseed=force_reseed)
+                seed_knowledge_base(self.kb, force_reseed=should_force_reseed())
         elif kb_path:
             warning = f"Knowledge base initialization failed for {kb_path} - continuing without KB"
             self.initialization_warnings.append(warning)
-            logger.warning(f"⚠ {warning}")
-        
-        # Initialize vector store (NON-CRITICAL - can continue without)
+            logger.warning(warning)
+
         self.vector_store = self._init_vector_store()
         if self.vector_store:
-            logger.info("✓ Vector store initialized for semantic search")
+            logger.info("Vector store initialized for semantic search")
         elif self.kb:
             warning = "Vector store initialization failed - semantic search unavailable"
             self.initialization_warnings.append(warning)
-            logger.warning(f"⚠ {warning}")
-        
-        # Initialize RAG engine (should always succeed if LLM client is available)
+            logger.warning(warning)
+
         try:
             self.rag_engine = RAGEngine(
                 llm_client=self.llm_client,
                 vector_store=self.vector_store,
                 max_retries=3,
-                cluster_version=cluster_version
             )
-            logger.info("✓ RAG engine initialized")
+            logger.info("RAG engine initialized")
         except Exception as e:
-            logger.error(f"✗ CRITICAL: Failed to initialize RAG engine: {e}")
+            logger.error("CRITICAL: Failed to initialize RAG engine: %s", e)
             raise ValueError(f"Failed to initialize RAG engine: {str(e)}")
 
-        # Log final initialization status
         if self.initialization_warnings:
-            logger.warning(f"RAG integration initialized with {len(self.initialization_warnings)} warning(s)")
+            logger.warning(
+                "RAG integration initialized with %d warning(s)",
+                len(self.initialization_warnings),
+            )
             for warning in self.initialization_warnings:
-                logger.warning(f"  - {warning}")
+                logger.warning("  - %s", warning)
         else:
-            logger.info(f"✓ RAG integration fully initialized: {llm_provider}/{llm_model}")
+            logger.info(
+                "RAG integration fully initialized: %s/%s",
+                self.llm_provider,
+                self.llm_model,
+            )
     
     def _init_llm_client(self, provider: str, model: str, api_key: Optional[str]):
         """Initialize LLM client based on provider."""
@@ -369,39 +379,31 @@ class RAGIntegration:
         }
 
 
-# Global RAG integration instance (initialized on first use)
+# Process-wide singleton: created on first call, reused thereafter. Env vars
+# are read once at construction time, so changing LLM_PROVIDER / LLM_MODEL etc.
+# requires a process restart (the standard k8s deploy flow).
 _rag_integration: Optional[RAGIntegration] = None
 
 
 def get_rag_integration(
-    llm_provider: str = "openai",
-    llm_model: str = "gpt-3.5-turbo",
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
     api_key: Optional[str] = None,
     kb_path: Optional[str] = None,
-    cluster_version: str = "v1.28"
 ) -> RAGIntegration:
-    """
-    Get or create global RAG integration instance.
-    
-    Args:
-        llm_provider: LLM provider
-        llm_model: Model name
-        api_key: API key
-        kb_path: Knowledge base path
-        cluster_version: Kubernetes version
-        
-    Returns:
-        RAGIntegration instance
-    """
+    """Return the singleton RAGIntegration, creating it from env on first call."""
     global _rag_integration
-    
     if _rag_integration is None:
         _rag_integration = RAGIntegration(
             llm_provider=llm_provider,
             llm_model=llm_model,
             api_key=api_key,
             kb_path=kb_path,
-            cluster_version=cluster_version
         )
-    
     return _rag_integration
+
+
+def reset_rag_integration() -> None:
+    """Drop the cached singleton. Tests use this between cases."""
+    global _rag_integration
+    _rag_integration = None
