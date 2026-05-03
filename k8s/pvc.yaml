@@ -7,8 +7,8 @@ metadata:
     app: devops-chatbot
 spec:
   accessModes:
-  - ReadWriteMany
+  - ReadWriteOnce
   resources:
     requests:
-      storage: 20Gi
-  storageClassName: longhorn
+      storage: 25Gi
+  storageClassName: civo-volume

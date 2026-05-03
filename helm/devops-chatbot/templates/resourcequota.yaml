@@ -1,0 +1,22 @@
+{{- if .Values.resourceQuota.enabled }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "devops-chatbot.name" . }}-quota
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "devops-chatbot.labels" . | nindent 4 }}
+    app: devops-chatbot
+spec:
+  hard:
+    requests.cpu: {{ .Values.resourceQuota.hardRequestsCpu | quote }}
+    limits.cpu: {{ .Values.resourceQuota.hardLimitsCpu | quote }}
+    requests.memory: {{ .Values.resourceQuota.hardRequestsMemory | quote }}
+    limits.memory: {{ .Values.resourceQuota.hardLimitsMemory | quote }}
+    persistentvolumeclaims: {{ .Values.resourceQuota.persistentVolumeClaims | quote }}
+    requests.storage: {{ .Values.resourceQuota.requestsStorage | quote }}
+    pods: {{ .Values.resourceQuota.pods | quote }}
+    services: {{ .Values.resourceQuota.services | quote }}
+    secrets: {{ .Values.resourceQuota.secrets | quote }}
+    configmaps: {{ .Values.resourceQuota.configmaps | quote }}
+{{- end }}

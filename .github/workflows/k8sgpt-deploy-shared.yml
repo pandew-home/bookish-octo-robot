@@ -1,0 +1,192 @@
+name: K8sGPT Operator & Observability (shared)
+# Reusable workflow called by deploy-k8sgpt.yml and deploy.yml.
+# Handles the full K8sGPT operator + Alloy + Grafana deployment lifecycle.
+
+on:
+  workflow_call:
+    inputs:
+      cluster_name:
+        required: true
+        type: string
+      civo_region:
+        required: false
+        type: string
+        default: NYC1
+      operator_namespace:
+        required: false
+        type: string
+        default: k8sgpt-operator-system
+      grafana_access_mode:
+        required: false
+        type: string
+        default: ingress-subpath
+      grafana_host:
+        required: false
+        type: string
+        default: ''
+      grafana_subpath:
+        required: false
+        type: string
+        default: /grafana
+    secrets:
+      civo_api_key:
+        required: true
+      openrouter_api_key:
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy K8sGPT & Observability
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: '3.20.2'
+
+      - name: Setup Civo + kubectl
+        uses: ./.github/actions/setup-civo-k8s
+        with:
+          civo_api_key: ${{ secrets.civo_api_key }}
+          cluster_name: ${{ inputs.cluster_name }}
+          civo_region: ${{ inputs.civo_region }}
+
+      - name: Stabilize Kubernetes API connectivity
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5; do
+            echo "Kubernetes API check attempt ${attempt}/5"
+            if kubectl version --request-timeout=20s >/dev/null 2>&1; then
+              echo "Kubernetes API reachable"
+              exit 0
+            fi
+            echo "Refreshing kubeconfig and retrying..."
+            civo kubernetes config "${{ inputs.cluster_name }}" --save || true
+            chmod 700 ~/.kube || true
+            chmod 600 ~/.kube/config || true
+            sleep $((attempt * 5))
+          done
+          echo "Kubernetes API remained unreachable after retries"
+          exit 1
+
+      - name: Add Helm repos
+        run: |
+          set -euo pipefail
+          helm repo add k8sgpt-operator https://charts.k8sgpt.ai/
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+      - name: Validate K8sGPT and Alloy safety config
+        run: |
+          set -euo pipefail
+          # Operator v0.2.27 panics in AddIntegration when spec.integrations is present.
+          # Remove this check once upstream fix is confirmed in a newer release.
+          if grep -En '^[[:space:]]*integrations:' k8sgpt/k8sgpt-openrouter-cr.yaml; then
+            echo "ERROR: k8sgpt-openrouter-cr.yaml must not define spec.integrations (operator AddIntegration panic)."
+            exit 1
+          fi
+          # Loki ingestion is CR-only via result-scraper; block direct pod log scraping.
+          if grep -En 'k8sgpt_pods|loki\.source\.kubernetes|k8sgpt_results|source[[:space:]]*=[[:space:]]*"k8sgpt"' k8sgpt/Alloy/alloy-values.yaml; then
+            echo "ERROR: alloy-values.yaml must remain CR-only ingestion (no direct operator pod log scraping)."
+            exit 1
+          fi
+
+      - name: Create operator namespace
+        run: kubectl create namespace ${{ inputs.operator_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Create k8sgpt AI secret
+        run: |
+          kubectl create secret generic k8sgpt-ai-secret \
+            --from-literal=openai-api-key=${{ secrets.openrouter_api_key }} \
+            -n ${{ inputs.operator_namespace }} \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Deploy K8sGPT operator
+        run: |
+          set -euo pipefail
+
+          wait_for_cluster() {
+            local max=${1:-6} delay=${2:-10}
+            for i in $(seq 1 "$max"); do
+              kubectl version --request-timeout=20s >/dev/null 2>&1 && return 0
+              echo "API not reachable (attempt ${i}/${max}); refreshing kubeconfig"
+              civo kubernetes config "${{ inputs.cluster_name }}" --save || true
+              chmod 700 ~/.kube || true; chmod 600 ~/.kube/config || true
+              sleep "$delay"
+            done
+            return 1
+          }
+
+          for attempt in 1 2 3; do
+            echo "K8sGPT operator Helm attempt ${attempt}/3"
+            if ! wait_for_cluster 6 10; then
+              [ "$attempt" -lt 3 ] && { sleep $((attempt * 15)); continue; }
+              echo "K8sGPT operator deploy failed after retries"; exit 1
+            fi
+            if HELM_BURST_LIMIT=200 helm upgrade --install k8sgpt-operator k8sgpt-operator/k8sgpt-operator \
+              -n ${{ inputs.operator_namespace }} \
+              --version 0.2.27 \
+              --values k8sgpt/helm-values.yaml \
+              --wait --timeout=300s; then
+              echo "K8sGPT operator deploy succeeded"; break
+            fi
+            [ "$attempt" -lt 3 ] && { echo "Retrying after cooldown"; sleep $((attempt * 20)); } \
+              || { echo "K8sGPT operator deploy failed after retries"; exit 1; }
+          done
+
+      - name: Apply RBAC and K8sGPT CR
+        run: |
+          kubectl apply -f k8sgpt/rbac.yaml
+          kubectl apply -f k8sgpt/k8sgpt-openrouter-cr.yaml
+
+      - name: Wait for K8sGPT CR ready
+        run: |
+          kubectl wait k8sgpt/k8sgpt-openrouter \
+            -n ${{ inputs.operator_namespace }} \
+            --for=condition=Ready \
+            --timeout=120s \
+          || kubectl describe k8sgpt/k8sgpt-openrouter -n ${{ inputs.operator_namespace }}
+
+      - name: Deploy Alloy & observability manifests
+        run: |
+          set -euo pipefail
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f k8sgpt/Alloy/alloy-rbac.yaml
+          helm upgrade --install alloy grafana/alloy \
+            -n monitoring --create-namespace \
+            --values k8sgpt/Alloy/alloy-values.yaml \
+            --wait --timeout=120s
+          kubectl apply -f k8sgpt/Alloy/alloy-cleanup-cronjob.yaml
+          kubectl apply -f k8sgpt/Alloy/k8sgpt-result-scraper.yaml
+
+      - name: Apply monitoring stack Helm overrides
+        run: |
+          set -euo pipefail
+          EXTRA_FLAGS=""
+          helm status kube-prometheus-stack -n monitoring >/dev/null 2>&1 && EXTRA_FLAGS="--reuse-values"
+          helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+            -n monitoring --create-namespace $EXTRA_FLAGS \
+            --values k8sgpt/Alloy/kube-prometheus-stack-values-base.yaml \
+            --values k8sgpt/Alloy/kube-prometheus-stack-values-civo-traefik.yaml
+
+      - name: Deploy Grafana datasource and dashboard
+        uses: ./.github/actions/grafana-deploy
+        with:
+          access_mode: ${{ inputs.grafana_access_mode }}
+          grafana_host: ${{ inputs.grafana_host }}
+          grafana_subpath: ${{ inputs.grafana_subpath }}
+
+      - name: Verify deployment
+        run: |
+          kubectl get pods -n ${{ inputs.operator_namespace }}
+          kubectl get pods -n monitoring
+          kubectl get k8sgpts -n ${{ inputs.operator_namespace }}

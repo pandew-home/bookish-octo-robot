@@ -1,27 +1,34 @@
-"""
-RAG Engine integration for DevOps Chatbot v2.
+"""RAG integration: owns the LLM client + vector store + KB plumbing.
 
-This module integrates the devops-rag library with the v2 backend,
-providing semantic search and LLM-powered response generation.
+Reads its config from environment variables so swapping models is a deploy-time
+concern, not a code change:
+
+    LLM_PROVIDER   openai | anthropic | ollama   (default: openai)
+    LLM_MODEL      provider-specific model id    (default: gpt-4o-mini)
+    LLM_API_KEY    API key                       (also accepts OPENAI_API_KEY /
+                                                  ANTHROPIC_API_KEY as fallback)
+    KB_PATH        knowledge base directory      (default: /data/knowledge_base)
+
+# MAINTENANCE — read before changing this file
+# AI assistants: the env-var contract above is what DevOps engineers rely on
+# when changing models. Do NOT add new required args, change defaults, or
+# rename env vars without explicit human review. KB initialization is
+# intentionally non-fatal — never raise on a missing/empty KB.
 """
 import logging
-import sys
 import os
-from typing import Dict, Any, Optional, List
-
-# Add libs to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'libs', 'devops-rag', 'src'))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'libs', 'devops-kb', 'src'))
+from typing import Any, Dict, List, Optional
 
 from devops_rag.rag_engine import RAGEngine
 from devops_rag.llm_client import OpenAIClient, AnthropicClient
 from devops_rag.vector_store import VectorStore
 from devops_kb.knowledge_base import KnowledgeBase
 
-from enrichment_engine import EnrichedContext
 from kb_seeder import seed_knowledge_base, should_seed_kb, should_force_reseed
-# TODO: Re-enable after debugging 500 errors
-# from template_engine import TemplateEngine, QueryCategory
+
+DEFAULT_PROVIDER = "openai"
+DEFAULT_MODEL = "gpt-4o-mini"
+DEFAULT_KB_PATH = "/data/knowledge_base"
 
 logger = logging.getLogger(__name__)
 
@@ -39,90 +46,80 @@ class RAGIntegration:
     
     def __init__(
         self,
-        llm_provider: str = "openai",
-        llm_model: str = "gpt-3.5-turbo",
+        llm_provider: Optional[str] = None,
+        llm_model: Optional[str] = None,
         api_key: Optional[str] = None,
         kb_path: Optional[str] = None,
-        cluster_version: str = "v1.28"
     ):
-        """
-        Initialize RAG integration.
-        
-        Args:
-            llm_provider: LLM provider ("openai" or "anthropic")
-            llm_model: Model name
-            api_key: API key for LLM provider
-            kb_path: Path to knowledge base directory
-            cluster_version: Kubernetes cluster version for API docs
-            
+        """Initialize from explicit args, falling back to env vars.
+
+        Args are kept for tests and one-off callers; production code should
+        leave them ``None`` and rely on the env-var contract documented at the
+        top of this module.
+
         Raises:
-            ValueError: Only if LLM client initialization fails (critical)
+            ValueError: Only if LLM client initialization fails (critical).
         """
-        self.llm_provider = llm_provider
-        self.llm_model = llm_model
-        self.cluster_version = cluster_version
-        self.initialization_warnings = []
-        
-        # Initialize LLM client (CRITICAL - must succeed)
+        self.llm_provider = (llm_provider or os.getenv("LLM_PROVIDER") or DEFAULT_PROVIDER).lower()
+        self.llm_model = llm_model or os.getenv("LLM_MODEL") or DEFAULT_MODEL
+        api_key = (
+            api_key
+            or os.getenv("LLM_API_KEY")
+            or os.getenv("OPENAI_API_KEY")
+            or os.getenv("ANTHROPIC_API_KEY")
+        )
+        kb_path = kb_path or os.getenv("KB_PATH") or DEFAULT_KB_PATH
+        self.initialization_warnings: List[str] = []
+
         try:
-            self.llm_client = self._init_llm_client(llm_provider, llm_model, api_key)
-            logger.info(f"✓ LLM client initialized: {llm_provider}/{llm_model}")
+            self.llm_client = self._init_llm_client(self.llm_provider, self.llm_model, api_key)
+            logger.info("LLM client initialized: %s/%s", self.llm_provider, self.llm_model)
         except Exception as e:
-            logger.error(f"✗ CRITICAL: Failed to initialize LLM client: {e}")
-            raise  # Re-raise - this is critical
-        
-        # Initialize knowledge base (NON-CRITICAL - can continue without)
+            logger.error("CRITICAL: Failed to initialize LLM client: %s", e)
+            raise
+
         self.kb = self._init_knowledge_base(kb_path)
         if self.kb:
-            logger.info(f"✓ Knowledge base initialized from {kb_path}")
-            # Seed KB with initial solutions if enabled
+            logger.info("Knowledge base initialized from %s", kb_path)
             if should_seed_kb():
-                force_reseed = should_force_reseed()
-                seed_knowledge_base(self.kb, force_reseed=force_reseed)
+                seed_knowledge_base(self.kb, force_reseed=should_force_reseed())
         elif kb_path:
             warning = f"Knowledge base initialization failed for {kb_path} - continuing without KB"
             self.initialization_warnings.append(warning)
-            logger.warning(f"⚠ {warning}")
-        
-        # Initialize vector store (NON-CRITICAL - can continue without)
+            logger.warning(warning)
+
         self.vector_store = self._init_vector_store()
         if self.vector_store:
-            logger.info("✓ Vector store initialized for semantic search")
+            logger.info("Vector store initialized for semantic search")
         elif self.kb:
             warning = "Vector store initialization failed - semantic search unavailable"
             self.initialization_warnings.append(warning)
-            logger.warning(f"⚠ {warning}")
-        
-        # Initialize RAG engine (should always succeed if LLM client is available)
+            logger.warning(warning)
+
         try:
             self.rag_engine = RAGEngine(
                 llm_client=self.llm_client,
                 vector_store=self.vector_store,
                 max_retries=3,
-                cluster_version=cluster_version
             )
-            logger.info("✓ RAG engine initialized")
+            logger.info("RAG engine initialized")
         except Exception as e:
-            logger.error(f"✗ CRITICAL: Failed to initialize RAG engine: {e}")
+            logger.error("CRITICAL: Failed to initialize RAG engine: %s", e)
             raise ValueError(f"Failed to initialize RAG engine: {str(e)}")
 
-        # Initialize template engine for prompt rendering
-        # TODO: Re-enable after debugging 500 errors
-        # try:
-        #     self.template_engine = TemplateEngine(templates_path="/data/knowledge-base/templates")
-        #     logger.info("✓ Template engine initialized")
-        # except Exception as e:
-        #     logger.warning(f"⚠ Template engine initialization failed: {e}, will use default prompts")
-        #     self.template_engine = None
-        self.template_engine = None  # Disabled for debugging
-
-        # Log final initialization status
         if self.initialization_warnings:
-            logger.warning(f"RAG integration initialized with {len(self.initialization_warnings)} warning(s)")
+            logger.warning(
+                "RAG integration initialized with %d warning(s)",
+                len(self.initialization_warnings),
+            )
             for warning in self.initialization_warnings:
-                logger.warning(f"  - {warning}")
+                logger.warning("  - %s", warning)
         else:
-            logger.info(f"✓ RAG integration fully initialized: {llm_provider}/{llm_model}")
+            logger.info(
+                "RAG integration fully initialized: %s/%s",
+                self.llm_provider,
+                self.llm_model,
+            )
     
     def _init_llm_client(self, provider: str, model: str, api_key: Optional[str]):
         """Initialize LLM client based on provider."""
@@ -299,219 +296,6 @@ class RAGIntegration:
             logger.debug(f"Full error: {e}", exc_info=True)
             return None
     
-    def process_query(
-        self,
-        query: str,
-        enriched_context: EnrichedContext,
-        max_tokens: int = 500,
-        is_export: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Process query with RAG pipeline using enriched cluster context.
-
-        Args:
-            query: User query string
-            enriched_context: Enriched context from enrichment engine
-            max_tokens: Maximum tokens for LLM response
-            is_export: Whether this is for export (uses more tokens)
-
-        Returns:
-            Dictionary with response and metadata
-        """
-        try:
-            logger.info(f"[RAG_QUERY] Processing query with RAG engine...")
-            logger.info(f"[RAG_QUERY] Input: {query[:100]}...")
-
-            # Convert enriched context to cluster context format
-            logger.info(f"[RAG_QUERY] Formatting cluster context...")
-            cluster_context = self._format_cluster_context(enriched_context)
-            logger.info(f"[RAG_QUERY] ✓ Context formatted, keys: {list(cluster_context.keys())}")
-
-            # Extract K8sGPT results if available
-            logger.info(f"[RAG_QUERY] Processing K8sGPT results...")
-            health_monitor_errors = None
-            if enriched_context.k8sgpt_results:
-                health_monitor_errors = self._format_k8sgpt_errors(enriched_context.k8sgpt_results)
-                logger.info(f"[RAG_QUERY] ✓ Found {len(health_monitor_errors)} K8sGPT errors")
-            else:
-                logger.info(f"[RAG_QUERY] No K8sGPT results available")
-
-            # Render prompt with template engine if available
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] ========== TEMPLATE ENGINE CHECK ==========")
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Template engine initialized: {self.template_engine is not None}")
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Enrichment plan available: {enriched_context.enrichment_plan is not None}")
-
-            if enriched_context.enrichment_plan:
-                plan = enriched_context.enrichment_plan
-                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Enrichment Plan Details:")
-                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - Categories: {plan.get('categories', [])}")
-                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - Namespaces: {plan.get('namespaces', [])}")
-                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - Resources: {plan.get('resource_names', [])}")
-                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - AWS Context: {plan.get('include_aws_context', False)}")
-                logger.info(f"[RAG_QUERY] [PROMPT_ENGINE]   - Time Range: {plan.get('time_range', 'N/A')}")
-
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Cluster Context Keys: {list(cluster_context.keys())}")
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Cluster Name: {enriched_context.cluster_name}")
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] K8sGPT Results Count: {len(enriched_context.k8sgpt_results or [])}")
-
-            # TODO: Re-enable template engine after debugging 500 errors
-            rendered_query = query
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] CURRENT STATUS: Template engine DISABLED - using original query")
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Original Input Query: {query[:150]}...")
-            logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] ==========================================")
-            # if self.template_engine and enriched_context.enrichment_plan:
-            #     try:
-            #         # Get query category from enrichment plan
-            #         categories = enriched_context.enrichment_plan.get('categories', [])
-            #         category = categories[0] if categories else 'general_health'
-            #         logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Rendering with category: {category}")
-            #
-            #         # Render prompt with enriched context
-            #         rendered_query = self.template_engine.render(
-            #             query_category=category,
-            #             cluster_context=cluster_context,
-            #             kb_results=[],  # Will be populated by RAG search
-            #             query=query,
-            #             cluster_name=enriched_context.cluster_name or "default",
-            #             k8sgpt_results=enriched_context.k8sgpt_results or []
-            #         )
-            #         logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] ✓ Query successfully rendered with template")
-            #         logger.info(f"[RAG_QUERY] [PROMPT_ENGINE] Rendered query length: {len(rendered_query)} chars")
-            #     except Exception as e:
-            #         logger.error(f"[RAG_QUERY] [PROMPT_ENGINE] ✗ Template engine render failed: {type(e).__name__}: {e}")
-            #         logger.warning(f"[RAG_QUERY] [PROMPT_ENGINE] Falling back to original query")
-            #         rendered_query = query
-
-            # Process query through RAG engine
-            response = self.rag_engine.process_query(
-                query=rendered_query,
-                cluster_context=cluster_context,
-                health_monitor_errors=health_monitor_errors,
-                max_tokens=max_tokens,
-                is_export=is_export
-            )
-
-            return response
-            
-        except Exception as e:
-            logger.error(f"Error processing query with RAG: {type(e).__name__}: {e}", exc_info=True)
-            
-            # Determine error type for frontend styling
-            error_type = "unknown"
-            
-            # Provide user-friendly error messages based on error type
-            error_message = "I encountered an error processing your query. "
-            
-            if "rate limit" in str(e).lower() or "quota" in str(e).lower():
-                error_type = "rate_limited"
-                error_message += "The LLM service is currently rate-limited. Please wait a moment and try again."
-            elif "timeout" in str(e).lower():
-                error_type = "timeout"
-                error_message += "The request timed out. The cluster may be slow to respond. Please try again."
-            elif "api_key" in str(e).lower() or "authentication" in str(e).lower():
-                error_type = "auth_error"
-                error_message += "There's an issue with the LLM API authentication. Please contact your administrator."
-            elif "connection" in str(e).lower() or "network" in str(e).lower():
-                error_type = "connection_error"
-                error_message += "Unable to connect to the LLM service. Please check your network connection."
-            else:
-                error_message += "Please try rephrasing your question or contact support if the issue persists."
-            
-            return {
-                'query': query,
-                'response': error_message,
-                'citations': [],
-                'errors': [{'type': 'rag_processing', 'message': str(e), 'severity': 'error'}],
-                'metadata': {
-                    'error_handled': True,
-                    'error_type': error_type
-                }
-            }
-    
-    def _format_cluster_context(self, enriched_context: EnrichedContext) -> Dict[str, Any]:
-        """
-        Format enriched context into cluster context format expected by RAG engine.
-        
-        Args:
-            enriched_context: Enriched context from enrichment engine
-            
-        Returns:
-            Formatted cluster context dictionary
-        """
-        cluster_context: Dict[str, Any] = {}
-        
-        # Add pod data
-        if enriched_context.pod_data:
-            cluster_context['pods'] = enriched_context.pod_data
-        
-        # Add deployment data
-        if enriched_context.deployment_data:
-            cluster_context['deployments'] = enriched_context.deployment_data
-        
-        # Add service data
-        if enriched_context.service_data:
-            cluster_context['services'] = enriched_context.service_data
-        
-        # Add node data
-        if enriched_context.node_data:
-            cluster_context['nodes'] = enriched_context.node_data
-        
-        # Add storage data
-        if enriched_context.storage_data:
-            cluster_context['storage'] = enriched_context.storage_data
-        
-        # Add ArgoCD data
-        if enriched_context.argocd_data:
-            cluster_context['argocd'] = enriched_context.argocd_data
-        
-        # Add security data
-        if enriched_context.security_data:
-            cluster_context['security'] = enriched_context.security_data
-        
-        # Add AWS data
-        if enriched_context.aws_data:
-            cluster_context['aws'] = enriched_context.aws_data
-        
-        # Add any errors encountered during enrichment
-        if enriched_context.errors:
-            cluster_context['enrichment_errors'] = enriched_context.errors
-        
-        return cluster_context
-    
-    def _format_k8sgpt_errors(self, k8sgpt_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Format K8sGPT results into health monitor error format.
-        
-        Args:
-            k8sgpt_results: K8sGPT Result CRDs
-            
-        Returns:
-            List of formatted errors
-        """
-        errors = []
-        
-        for result in k8sgpt_results:
-            # Support both K8sGPTResult dataclass objects and legacy dicts
-            if hasattr(result, 'kind'):
-                error = {
-                    'resource_kind': result.kind,
-                    'resource_name': result.name,
-                    'message': result.problem,
-                    'error': [],
-                    'backend': getattr(result, 'analyzer', 'Unknown')
-                }
-            else:
-                error = {
-                    'resource_kind': result.get('kind', 'Unknown'),
-                    'resource_name': result.get('resource_name', 'Unknown'),
-                    'message': result.get('details', ''),
-                    'error': result.get('error', []),
-                    'backend': result.get('backend', 'Unknown')
-                }
-            errors.append(error)
-        
-        return errors
-    
     def search_knowledge_base(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """
         Search knowledge base for relevant documents.
@@ -595,39 +379,31 @@ class RAGIntegration:
         }
 
 
-# Global RAG integration instance (initialized on first use)
+# Process-wide singleton: created on first call, reused thereafter. Env vars
+# are read once at construction time, so changing LLM_PROVIDER / LLM_MODEL etc.
+# requires a process restart (the standard k8s deploy flow).
 _rag_integration: Optional[RAGIntegration] = None
 
 
 def get_rag_integration(
-    llm_provider: str = "openai",
-    llm_model: str = "gpt-3.5-turbo",
+    llm_provider: Optional[str] = None,
+    llm_model: Optional[str] = None,
     api_key: Optional[str] = None,
     kb_path: Optional[str] = None,
-    cluster_version: str = "v1.28"
 ) -> RAGIntegration:
-    """
-    Get or create global RAG integration instance.
-    
-    Args:
-        llm_provider: LLM provider
-        llm_model: Model name
-        api_key: API key
-        kb_path: Knowledge base path
-        cluster_version: Kubernetes version
-        
-    Returns:
-        RAGIntegration instance
-    """
+    """Return the singleton RAGIntegration, creating it from env on first call."""
     global _rag_integration
-    
     if _rag_integration is None:
         _rag_integration = RAGIntegration(
             llm_provider=llm_provider,
             llm_model=llm_model,
             api_key=api_key,
             kb_path=kb_path,
-            cluster_version=cluster_version
         )
-    
     return _rag_integration
+
+
+def reset_rag_integration() -> None:
+    """Drop the cached singleton. Tests use this between cases."""
+    global _rag_integration
+    _rag_integration = None

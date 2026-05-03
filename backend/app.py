@@ -52,12 +52,17 @@ app = FastAPI(
 )
 
 # Configure CORS
+# ALLOWED_ORIGINS env var is a comma-separated list of allowed origins.
+# Defaults to the Civo cluster ingress host; override in production.
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000")
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,  # Auth uses X-Session-ID header, not cookies
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "X-Session-ID"],
 )
 
 # Register API routers
@@ -127,6 +132,30 @@ async def readiness_check():
         "service": "devops-chatbot-v2",
         "validation_complete": True
     }
+
+
+@app.get("/api/config")
+async def frontend_config():
+    """
+    Frontend configuration endpoint.
+    
+    Serves runtime environment configuration to the frontend, including base paths
+    for subpath deployment support. This allows the frontend to be built once and
+    deployed to different subpaths without rebuilding.
+    
+    Returns:
+        JSON config with PUBLIC_URL and API_BASE_URL for the frontend
+    """
+    public_url = os.getenv('REACT_APP_PUBLIC_URL', '/')
+    api_base_url = os.getenv('REACT_APP_API_URL', '/api')
+    
+    config = {
+        "publicUrl": public_url,
+        "apiBaseUrl": api_base_url
+    }
+    
+    # Return as JSON that frontend can injected into window.__CONFIG__
+    return config
 
 
 @app.get("/metrics")
@@ -210,7 +239,7 @@ async def spa_fallback(full_path: str):
         return Response(status_code=404)
 
     requested_path = (STATIC_ROOT / full_path).resolve()
-    if not str(requested_path).startswith(str(STATIC_ROOT_RESOLVED)):
+    if not requested_path.is_relative_to(STATIC_ROOT_RESOLVED):
         return Response(status_code=404)
 
     if requested_path.is_file():

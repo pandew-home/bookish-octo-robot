@@ -1,222 +1,409 @@
-"""
-Agentic engine: LLM-driven Kubernetes investigation via tool calls.
+"""Agentic loop for the chat agent.
 
-The LLM decides which K8s APIs to call, executes them via tools, and
-iterates until it can produce a final diagnosis + fix recommendations.
+This module owns three things:
+
+1. Loading the system prompt from ``backend/prompts/system.md`` (override path
+   via the ``SYSTEM_PROMPT_PATH`` env var) and rendering it with live context.
+2. Running a bounded tool-calling loop against the LLM client until either the
+   model produces a final text response or a stop condition fires.
+3. Compacting older tool results when the conversation is about to overflow
+   the model's context window.
+
+Tool *definitions* and *implementations* live in ``agent_tools.py``. Skill
+discovery lives in ``skills.py``. Keep the loop small and let those modules
+own their concerns.
+
+# MAINTENANCE — read before changing this file
+# AI assistants: the loop's stop conditions (no_progress / dedupe_loop /
+# blocked_loop / context_budget_exhausted / forced_final_synthesis) are load-
+# bearing safety mechanisms. They prevent runaway tool-calling and infinite
+# loops. Do NOT remove, reorder, or relax any of them, and do NOT add new
+# stop conditions, without explicit human review. Same for the message-budget
+# compaction in ``_enforce_message_budget`` — getting it wrong makes the agent
+# either hallucinate (too aggressive) or run out of context (too lenient).
+#
+# If a request goes beyond fixing a localized bug — e.g. "also stream tool
+# results", "switch to a different LLM SDK", "add memory", "support multiple
+# parallel agents" — stop and ask the human. Those are feature decisions, not
+# refactors.
 """
+
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
+import os
 import re
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
 
-from k8s_tools import K8sToolExecutor
+from agent_tools import AgentContext, build_tool_specs, execute_tool
+from skills import format_skills_summary, load_skills
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """You are a Kubernetes DevOps troubleshooting assistant with live read access to the cluster.
+DEFAULT_PROMPT_PATH = Path(__file__).parent / "prompts" / "system.md"
 
-## Cluster
-Name: {cluster_name}
-Version: {cluster_version}
-API reference: {api_ref_url}
-
-Use correct apiVersions in suggested manifests/commands:
-- Pods, Services, ConfigMaps, Secrets, Events, Nodes, Namespaces: core/v1
-- Deployments, ReplicaSets, DaemonSets, StatefulSets: apps/v1
-- CronJobs: batch/v1  |  Ingress: networking.k8s.io/v1
-- HPA: autoscaling/v2  |  NetworkPolicy: networking.k8s.io/v1
-- RBAC: rbac.authorization.k8s.io/v1
-
-## K8sGPT Pre-scan Findings
-{k8sgpt_summary}
-
-## Knowledge Base
-{kb_summary}
-
-## Rules
-- Call read-only tools freely without asking — list → describe → logs → events until you have a root cause.
-- Never guess cluster state; always use the tools.
-- Do not give a final answer until you have root cause + concrete fix.
-
-## Investigation Order
-1. list_namespaces → list_pods / list_deployments to orient
-2. get_pod / get_deployment on anything not Ready
-3. get_pod_logs (previous=true for crashed containers)
-4. get_events for Warning events
-5. Once root cause is clear, write the final answer using the template below
-
-## Response Template
-Use this template exactly. Only include bullets/steps you actually observed or need — omit placeholders.
-
----
-**Root Cause**
-[One sentence: the specific resource name, namespace, and what is broken]
-
-**Cause(s)**
-- [The underlying reason — e.g. missing resource, misconfiguration, version mismatch, exhausted quota]
-- [Second cause only if there genuinely is one]
-
-**Evidence**
-- [Exact observed fact: resource name, exit code, error string, event reason, or log line — only what you found]
-
-**Fix**
-
-Step 1 — [title]
-```
-[exact kubectl command, YAML snippet, or manifest field change with real names and values from this cluster]
-```
-
-Step 2 — [title] *(add more steps only if required)*
-```
-[exact command or change]
-```
-
-**Verify**
-```
-[kubectl command to confirm the fix worked]
-```
----
-
-Never use placeholders like `<name>` or `your-namespace` — use the real names from the cluster.
-Never write "check X" or "ensure Y" without the exact command or change that accomplishes it.
-
-## Available Tools
-- list_namespaces
-- list_pods(namespace)
-- get_pod(pod_name, namespace)
-- get_pod_logs(pod_name, namespace, container?, tail_lines?, previous?)
-- list_deployments(namespace)
-- get_deployment(name, namespace)
-- get_events(namespace, resource_name?, limit?)
-- list_nodes
-"""
-
-MAX_TOOL_ITERATIONS = 15
+MAX_PARALLEL_TOOL_CALLS = 3
+MAX_NO_PROGRESS_ROUNDS = 2
+MAX_DEDUP_ONLY_ROUNDS = 2
+MAX_BLOCKED_ONLY_ROUNDS = 2
+MAX_CONTEXT_TOKENS = 12000
+RECENT_MESSAGES_TO_KEEP = 12
+MAX_COMPACTED_TOOL_RESULTS = 25
 
 
-def _extract_minor_version(cluster_version: str) -> str:
-    """Extract vMAJOR.MINOR from a version string like 'v1.34.2-k3s1' or '1.28'."""
-    m = re.match(r"v?(\d+\.\d+)", cluster_version)
-    return f"v{m.group(1)}" if m else cluster_version
+def _load_system_prompt(path: Optional[Path] = None) -> str:
+    """Read the system prompt template. ``SYSTEM_PROMPT_PATH`` env var wins."""
+    candidate = (
+        Path(os.environ["SYSTEM_PROMPT_PATH"])
+        if os.getenv("SYSTEM_PROMPT_PATH")
+        else (path or DEFAULT_PROMPT_PATH)
+    )
+    return candidate.read_text(encoding="utf-8")
 
 
 class AgentEngine:
-    """Drives K8s investigation via an LLM tool-calling loop."""
+    """Tool-enabled LLM engine for Kubernetes troubleshooting."""
 
     def __init__(
         self,
-        k8s_clients: Dict[str, Any],
         llm_client: Any,
         k8sgpt_results: Optional[List] = None,
         kb_results: Optional[List] = None,
-        cluster_version: str = "v1.34",
-        cluster_name: str = "unknown",
+        k8s_clients: Optional[Dict[str, Any]] = None,
+        kb_search_func: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+        cluster_version: Optional[str] = None,
+        execution_mode: str = "observe-only",
+        require_human_approval: bool = True,
+        skills_dir: Optional[Path] = None,
+        system_prompt_path: Optional[Path] = None,
     ):
-        self.executor = K8sToolExecutor(k8s_clients)
         self.llm_client = llm_client
         self.k8sgpt_results = k8sgpt_results or []
         self.kb_results = kb_results or []
-        self.cluster_version = cluster_version
-        self.cluster_name = cluster_name
+        self.k8s_clients = k8s_clients or {}
+        self.kb_search_func = kb_search_func
+        self.cluster_version = (cluster_version or "").strip() or "unknown"
+
+        mode = (execution_mode or "observe-only").strip().lower()
+        self.execution_mode = mode if mode in {"observe-only", "execute"} else "observe-only"
+        self.require_human_approval = bool(require_human_approval)
+
+        self.skills = load_skills(skills_dir)
+        self.system_prompt_template = _load_system_prompt(system_prompt_path)
 
     async def run(self, query: str) -> Dict[str, Any]:
-        """Run the agentic loop and return the final response."""
-        minor = _extract_minor_version(self.cluster_version)
-        api_ref_url = f"https://kubernetes.io/docs/reference/generated/kubernetes-api/{minor}/"
-
-        system_content = SYSTEM_PROMPT.format(
-            cluster_name=self.cluster_name,
+        """Run the tool-calling loop and return ``{response, errors, metadata}``."""
+        ctx = AgentContext(
+            k8s_clients=self.k8s_clients,
+            k8sgpt_results=self.k8sgpt_results,
+            kb_search_func=self.kb_search_func,
+            skills=self.skills,
             cluster_version=self.cluster_version,
-            api_ref_url=api_ref_url,
+            execution_mode=self.execution_mode,
+            require_human_approval=self.require_human_approval,
+        )
+
+        system_content = self.system_prompt_template.format(
             k8sgpt_summary=self._format_k8sgpt_summary() or "None available.",
             kb_summary=self._format_kb_results() or "No relevant articles found.",
+            cluster_version=_major_minor_version(self.cluster_version),
+            api_reference_url=_api_reference_url(self.cluster_version),
+            skills_summary=format_skills_summary(self.skills),
         )
 
         messages: List[Any] = [
             {"role": "system", "content": system_content},
             {"role": "user", "content": query},
         ]
-        tools = self.executor.get_tool_definitions()
-        tool_calls_made: List[Dict] = []
-        is_anthropic = self.llm_client.__class__.__name__ == "AnthropicClient"
+        tools = build_tool_specs(ctx)
 
-        for iteration in range(MAX_TOOL_ITERATIONS):
-            logger.info(f"[AGENT] Iteration {iteration + 1}/{MAX_TOOL_ITERATIONS}")
+        tool_calls_used = 0
+        rounds = 0
+        errors: List[str] = []
+        stop_reason = ""
+        blocked_actions: List[Dict[str, Any]] = []
+        dedup_hits = 0
+        no_progress_rounds = 0
+        dedup_only_rounds = 0
+        blocked_only_rounds = 0
+        tool_cache: Dict[str, Dict[str, Any]] = {}
+
+        logger.info("[AGENT] Calling LLM with tool access...")
+        result: Dict[str, Any] = {}
+        while True:
+            rounds += 1
+
+            messages = self._enforce_message_budget(messages)
+            if self._estimate_messages_tokens(messages) > MAX_CONTEXT_TOKENS:
+                stop_reason = "context_budget_exhausted"
+                errors.append(
+                    "Stop condition reached: message context exceeded token budget after compaction."
+                )
+                break
 
             result = await asyncio.to_thread(
                 self.llm_client.generate_with_tools, messages, tools
             )
 
-            if result["type"] == "text":
-                logger.info(f"[AGENT] Final answer after {iteration} tool call(s)")
+            if result.get("type") == "text":
+                break
+
+            if result.get("type") != "tool_calls":
+                errors.append("Unexpected LLM response type while processing tool calls.")
+                break
+
+            tool_calls = result.get("tool_calls", [])
+            if not tool_calls:
+                break
+
+            tool_calls_used += len(tool_calls)
+            outcomes = await self._execute_tool_calls_parallel(tool_calls, tool_cache, ctx)
+
+            round_made_progress = False
+            round_all_deduped = bool(outcomes)
+            round_all_blocked = bool(outcomes)
+
+            for outcome in outcomes:
+                if outcome["deduped"]:
+                    dedup_hits += 1
+                else:
+                    round_all_deduped = False
+
+                if outcome["made_progress"]:
+                    round_made_progress = True
+                    round_all_blocked = False
+                elif not outcome["blocked"]:
+                    round_all_blocked = False
+
+                if outcome["approval_required"]:
+                    blocked_actions.append(
+                        {
+                            "tool": outcome["tool_name"],
+                            "args": outcome["args"],
+                            "reason": outcome.get("reason", "approval required"),
+                        }
+                    )
+
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            "TOOL_RESULT "
+                            f"{outcome['tool_name']} "
+                            f"args={json.dumps(outcome['args'], default=str)} "
+                            f"result={json.dumps(outcome['tool_output'], default=str)}"
+                        ),
+                    }
+                )
+
+            if round_made_progress:
+                no_progress_rounds = 0
+            else:
+                no_progress_rounds += 1
+                if no_progress_rounds >= MAX_NO_PROGRESS_ROUNDS:
+                    stop_reason = "no_progress"
+                    errors.append("Stop condition reached: repeated tool calls produced no new evidence.")
+                    break
+
+            if round_all_deduped:
+                dedup_only_rounds += 1
+                if dedup_only_rounds >= MAX_DEDUP_ONLY_ROUNDS:
+                    stop_reason = "dedupe_loop"
+                    errors.append("Stop condition reached: repeated duplicate tool calls without new evidence.")
+                    break
+            else:
+                dedup_only_rounds = 0
+
+            if round_all_blocked:
+                blocked_only_rounds += 1
+                if blocked_only_rounds >= MAX_BLOCKED_ONLY_ROUNDS:
+                    stop_reason = "blocked_loop"
+                    errors.append("Stop condition reached: only blocked/approval-required actions requested repeatedly.")
+                    break
+            else:
+                blocked_only_rounds = 0
+
+        if result.get("type") != "text":
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "STOP_CONDITION Reached. Provide the best final diagnosis now using gathered evidence. "
+                        "If evidence is insufficient, state what should be investigated next."
+                    ),
+                }
+            )
+            forced = await asyncio.to_thread(self.llm_client.generate_with_tools, messages, [])
+            if forced.get("type") == "text":
+                result = forced
+                if not stop_reason:
+                    stop_reason = "forced_final_synthesis"
+
+        response_text = result.get("text", "Unable to generate a response.")
+        logger.info("[AGENT] Response: %d chars", len(response_text))
+
+        return {
+            "response": response_text,
+            "errors": errors,
+            "metadata": {
+                "tool_calls_used": tool_calls_used,
+                "rounds": rounds,
+                "tools_available": len(tools),
+                "execution_mode": self.execution_mode,
+                "human_approval_required": self.require_human_approval,
+                "dedup_hits": dedup_hits,
+                "stop_reason": stop_reason,
+                "blocked_actions": blocked_actions,
+                "skills_loaded": [s.name for s in self.skills.values()],
+            },
+        }
+
+    # ------------------------------------------------------------------
+    # Tool execution.
+    # ------------------------------------------------------------------
+
+    async def _execute_tool_calls_parallel(
+        self,
+        tool_calls: List[Dict[str, Any]],
+        tool_cache: Dict[str, Dict[str, Any]],
+        ctx: AgentContext,
+    ) -> List[Dict[str, Any]]:
+        """Execute tool calls in parallel with bounded concurrency and dedupe cache."""
+        semaphore = asyncio.Semaphore(MAX_PARALLEL_TOOL_CALLS)
+
+        async def _run(index: int, tool_call: Dict[str, Any]) -> Dict[str, Any]:
+            tool_name = tool_call.get("name", "unknown_tool")
+            args = tool_call.get("args", {})
+            call_key = _tool_call_key(tool_name, args)
+
+            if call_key in tool_cache:
+                cached = tool_cache[call_key]
                 return {
-                    "response": result["text"],
-                    "tool_calls_made": tool_calls_made,
-                    "iterations": iteration + 1,
-                    "errors": [],
+                    "index": index,
+                    "tool_name": tool_name,
+                    "args": args,
+                    "tool_output": {
+                        "deduped": True,
+                        "cached": True,
+                        "tool": tool_name,
+                        "result": cached,
+                    },
+                    "deduped": True,
+                    "blocked": False,
+                    "approval_required": False,
+                    "made_progress": False,
+                    "reason": "deduped",
                 }
 
-            # Execute tool calls and append results to messages
-            if is_anthropic:
-                messages.append({"role": "assistant", "content": result["raw_content"]})
-                tool_results = []
-                for tc in result["tool_calls"]:
-                    logger.info(f"[AGENT] → {tc['name']}({json.dumps(tc['args'])})")
-                    tool_result = await asyncio.to_thread(
-                        self.executor.execute, tc["name"], tc["args"]
-                    )
-                    tool_calls_made.append({"tool": tc["name"], "args": tc["args"]})
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": tc["id"],
-                        "content": tool_result,
-                    })
-                messages.append({"role": "user", "content": tool_results})
-            else:
-                # OpenAI format
-                messages.append({
-                    "role": "assistant",
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": json.dumps(tc["args"]),
-                            },
-                        }
-                        for tc in result["tool_calls"]
-                    ],
-                })
-                for tc in result["tool_calls"]:
-                    logger.info(f"[AGENT] → {tc['name']}({json.dumps(tc['args'])})")
-                    tool_result = await asyncio.to_thread(
-                        self.executor.execute, tc["name"], tc["args"]
-                    )
-                    tool_calls_made.append({"tool": tc["name"], "args": tc["args"]})
-                    messages.append({
-                        "role": "tool",
-                        "tool_call_id": tc["id"],
-                        "content": tool_result,
-                    })
+            async with semaphore:
+                tool_output = await asyncio.to_thread(execute_tool, tool_name, args, ctx)
 
-        # Hit max iterations — demand a final answer with what was gathered
-        logger.warning(f"[AGENT] Max iterations ({MAX_TOOL_ITERATIONS}) reached")
-        messages.append({
-            "role": "user",
-            "content": "Provide your final diagnosis and fix commands based on what you've gathered.",
-        })
-        result = await asyncio.to_thread(
-            self.llm_client.generate_with_tools, messages, []
-        )
-        return {
-            "response": result.get("text", "Unable to complete diagnosis within iteration limit."),
-            "tool_calls_made": tool_calls_made,
-            "iterations": MAX_TOOL_ITERATIONS,
-            "errors": [{"type": "max_iterations", "message": "Hit maximum tool call iterations"}],
-        }
+            tool_cache[call_key] = tool_output
+            blocked = False
+            approval_required = False
+            made_progress = False
+            reason = ""
+
+            if isinstance(tool_output, dict):
+                approval_required = bool(tool_output.get("approval_required"))
+                blocked = bool(tool_output.get("blocked")) or approval_required
+                reason = str(tool_output.get("reason", ""))
+                made_progress = not tool_output.get("error") and not blocked
+
+            return {
+                "index": index,
+                "tool_name": tool_name,
+                "args": args,
+                "tool_output": tool_output,
+                "deduped": False,
+                "blocked": blocked,
+                "approval_required": approval_required,
+                "made_progress": made_progress,
+                "reason": reason,
+            }
+
+        tasks = [_run(idx, call) for idx, call in enumerate(tool_calls)]
+        outcomes = await asyncio.gather(*tasks)
+        outcomes.sort(key=lambda item: item["index"])
+        return outcomes
+
+    # ------------------------------------------------------------------
+    # Message budget compaction.
+    # ------------------------------------------------------------------
+
+    def _estimate_messages_tokens(self, messages: List[Any]) -> int:
+        joined = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = str(msg.get("role", ""))
+            content = msg.get("content", "")
+            if isinstance(content, str):
+                joined.append(f"{role}:{content}")
+            else:
+                joined.append(f"{role}:{json.dumps(content, default=str)}")
+        text = "\n".join(joined)
+
+        count_fn = getattr(self.llm_client, "count_tokens", None)
+        if callable(count_fn):
+            try:
+                return int(count_fn(text))
+            except Exception:
+                pass
+        return max(len(text) // 4, 1) if text else 0
+
+    def _enforce_message_budget(self, messages: List[Any]) -> List[Any]:
+        if self._estimate_messages_tokens(messages) <= MAX_CONTEXT_TOKENS:
+            return messages
+        if len(messages) <= 3:
+            return messages
+
+        head = messages[:2]
+        tail_count = min(RECENT_MESSAGES_TO_KEEP, max(len(messages) - 2, 1))
+        tail = messages[-tail_count:]
+        middle = messages[2:-tail_count] if len(messages) > 2 + tail_count else []
+
+        summary_lines: List[str] = []
+        compacted_tool_results = 0
+        dropped_messages = 0
+
+        for msg in middle:
+            if not isinstance(msg, dict):
+                dropped_messages += 1
+                continue
+            parsed = _parse_tool_result_for_summary(msg.get("content", ""))
+            if parsed is None:
+                dropped_messages += 1
+                continue
+            compacted_tool_results += 1
+            if len(summary_lines) < MAX_COMPACTED_TOOL_RESULTS:
+                tool_name, args, result = parsed
+                summary_lines.append(
+                    f"- {tool_name} args={json.dumps(args, default=str)} result={json.dumps(result, default=str)}"
+                )
+
+        if compacted_tool_results == 0 and dropped_messages == 0:
+            return messages
+
+        summary_parts = [
+            "EVIDENCE_SUMMARY",
+            (
+                f"Compacted {compacted_tool_results} tool results and dropped {dropped_messages} older messages "
+                "to stay within token budget."
+            ),
+        ]
+        if summary_lines:
+            summary_parts.append("\n".join(summary_lines))
+
+        summary_message = {"role": "system", "content": "\n".join(summary_parts)}
+        return head + [summary_message] + tail
+
+    # ------------------------------------------------------------------
+    # Context formatting helpers.
+    # ------------------------------------------------------------------
 
     def _format_kb_results(self) -> str:
         if not self.kb_results:
@@ -262,3 +449,67 @@ class AgentEngine:
                     f"    fix: {r.get('solution','N/A')}"
                 )
         return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Module-level helpers.
+# ---------------------------------------------------------------------------
+
+def _tool_call_key(tool_name: str, args: Dict[str, Any]) -> str:
+    """Stable dedupe key for tool calls."""
+    try:
+        normalized = json.dumps(args or {}, sort_keys=True, default=str)
+    except Exception:
+        normalized = str(args)
+    return f"{tool_name}:{normalized}"
+
+
+def _parse_tool_result_for_summary(content: Any):
+    """Parse ``TOOL_RESULT <name> args=<json> result=<json>`` strings."""
+    if not isinstance(content, str):
+        return None
+    if not content.startswith("TOOL_RESULT "):
+        return None
+
+    rest = content[len("TOOL_RESULT "):]
+    first_space = rest.find(" ")
+    if first_space <= 0:
+        return None
+
+    tool_name = rest[:first_space]
+    tail = rest[first_space + 1:]
+    if not tail.startswith("args="):
+        return None
+
+    split_idx = tail.find(" result=")
+    if split_idx <= len("args="):
+        return None
+
+    args_json = tail[len("args="):split_idx]
+    result_json = tail[split_idx + len(" result="):]
+
+    try:
+        args = json.loads(args_json)
+    except Exception:
+        args = {}
+    try:
+        result = json.loads(result_json)
+    except Exception:
+        result = {"raw": result_json}
+
+    return tool_name, args, result
+
+
+def _major_minor_version(version: str) -> str:
+    """Normalize a Kubernetes version to ``vMAJOR.MINOR`` form."""
+    match = re.search(r"v?(\d+)\.(\d+)", version or "")
+    if not match:
+        return "unknown"
+    return f"v{match.group(1)}.{match.group(2)}"
+
+
+def _api_reference_url(version: str) -> str:
+    major_minor = _major_minor_version(version)
+    if major_minor == "unknown":
+        return "https://kubernetes.io/docs/reference/generated/kubernetes-api/"
+    return f"https://kubernetes.io/docs/reference/generated/kubernetes-api/{major_minor}/"

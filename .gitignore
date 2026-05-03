@@ -150,6 +150,7 @@ venv/
 backend/venv/
 ENV/
 env.bak/
+backend/test_env/
 venv.bak/
 
 # Secrets and credentials
@@ -229,6 +230,9 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Claude Code local settings (contains machine-specific paths/MCP config)
+.claude/settings.local.json
 
 # Marimo
 marimo/_static/

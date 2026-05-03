@@ -37,11 +37,11 @@ spec:
           command: ["sh", "-c", "mkdir -p /tmp/supervisor /tmp/envoy /var/log/supervisor /var/run/supervisor"]
           resources:
             requests:
-              cpu: 100m
-              memory: 64Mi
+              cpu: 10m
+              memory: 32Mi
             limits:
-              cpu: 200m
-              memory: 128Mi
+              cpu: 50m
+              memory: 64Mi
           volumeMounts:
             - name: tmp
               mountPath: /tmp
@@ -68,22 +68,22 @@ spec:
             - name: LLM_PROVIDER
               valueFrom:
                 secretKeyRef:
-                  name: devops-chatbot-secrets
+                  name: {{ .Values.llm.existingSecret | quote }}
                   key: llm-provider
             - name: LLM_MODEL
               valueFrom:
                 secretKeyRef:
-                  name: devops-chatbot-secrets
+                  name: {{ .Values.llm.existingSecret | quote }}
                   key: llm-model
             - name: LLM_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: devops-chatbot-secrets
+                  name: {{ .Values.llm.existingSecret | quote }}
                   key: llm-api-key
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: devops-chatbot-secrets
+                  name: {{ .Values.llm.existingSecret | quote }}
                   key: llm-api-key
             - name: OPENAI_BASE_URL
               value: "https://openrouter.ai/api/v1"
@@ -93,11 +93,17 @@ spec:
               value: "true"
             - name: KB_FORCE_RESEED
               value: "false"
-            # Frontend base-path configuration for subpath hosting
+            # Runtime frontend contract values (served by backend /api/config).
+            # These MUST stay aligned with ingress paths in values.yaml and k8s/ingress.yaml.
+            # A mismatch here causes UI clicks to call non-existent API routes.
             - name: REACT_APP_API_URL
               value: {{ .Values.app.apiBaseUrl | quote }}
+            # Keep "/" for root-built static assets unless frontend is rebuilt for subpath hosting.
             - name: REACT_APP_PUBLIC_URL
               value: {{ .Values.app.publicUrl | quote }}
+            # Must include the public ingress origin used by browsers.
+            - name: ALLOWED_ORIGINS
+              value: {{ .Values.app.allowedOrigins | quote }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:

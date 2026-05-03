@@ -57,13 +57,10 @@ kubectl apply -f k8sgpt/namespace.yaml
 kubectl apply -f k8sgpt/rbac.yaml
 kubectl apply -f k8sgpt/k8sgpt-openrouter-cr.yaml
 
-# Setup Alloy + Grafana integration
-kubectl apply -f k8sgpt/Alloy/alloy-rbac.yaml
-kubectl apply -f k8sgpt/Alloy/loki-datasource-fix.yaml
-kubectl apply -f k8sgpt/Alloy/grafana-nodeport-patch.yaml
-kubectl apply -f k8sgpt/Alloy/alloy-configmap.yaml
-kubectl apply -f k8sgpt/Alloy/alloy-cleanup-cronjob.yaml
-kubectl apply -f k8sgpt/Alloy/grafana-k8sgpt-dashboard.yaml
+# Setup Alloy + Grafana integration (AUTOMATED VIA GITHUB ACTIONS)
+# For manual setup, see k8sgpt/Alloy/ALLOY_INTEGRATION.md
+# Recommendation: Use GitHub Actions workflows instead (deploy-k8sgpt.yml)
+# which handle: Helm chart installation, datasource registration, dashboard import
 ```
 
 See [K8sGPT + Alloy Integration](k8sgpt/Alloy/ALLOY_INTEGRATION.md) for full setup details.
@@ -81,7 +78,7 @@ K8sGPT Operator (per cluster)
     └── Analyzes: Pod, Deployment, Node, HPA, PVC, Service, Ingress
     └── Interval: 2 minutes, noCache: true
 
-Grafana Alloy → Loki → Grafana dashboard (NodePort 30300)
+Grafana Alloy → Loki → Grafana dashboard at http://cluster-host/grafana (Traefik subpath)
 CronJob → deletes Results older than 24h
 ```
 
@@ -90,10 +87,29 @@ CronJob → deletes Results older than 24h
 - [Architecture](docs/architecture.md)
 - [Development](docs/development.md)
 - [Deployment](docs/deployment.md)
+- [Flux GitOps Setup](docs/flux-gitops.md)
 - [K8sGPT Setup](docs/k8sgpt-setup.md)
 - [K8sGPT + Alloy Integration](k8sgpt/Alloy/ALLOY_INTEGRATION.md)
 - [Security](docs/security.md)
 - [Usage](docs/usage.md)
+
+## Endpoints
+
+### Ingresses by Cluster
+
+#### Civo Staging (2nd Stage Testing)
+- **DevOps Chatbot:** `http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com` (Traefik)
+  - Backend: `devops-chatbot:80` → Pods: `10.0.1.18:8080`, `10.0.0.169:8080`
+- **Grafana:** `http://grafana.k8s.civo.com` (Traefik)
+  - Credentials: see Vault / k8s secret
+- **Prometheus:** ClusterIP only (port-forward to access)
+
+### Local Development
+- **Frontend:** `http://localhost:3000`
+- **Backend API:** `http://localhost:8000`
+- **API Docs:** `http://localhost:8000/docs`
+- **DevOps Chatbot (Port-Forward):** `kubectl port-forward svc/devops-chatbot 8080:80 -n devops-chatbot`
+- **Grafana (Port-Forward):** `kubectl port-forward svc/prometheus-grafana 30300:80 -n monitoring`
 
 ## Testing
 

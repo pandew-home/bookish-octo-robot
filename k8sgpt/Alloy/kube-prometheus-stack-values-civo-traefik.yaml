@@ -3,6 +3,14 @@
 # Provides: Traefik ingress route to /grafana, Grafana server config for subpath serving
 
 grafana:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
   # Civo cluster uses Traefik; expose Grafana via Ingress at /grafana subpath
   service:
     type: ClusterIP  # Traefik ingress will handle external exposure; no NodePort needed
@@ -31,8 +39,3 @@ grafana:
       # cert-manager.io/cluster-issuer: "letsencrypt-prod"
       # traefik.ingress.kubernetes.io/router.tls: "true"
       # traefik.ingress.kubernetes.io/router.tls.certresolver: "letsencrypt"
-
-prometheus:
-  prometheusSpec:
-    # Traefik-specific config can go here if needed (e.g., service monitor selectors)
-    pass

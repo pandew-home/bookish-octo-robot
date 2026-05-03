@@ -16,7 +16,7 @@ from devops_k8s.snapshot import (
     ClusterToolInfo,
     SnapshotDiff,
 )
-from devops_chatbot.backend.utils.circuit_breaker import CircuitBreaker
+from devops_k8s.circuit_breaker import CircuitBreaker
 
 
 class HealthMonitor:

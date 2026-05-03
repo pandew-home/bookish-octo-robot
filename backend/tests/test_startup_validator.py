@@ -111,19 +111,14 @@ class TestStartupValidator:
                 assert len(validator.errors) >= 1
                 assert any('not writable' in e for e in validator.errors)
     
-    def test_validate_prompt_templates_missing_directory(self):
-        """Test prompt template validation with missing directory."""
-        with patch('startup_validator.Path') as mock_path:
-            mock_templates_path = MagicMock()
-            mock_templates_path.exists.return_value = False
-            mock_path.return_value = mock_templates_path
-            
-            validator = StartupValidator()
-            validator._validate_prompt_templates()
-            
-            # Missing templates should be a warning, not an error
-            assert len(validator.warnings) >= 1
-            assert any('Templates directory not found' in w for w in validator.warnings)
+    def test_validate_prompt_templates_skipped(self):
+        """Test prompt template validation is skipped (agentic engine handles prompts)."""
+        validator = StartupValidator()
+        validator._validate_prompt_templates()
+        
+        # Should be a no-op — no warnings or errors
+        assert len(validator.warnings) == 0
+        assert len(validator.errors) == 0
     
     def test_validate_faiss_index_creates_directory(self):
         """Test FAISS index validation creates directory if missing."""

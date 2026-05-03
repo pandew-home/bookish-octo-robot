@@ -1,0 +1,32 @@
+name: Setup Civo + kubectl
+description: Install Civo CLI and configure kubectl for a cluster
+
+inputs:
+  civo_api_key:
+    description: Civo API key
+    required: true
+  cluster_name:
+    description: Civo cluster name
+    required: true
+  civo_region:
+    description: Civo region (e.g. NYC1)
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Install Civo CLI
+      shell: bash
+      run: curl -sL https://civo.com/get | sh
+
+    - name: Configure kubectl
+      shell: bash
+      run: |
+        set -euo pipefail
+        civo apikey save deploy-key "${{ inputs.civo_api_key }}"
+        civo apikey current deploy-key
+        civo region current "${{ inputs.civo_region }}"
+        civo kubernetes config "${{ inputs.cluster_name }}" --save
+        chmod 700 ~/.kube || true
+        chmod 600 ~/.kube/config || true
+        kubectl get nodes

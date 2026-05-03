@@ -12,18 +12,18 @@ requires-python = ">=3.12"
 packages = {find = {where = ["."], exclude = ["tests*", "venv*", "__pycache__*"]}}
 py-modules = [
   "app",
+  "agentic_engine",
+  "agent_tools",
   "cluster_manager",
   "conversation_history",
   "credential_store",
   "eks_auth",
-  "enrichment_engine",
-  "input_sanitizer",
+  "k8s_client",
   "k8sgpt_reader",
-  "query_router",
+  "kb_seeder",
   "rag_integration",
-  "response_parser",
+  "skills",
   "solution_manager",
   "startup_validator",
-  "template_engine",
   "weather_calculator"
 ]

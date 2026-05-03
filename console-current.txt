@@ -1,0 +1,19 @@
+Total messages: 15 (Errors: 14, Warnings: 0)
+
+[INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:3100/static/js/bundle.js:71099
+[ERROR] Error loading frontend config: SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON @ http://localhost:3100/static/js/bundle.js:5965
+[ERROR] Failed to fetch credential status: SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON @ http://localhost:3100/static/js/bundle.js:5489
+[ERROR] Failed to fetch credential status: SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON @ http://localhost:3100/static/js/bundle.js:5489
+[ERROR] WebSocket connection to 'ws://localhost:3100/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3100/static/js/bundle.js:78318
+[ERROR] WebSocket connection to 'ws://localhost:3100/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3100/static/js/bundle.js:78318
+[ERROR] WebSocket connection to 'ws://localhost:3100/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3100/static/js/bundle.js:78318
+[ERROR] WebSocket connection to 'ws://localhost:3100/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3100/static/js/bundle.js:78318
+[ERROR] Failed to load resource: net::ERR_CONNECTION_REFUSED @ http://localhost:3100/api/credentials/status:0
+[ERROR] Failed to fetch credential status: TypeError: Failed to fetch
+    at http://localhost:3100/static/js/bundle.js:5436:30
+    at http://localhost:3100/static/js/bundle.js:5505:7 @ http://localhost:3100/static/js/bundle.js:5489
+[ERROR] Failed to fetch credential status: SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON @ http://localhost:3100/static/js/bundle.js:5489
+[ERROR] Failed to fetch credential status: SyntaxError: Unexpected token '<', "<!DOCTYPE "... is not valid JSON @ http://localhost:3100/static/js/bundle.js:5489
+[ERROR] WebSocket connection to 'ws://localhost:3100/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3100/static/js/bundle.js:78318
+[ERROR] WebSocket connection to 'ws://localhost:3100/ws' failed: Error in connection establishment: net::ERR_CONNECTION_REFUSED @ http://localhost:3100/static/js/bundle.js:78318
+[ERROR] Failed to load resource: the server responded with a status of 401 (Unauthorized) @ http://localhost:3100/api/credentials/status:0

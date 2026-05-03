@@ -41,7 +41,6 @@ pip install -r requirements.txt
 # Install shared libraries in editable mode (REQUIRED for development)
 pip install -e ../libs/devops-k8s
 pip install -e ../libs/devops-kb
-pip install -e ../libs/devops-prompts
 pip install -e ../libs/devops-rag
 
 # Run backend
@@ -52,7 +51,7 @@ pytest                                    # All tests
 pytest --cov=. --cov-report=html         # With coverage
 pytest -k "property"                     # Property-based tests only
 pytest tests/test_credential_store.py    # Single test file
-pytest tests/test_enrichment_engine.py::test_enrich_pods  # Single test
+pytest tests/test_agentic_engine.py  # Single test file
 ```
 
 ### Frontend Development
@@ -125,37 +124,35 @@ The system uses **Kion temporary AWS credentials** (ASIA* access keys) instead o
 
 ### 2. Query Processing Pipeline
 
-User queries flow through a deterministic pipeline (no LLM-based routing):
+User queries flow through an agentic pipeline:
 
 ```
 User Query
   ↓
-InputSanitizer (reject unsafe patterns) → backend/input_sanitizer.py
+Rate Limiter (20 req/min per user) → backend/middleware/rate_limiter.py
   ↓
-QueryRouter (pattern-based classification) → backend/query_router.py
-  ↓
-EnrichmentEngine (gather K8s/AWS context in parallel) → backend/enrichment_engine.py
+K8s Client (in-cluster) → backend/k8s_client.py
   ↓
 K8sGPTReader (read Result CRDs) → backend/k8sgpt_reader.py
   ↓
-RAGEngine (semantic KB search) → libs/devops-rag/
+RAGEngine (initial KB search, top-5) → libs/devops-rag/
   ↓
-TemplateEngine (render prompt) → backend/template_engine.py
+AgentEngine (bounded tool-calling loop) → backend/agentic_engine.py
+  ├─ System prompt (editable) → backend/prompts/system.md
+  ├─ Tool specs + dispatch → backend/agent_tools.py
+  └─ Skill discovery → backend/skills.py / backend/skills/<name>/SKILL.md
   ↓
 LLMClient (generate response) → libs/devops-rag/src/devops_rag/llm_client.py
-  ↓
-ResponseParser (safety checks, citations) → backend/response_parser.py
 ```
 
-**Key principle**: Each stage fails gracefully. If K8sGPT CRDs are unreadable, enrichment returns partial context and proceeds. If KB is empty, RAG returns empty results and proceeds.
+**Key principle**: The agent loop is bounded by hard stop conditions (no_progress, dedupe_loop, blocked_loop, context_budget_exhausted). Tools fail gracefully — each returns an error dict rather than raising, allowing the loop to continue with partial data. Input validation is delegated to the LLM system prompt and RBAC.
 
 ### 3. Shared Libraries Architecture
 
-Four reusable libraries in `libs/` installed via editable mode (`pip install -e`):
+Three reusable libraries in `libs/` installed via editable mode (`pip install -e`):
 
 - **devops-k8s**: Kubernetes client wrappers, health monitoring, event correlation
 - **devops-kb**: Knowledge base storage on PVC, solution CRUD, snapshot management
-- **devops-prompts**: Query routing, template loading, domain validation
 - **devops-rag**: RAG engine with FAISS, LLM client abstraction (OpenAI/Anthropic/Ollama), embeddings
 
 When modifying libraries: changes are immediately reflected in backend (editable install). No reinstall needed unless changing `pyproject.toml`.
@@ -182,24 +179,19 @@ Chatbot reads these CRDs via CustomObjectsApi using per-user bearer tokens. Resu
 - Query enrichment (auto-include relevant findings)
 - Chat responses (prominently highlight K8sGPT insights)
 
-### 5. Async Enrichment with Graceful Degradation
+### 5. Agentic Tool-Calling Loop
 
-`EnrichmentEngine.execute()` runs all enrichment tasks in parallel:
+`AgentEngine.run()` runs a bounded tool-calling loop with hard stop conditions:
 
 ```python
-tasks = [
-    self._enrich_pods(plan),
-    self._enrich_deployments(plan),
-    self._enrich_services(plan),
-    self._read_k8sgpt_results(),
-    self._enrich_aws(plan)
-]
-results = await asyncio.gather(*tasks, return_exceptions=True)
+# Stop conditions — do not remove or relax without human review
+MAX_NO_PROGRESS_ROUNDS = 2    # no new evidence produced
+MAX_DEDUP_ONLY_ROUNDS = 2     # only duplicate tool calls
+MAX_BLOCKED_ONLY_ROUNDS = 2   # only approval-required calls
+MAX_CONTEXT_TOKENS = 12000    # context budget exhausted
 ```
 
-**Critical pattern**: `return_exceptions=True` means failed tasks return exception objects instead of raising. The merge logic filters exceptions and logs them to `context.errors`, allowing the pipeline to continue with partial data.
-
-**Missing**: Timeout enforcement. Currently `self.timeout = 10` is set but not used. Should wrap gather in `asyncio.wait_for()`.
+Tool calls execute in parallel (up to `MAX_PARALLEL_TOOL_CALLS = 3`). A dedupe cache keyed on `tool_name:sorted_args_json` prevents redundant API calls within a single request. When context approaches the token budget, older tool results are compacted into an `EVIDENCE_SUMMARY` block (`_enforce_message_budget`).
 
 ### 6. Multi-Cluster State Management
 
@@ -315,17 +307,16 @@ async def example(session_id: str = Depends(get_session_id)):
 - `backend/k8sgpt_reader.py` - Read K8sGPT Result CRDs
 - `backend/weather_calculator.py` - Health state calculation
 
-**Query Processing**:
-- `backend/query_router.py` - Pattern-based classification
-- `backend/input_sanitizer.py` - Input validation
-- `backend/enrichment_engine.py` - Context gathering (1200 lines, most complex file)
+**Query Processing / Agentic Loop**:
+- `backend/agentic_engine.py` - Bounded tool-calling loop, context compaction
+- `backend/agent_tools.py` - Tool specs (OpenAI function format) and dispatch; `AgentContext` dataclass
+- `backend/skills.py` - Skill discovery from `backend/skills/<name>/SKILL.md`
+- `backend/prompts/system.md` - Editable system prompt (override via `SYSTEM_PROMPT_PATH` env var)
 
 **LLM Integration**:
-- `backend/rag_integration.py` - RAG orchestration
+- `backend/rag_integration.py` - LLM client + KB init, reads config from env vars
 - `libs/devops-rag/src/devops_rag/rag_engine.py` - Core RAG logic
-- `libs/devops-rag/src/devops_rag/llm_client.py` - LLM provider abstraction
-- `backend/template_engine.py` - Prompt rendering
-- `backend/response_parser.py` - Response parsing
+- `libs/devops-rag/src/devops_rag/llm_client.py` - LLM provider abstraction (OpenAI/Anthropic/Ollama)
 
 **Knowledge Base**:
 - `backend/solution_manager.py` - Solution CRUD
@@ -347,41 +338,29 @@ async def example(session_id: str = Depends(get_session_id)):
 
 1. **Distributed Deployment Issue**: CredentialStore is in-memory. Running 2+ replicas causes authentication failures when requests land on different pods. Use Redis or enforce single replica.
 
-2. **Missing Rate Limiting**: Design doc specifies rate limiting (Requirement 9), but no rate limiter found in codebase. Implement before production.
+2. **Missing Rate Limiting**: Rate limiter exists in `backend/middleware/rate_limiter.py` and is wired into the chat endpoint (20 req/min), but is not applied to other endpoints.
 
-3. **Async Timeout Not Enforced**: `EnrichmentEngine.timeout = 10` is set but never used. Enrichment can hang indefinitely if K8s API is slow.
+3. **PVC Access Mode**: `k8s/pvc.yaml` defaults to ReadWriteOnce. For 2+ replicas, need ReadWriteMany and compatible storage class.
 
-4. **PVC Access Mode**: `k8s/pvc.yaml` defaults to ReadWriteOnce. For 2+ replicas, need ReadWriteMany and compatible storage class.
+4. **CORS Configured for All Origins**: `app.py` has `allow_origins=["*"]`. Restrict to specific domains for production.
 
-5. **CORS Configured for All Origins**: `app.py` has `allow_origins=["*"]`. Restrict to specific domains for production.
+5. **Input Validation Delegated to LLM**: `input_sanitizer.py` was removed. Input validation now relies on the system prompt guardrails and Kubernetes RBAC. The LLM is instructed not to execute destructive operations without explicit approval, but there is no hard-coded pattern matching at the HTTP layer.
 
-6. **AWS Credential Validation Too Strict**: `input_sanitizer.py:194` only accepts AKIA* (permanent credentials). Kion provides ASIA* (temporary). Pattern should be `^A[SK]IA[0-9A-Z]{16}$`.
-
-## Session Status (2026-03-22)
+## Session Status (2026-05-03)
 
 ### Civo Cluster
 - **Cluster**: `bookish-octo-robot` (k3s, 2 nodes, NYC1) — ACTIVE and healthy
-- **kubeconfig fixed**: was pointing to stale IP `212.2.247.66`, now correct `212.2.243.16`
 - **To refresh kubeconfig**: `civo kubernetes config bookish-octo-robot > kubeconfig.yaml`
 - **Cluster upgrade available**: k3s v1.35.0-k3s1 (currently on v1.34.2-k3s1)
 
-### CI Test Fixes (both committed and pushed to main)
-All CI failures are now resolved. Two bugs were fixed:
-
-**Fix 1** — `backend/tests/test_chat_api.py`
-- `test_sanitizer_blocks_shell_commands` was testing that `bash -c 'kubectl delete pod'` and `#!/bin/bash` are blocked
-- The sanitizer was intentionally redesigned to allow DevOps shell syntax; only `rm -rf /` and fork bombs are blocked
-- Updated test to only assert on genuinely destructive patterns
-
-**Fix 2** — `backend/tests/test_solutions_api.py` (root cause of 19 failures in `test_rag_integration.py`)
-- `test_solutions_api.py` was doing `sys.modules['rag_integration'] = MagicMock()` at module level with no cleanup
-- Since pytest collects `test_rag_integration.py` alphabetically before `test_solutions_api.py`, by execution time `sys.modules['rag_integration']` was the MagicMock — so every `@patch('rag_integration.*')` in rag tests patched the mock's attributes instead of the real module
-- Fixed by saving/restoring the real module immediately after the import that needed the mock
-
-### Next Steps / Outstanding Items
-- Monitor CI pipeline for the two pushed commits to confirm green
-- Cluster upgrade available: `civo k3s upgrade bookish-octo-robot --version v1.35.0-k3s1`
-- Known issue (pre-existing): `CredentialStore` is in-memory — 2 replicas will cause auth failures (see Known Issues section)
+### Branch: `improve-api-docs-error-handling`
+Major refactor pending merge:
+- Decomposed monolithic agentic engine into `agentic_engine.py` / `agent_tools.py` / `skills.py`
+- System prompt externalized to `backend/prompts/system.md`
+- Removed `input_sanitizer.py`, `response_parser.py`, `enrichment_engine.py`, `template_engine.py`, `query_router.py`, and `libs/devops-prompts/`
+- RBAC error handling improved: catches `kubernetes.client.exceptions.ApiException` with `e.status == 403`
+- Resource limits added to all Alloy/Prometheus/Grafana components
+- Prometheus retention reduced from 15d to 2d (Civo storage constraint)
 
 ## Reference Documentation
 

@@ -1,0 +1,34 @@
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: devops-chatbot
+  namespace: flux-system
+spec:
+  interval: 5m
+  releaseName: devops-chatbot
+  targetNamespace: devops-chatbot
+  install:
+    createNamespace: true
+    remediation:
+      retries: 3
+  upgrade:
+    remediation:
+      retries: 3
+  chart:
+    spec:
+      chart: ./helm/devops-chatbot
+      sourceRef:
+        kind: GitRepository
+        name: bookish-octo-robot
+        namespace: flux-system
+      interval: 1m
+  values:
+    replicaCount: 1
+    image:
+      repository: ghcr.io/pandew-home/bookish-octo-robot
+      tag: "0.0.0-dev"
+    podLabels:
+      gitSha: "0.0.0-dev"
+    llm:
+      createSecret: false
+      existingSecret: devops-chatbot-secrets

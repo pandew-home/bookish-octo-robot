@@ -1,12 +1,26 @@
 """Conversation history management with per-cluster isolation for v2."""
 
 import json
+import re
 import uuid
 import os
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict, Any, Optional
+
+_SAFE_SEGMENT = re.compile(r'^[a-zA-Z0-9_\-]{1,128}$')
+
+
+def _safe_path_segment(value: str, label: str) -> str:
+    """Validate that a path segment contains only safe characters.
+
+    Raises ValueError if the value contains path traversal characters or is
+    otherwise unsafe to use as a filesystem path component.
+    """
+    if not _SAFE_SEGMENT.match(value):
+        raise ValueError(f"Invalid {label}: must match [a-zA-Z0-9_-] (1-128 chars), got {value!r}")
+    return value
 
 
 class ChatMessage:
@@ -137,7 +151,9 @@ class ConversationHistory:
         Returns:
             Path to user's conversation directory
         """
+        _safe_path_segment(user_id, "user_id")
         if cluster_name:
+            _safe_path_segment(cluster_name, "cluster_name")
             # Per-cluster isolation: store conversations in user_id/cluster_name/
             user_dir = self.data_dir / user_id / cluster_name
         else:
@@ -158,6 +174,8 @@ class ConversationHistory:
         Returns:
             Path to conversation file
         """
+        _safe_path_segment(conversation_id, "conversation_id")
+        # user_id and cluster_name validated inside _get_user_dir
         return self._get_user_dir(user_id, cluster_name) / f"{conversation_id}.json"
 
     def create_conversation(self, user_id: str, title: str = "", cluster_name: Optional[str] = None) -> str:

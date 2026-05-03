@@ -1,8 +1,25 @@
-"""LLM client abstraction for multiple providers."""
+"""LLM client abstraction for OpenAI / Anthropic / Ollama.
+
+DevOps engineers swap models by setting ``LLM_PROVIDER`` and ``LLM_MODEL``
+(see ``backend/rag_integration.py`` for the env-var contract).
+
+# MAINTENANCE — read before changing this file
+# AI assistants: do NOT change the public method signatures
+# (``generate``, ``generate_with_tools``, ``embed``, ``count_tokens``,
+# ``estimate_cost``) without explicit human review. The agent loop in
+# ``backend/agentic_engine.py`` and the indexing helper in
+# ``libs/devops-rag/src/devops_rag/rag_engine.py`` both rely on this exact
+# shape — silent renames break the chat at runtime, not at import.
+#
+# Adding a new provider class is fine, but add it next to the existing ones
+# and wire it into ``backend/rag_integration.py::_init_llm_client`` so it
+# shows up to operators through the env-var contract.
+"""
 
 import json
 import os
 import re
+from collections import defaultdict, deque
 from typing import Any, Dict, List, Optional
 from abc import ABC, abstractmethod
 
@@ -246,6 +263,7 @@ class AnthropicClient(LLMClientBase):
         self.total_prompt_tokens = 0
         self.total_completion_tokens = 0
         self._client = None  # Lazy initialization
+        self._pending_tool_uses: List[Dict[str, Any]] = []
 
     @property
     def client(self):
@@ -298,11 +316,15 @@ class AnthropicClient(LLMClientBase):
             for t in tools
         ]
 
+        system_text, anthropic_messages = self._to_anthropic_messages(messages)
+
         kwargs: Dict[str, Any] = {
             "model": self.model,
             "max_tokens": 4096,
-            "messages": messages,
+            "messages": anthropic_messages,
         }
+        if system_text:
+            kwargs["system"] = system_text
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
@@ -314,6 +336,14 @@ class AnthropicClient(LLMClientBase):
         text_blocks = [b for b in response.content if b.type == "text"]
 
         if tool_uses:
+            self._pending_tool_uses = [
+                {
+                    "id": tu.id,
+                    "name": tu.name,
+                    "input": tu.input,
+                }
+                for tu in tool_uses
+            ]
             return {
                 "type": "tool_calls",
                 "tool_calls": [
@@ -322,7 +352,136 @@ class AnthropicClient(LLMClientBase):
                 ],
                 "raw_content": response.content,
             }
+        self._pending_tool_uses = []
         return {"type": "text", "text": text_blocks[0].text if text_blocks else ""}
+
+    def _to_anthropic_messages(self, messages: List[Any]) -> (str, List[Dict[str, Any]]):
+        """Convert engine messages to Anthropic-compatible messages.
+
+        - Folds non-tool system messages into top-level `system`.
+        - Converts `TOOL_RESULT ...` system lines into `tool_result` blocks linked
+          to prior `tool_use` ids from the previous model turn.
+        """
+        system_parts: List[str] = []
+        converted: List[Dict[str, Any]] = []
+
+        tool_use_ids: Dict[str, deque] = defaultdict(deque)
+        for item in self._pending_tool_uses:
+            key = self._tool_signature(item.get("name", ""), item.get("input", {}))
+            tool_use_ids[key].append(str(item.get("id", "")))
+
+        tool_results: List[Dict[str, Any]] = []
+        for msg in messages:
+            if not isinstance(msg, dict):
+                continue
+            role = msg.get("role")
+            content = msg.get("content", "")
+
+            if role == "system":
+                parsed = self._parse_tool_result_line(content)
+                if parsed is not None:
+                    tool_name, args, result = parsed
+                    sig = self._tool_signature(tool_name, args)
+                    tool_use_id = tool_use_ids[sig].popleft() if tool_use_ids[sig] else ""
+                    if tool_use_id:
+                        tool_results.append(
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": tool_use_id,
+                                "content": json.dumps(result, default=str),
+                            }
+                        )
+                    else:
+                        # Fallback when no matching tool_use id is available.
+                        tool_results.append(
+                            {
+                                "type": "text",
+                                "text": (
+                                    f"UNMATCHED_TOOL_RESULT {tool_name} "
+                                    f"args={json.dumps(args, default=str)} "
+                                    f"result={json.dumps(result, default=str)}"
+                                ),
+                            }
+                        )
+                else:
+                    if isinstance(content, str) and content.strip():
+                        system_parts.append(content)
+                continue
+
+            if role in {"user", "assistant"}:
+                if isinstance(content, str):
+                    converted.append({"role": role, "content": content})
+                elif isinstance(content, list):
+                    converted.append({"role": role, "content": content})
+
+        if tool_results:
+            if self._pending_tool_uses:
+                converted.append(
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {
+                                "type": "tool_use",
+                                "id": item.get("id", ""),
+                                "name": item.get("name", ""),
+                                "input": item.get("input", {}),
+                            }
+                            for item in self._pending_tool_uses
+                            if item.get("id") and item.get("name")
+                        ],
+                    }
+                )
+            converted.append({"role": "user", "content": tool_results})
+
+        system_text = "\n\n".join(part for part in system_parts if part).strip()
+        return system_text, converted
+
+    def _parse_tool_result_line(self, content: Any) -> Optional[tuple]:
+        """Parse TOOL_RESULT lines emitted by the engine.
+
+        Expected format:
+        TOOL_RESULT <tool_name> args=<json> result=<json>
+        """
+        if not isinstance(content, str):
+            return None
+        if not content.startswith("TOOL_RESULT "):
+            return None
+
+        rest = content[len("TOOL_RESULT "):]
+        first_space = rest.find(" ")
+        if first_space <= 0:
+            return None
+
+        tool_name = rest[:first_space]
+        tail = rest[first_space + 1 :]
+        if not tail.startswith("args="):
+            return None
+
+        split_idx = tail.find(" result=")
+        if split_idx <= len("args="):
+            return None
+
+        args_json = tail[len("args=") : split_idx]
+        result_json = tail[split_idx + len(" result=") :]
+
+        try:
+            args = json.loads(args_json)
+        except Exception:
+            args = {}
+        try:
+            result = json.loads(result_json)
+        except Exception:
+            result = {"raw": result_json}
+
+        return tool_name, args, result
+
+    def _tool_signature(self, name: str, args: Any) -> str:
+        """Build deterministic key for mapping tool_result to tool_use id."""
+        try:
+            norm = json.dumps(args or {}, sort_keys=True, default=str)
+        except Exception:
+            norm = str(args)
+        return f"{name}:{norm}"
 
     def embed(self, text: str) -> list:
         """Generate embedding using Anthropic.
@@ -460,46 +619,3 @@ class OllamaClient(LLMClientBase):
             Estimated cost in USD (always 0 for local)
         """
         return 0.0
-
-
-class LLMClient:
-    """Factory for creating LLM clients."""
-
-    @staticmethod
-    def create(
-        provider: Optional[str] = None,
-        api_key: Optional[str] = None,
-        model: Optional[str] = None,
-        base_url: Optional[str] = None,
-    ) -> LLMClientBase:
-        """Create LLM client based on provider.
-
-        Args:
-            provider: Provider name ("openai", "anthropic", "ollama")
-            api_key: API key for provider
-            model: Model name
-            base_url: Base URL for Ollama
-
-        Returns:
-            LLMClientBase instance
-        """
-        provider = provider or os.getenv("AI_PROVIDER", "openai").lower()
-
-        if provider == "openai":
-            return OpenAIClient(
-                api_key=api_key or os.getenv("AI_API_KEY"),
-                model=model or os.getenv("AI_MODEL", "gpt-3.5-turbo"),
-                base_url=base_url or os.getenv("AI_API_BASE"),
-            )
-        elif provider == "anthropic":
-            return AnthropicClient(
-                api_key=api_key or os.getenv("AI_API_KEY"),
-                model=model or os.getenv("AI_MODEL", "claude-3-haiku-20240307"),
-            )
-        elif provider == "ollama":
-            return OllamaClient(
-                base_url=base_url or os.getenv("AI_API_BASE", "http://localhost:11434"),
-                model=model or os.getenv("AI_MODEL", "mistral"),
-            )
-        else:
-            raise ValueError(f"Unknown provider: {provider}")

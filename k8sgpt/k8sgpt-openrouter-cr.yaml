@@ -27,8 +27,9 @@ spec:
   analysis:
     interval: 5m
   noCache: false
-  # Filters: list of analyzer kinds to run. Empty = run all built-in analyzers.
-  # Explicitly list to ensure HorizontalPodAutoscaler and Node are included.
+  # Filters: analyzers relevant to this cluster's workload profile.
+  # Includes all workload, networking, storage, scaling, and webhook types present on k3s.
+  # OLM analyzers excluded — k3s does not run the Operator Lifecycle Manager.
   filters:
     - Pod
     - Log
@@ -36,16 +37,19 @@ spec:
     - ReplicaSet
     - StatefulSet
     - Node
-    - HorizontalPodAutoscaler
+    - ConfigMap
     - PersistentVolumeClaim
     - Service
     - Ingress
     - CronJob
     - Job
-    - NetworkPolicy
+    - HorizontalPodAutoscaler
     - PodDisruptionBudget
+    - NetworkPolicy
     - MutatingWebhookConfiguration
     - ValidatingWebhookConfiguration
     - GatewayClass
     - Gateway
     - HTTPRoute
+  # Do not set integrations at all. Any non-null integrations block currently
+  # triggers operator AddIntegration and panics on nil Trivy response.

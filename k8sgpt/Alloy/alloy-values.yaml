@@ -1,4 +1,12 @@
 alloy:
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 150m
+      memory: 256Mi
+
   configMap:
     create: true
     content: |
@@ -19,55 +27,9 @@ alloy:
         role = "service"
       }
 
-      // Discover pods in k8sgpt-operator-system namespace
-      discovery.kubernetes "k8sgpt_pods" {
-        role = "pod"
-        namespaces {
-          names = ["k8sgpt-operator-system"]
-        }
-      }
-
-      // Collect logs from k8sgpt-operator pods
-      loki.source.kubernetes "k8sgpt_results" {
-        targets    = discovery.kubernetes.k8sgpt_pods.targets
-        forward_to = [loki.process.k8sgpt_results.receiver]
-      }
-
-      // Parse and enrich operator pod logs before forwarding.
-      // k8sgpt emits controller-runtime JSON structured logs; extracting key fields
-      // enables {source="k8sgpt", level="error"} and {source="k8sgpt", level="info"}
-      // filters in Grafana without scanning every log line.
-      loki.process "k8sgpt_results" {
-        forward_to = [loki.write.default.receiver]
-
-        stage.static_labels {
-          values = {
-            source = "k8sgpt",
-          }
-        }
-
-        // Extract fields from controller-runtime JSON logs produced by the k8sgpt pod.
-        // Expected fields: level (info/error/debug), msg, kind, name, namespace, error.
-        stage.json {
-          expressions = {
-            log_level     = "level",
-            log_msg       = "msg",
-            log_kind      = "kind",
-            log_name      = "name",
-            log_namespace = "namespace",
-            log_error     = "error",
-          }
-        }
-
-        // Promote level to a Loki stream label so Grafana can filter by severity
-        // without a full-text scan.  Only label level; high-cardinality fields like
-        // name/namespace stay as log-line metadata.
-        stage.labels {
-          values = {
-            level = "log_level",
-          }
-        }
-      }
+      // CR-only ingestion policy:
+      // Do not scrape k8sgpt operator pod logs with Alloy.
+      // K8sGPT Result CRs are pushed to Loki only by the k8sgpt-result-scraper CronJob.
 
       // Write to Loki
       loki.write "default" {
@@ -77,7 +39,7 @@ alloy:
 
         external_labels = {
           cluster = "bookish-octo-robot",  // Set via Kubernetes env variable (see extraEnv below)
-          source  = "k8sgpt",
+          source  = "alloy",
         }
       }
 

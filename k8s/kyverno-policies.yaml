@@ -405,7 +405,7 @@ metadata:
       Only images from approved registries should be allowed.
       Modify the allowed registries list as needed.
 spec:
-  validationFailureAction: audit  # Set to 'enforce' when ready
+  validationFailureAction: enforce
   background: true
   rules:
   - name: check-image-registry
@@ -436,7 +436,7 @@ metadata:
       All resources should have standard labels for organization
       and management.
 spec:
-  validationFailureAction: audit  # Set to 'enforce' when ready
+  validationFailureAction: enforce
   background: true
   rules:
   - name: check-labels
@@ -470,7 +470,7 @@ metadata:
       RBAC roles should not have broad access to secrets. Use
       resourceNames to restrict access to specific secrets.
 spec:
-  validationFailureAction: audit  # Set to 'enforce' after review
+  validationFailureAction: enforce
   background: true
   rules:
   - name: check-secrets-access
@@ -509,7 +509,7 @@ metadata:
       All containers should have liveness and readiness probes
       defined for proper health monitoring.
 spec:
-  validationFailureAction: audit  # Set to 'enforce' when ready
+  validationFailureAction: enforce
   background: true
   rules:
   - name: check-probes
@@ -543,7 +543,7 @@ metadata:
       Container images should use specific tags, not 'latest',
       for reproducibility and security.
 spec:
-  validationFailureAction: audit  # Set to 'enforce' when ready
+  validationFailureAction: enforce
   background: true
   rules:
   - name: check-image-tag

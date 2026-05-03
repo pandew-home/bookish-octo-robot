@@ -8,7 +8,7 @@ metadata:
     version: v2.0
     git-sha: "1121c46"
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: devops-chatbot
@@ -19,7 +19,6 @@ spec:
         version: v2.0
         git-sha: "1121c46"
       annotations:
-        # Security profiles
         seccomp.security.alpha.kubernetes.io/pod: runtime/default
     spec:
       imagePullSecrets:

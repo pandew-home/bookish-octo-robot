@@ -1,3 +1,4 @@
+# Chart version: k8sgpt-operator/k8sgpt-operator v0.2.27
 replicaCount: 1
 
 resources:
@@ -12,6 +13,9 @@ serviceMonitor:
   enabled: true
 
 metrics:
+  enabled: true
+
+dynamicRBAC:
   enabled: true
 
 # resultLogging creates a k8sgpt-metrics Service in the same namespace, which

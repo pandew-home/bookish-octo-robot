@@ -1,160 +1,21 @@
 name: Deploy K8sGPT Operator & Observability
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - 'k8sgpt/**'
-      - '.github/workflows/deploy-k8sgpt.yml'
   workflow_dispatch:
-
-env:
-  CLUSTER_NAME: bookish-octo-robot
 
 permissions:
   contents: read
 
 jobs:
   deploy:
-    name: Deploy K8sGPT & Observability
-    runs-on: ubuntu-latest
-    environment: production
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Civo CLI
-        run: curl -sL https://civo.com/get | sh
-
-      - name: Configure kubectl
-        run: |
-          civo apikey save deploy-key ${{ secrets.CIVO_API_KEY }}
-          civo apikey current deploy-key
-          civo kubernetes config ${{ env.CLUSTER_NAME }} --save
-
-      - name: Verify cluster access
-        run: kubectl get nodes
-
-      - name: Add Helm repos
-        run: |
-          helm repo add k8sgpt-operator https://charts.k8sgpt.ai/
-          helm repo add grafana https://grafana.github.io/helm-charts
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-          helm repo update
-
-      - name: Create namespace
-        run: kubectl apply -f k8sgpt/namespace.yaml
-
-      - name: Create k8sgpt AI secret
-        run: |
-          kubectl create secret generic k8sgpt-ai-secret \
-            --from-literal=openai-api-key=${{ secrets.OPENROUTER_API_KEY }} \
-            -n k8sgpt-operator-system \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-      - name: Deploy K8sGPT operator
-        run: |
-          helm upgrade --install k8sgpt-operator k8sgpt-operator/k8sgpt-operator \
-            -n k8sgpt-operator-system \
-            --version 0.2.26 \
-            --values k8sgpt/helm-values.yaml \
-            --wait --timeout=120s
-
-      - name: Apply custom RBAC
-        run: kubectl apply -f k8sgpt/rbac.yaml
-
-      - name: Apply K8sGPT CR
-        run: kubectl apply -f k8sgpt/k8sgpt-openrouter-cr.yaml
-
-      - name: Wait for K8sGPT CR ready
-        run: |
-          kubectl wait k8sgpt/k8sgpt-openrouter \
-            -n k8sgpt-operator-system \
-            --for=condition=Ready \
-            --timeout=120s \
-          || kubectl describe k8sgpt/k8sgpt-openrouter -n k8sgpt-operator-system
-
-      - name: Deploy Alloy & observability manifests
-        run: |
-          kubectl apply -f k8sgpt/Alloy/alloy-rbac.yaml
-          helm upgrade --install alloy grafana/alloy \
-            -n monitoring --create-namespace \
-            --values k8sgpt/Alloy/alloy-values.yaml \
-            --wait --timeout=120s
-          kubectl apply -f k8sgpt/Alloy/alloy-cleanup-cronjob.yaml
-          kubectl apply -f k8sgpt/Alloy/k8sgpt-result-scraper.yaml
-
-      - name: Apply monitoring stack Helm overrides
-        run: |
-          helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
-            -n monitoring --create-namespace --reuse-values \
-            --values k8sgpt/Alloy/kube-prometheus-stack-values.yaml
-          # Loki already deployed in loki namespace - skip upgrade
-
-      - name: Register Loki datasource in Grafana via API
-        run: |
-          GRAFANA_IP=$(kubectl get svc prometheus-grafana -n monitoring \
-            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          if [ -z "$GRAFANA_IP" ]; then
-            echo "Grafana IP not available, skipping Loki datasource registration"
-            exit 0
-          fi
-          GRAFANA_URL="http://${GRAFANA_IP}"
-          GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
-            -o jsonpath='{.data.admin-password}' | base64 -d)
-
-          # Wait for Grafana to be reachable
-          for i in $(seq 1 6); do
-            if curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" > /dev/null 2>&1; then
-              break
-            fi
-            echo "Waiting for Grafana... attempt $i"
-            sleep 5
-          done
-
-          curl -s -X POST \
-            -H "Content-Type: application/json" \
-            -u "admin:${GRAFANA_PASS}" \
-            -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
-            "${GRAFANA_URL}/api/datasources" \
-            || curl -s -X PUT \
-              -H "Content-Type: application/json" \
-              -u "admin:${GRAFANA_PASS}" \
-              -d '{"name":"Loki","type":"loki","uid":"loki","access":"proxy","url":"http://loki.loki.svc.cluster.local:3100","isDefault":false,"jsonData":{"maxLines":1000}}' \
-              "${GRAFANA_URL}/api/datasources/uid/loki" \
-            || echo "Loki datasource registration skipped"
-          echo "Loki datasource step completed"
-
-      - name: Push dashboard to Grafana via API
-        run: |
-          # Get Grafana external IP and admin password
-          GRAFANA_IP=$(kubectl get svc prometheus-grafana -n monitoring \
-            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-          GRAFANA_URL="http://${GRAFANA_IP}"
-          GRAFANA_PASS=$(kubectl get secret prometheus-grafana -n monitoring \
-            -o jsonpath='{.data.admin-password}' | base64 -d)
-
-          # Wait for Grafana to be reachable
-          for i in $(seq 1 12); do
-            curl -sf -u "admin:${GRAFANA_PASS}" "${GRAFANA_URL}/api/health" && break
-            echo "Waiting for Grafana... attempt $i"
-            sleep 10
-          done
-
-          # Build and push K8sGPT Findings & Fixes dashboard
-          python3 scripts/build_grafana_dashboard.py
-
-          RESULT=$(curl -sf -X POST \
-            -H "Content-Type: application/json" \
-            -u "admin:${GRAFANA_PASS}" \
-            -d @/tmp/grafana-payload.json \
-            "${GRAFANA_URL}/api/dashboards/db")
-          echo "Dashboard import: ${RESULT}"
-          echo "URL: ${GRAFANA_URL}/d/k8sgpt-findings-v2"
-
-      - name: Verify deployment
-        run: |
-          kubectl get pods -n k8sgpt-operator-system
-          kubectl get pods -n monitoring
-          kubectl get k8sgpts -n k8sgpt-operator-system
+    uses: ./.github/workflows/k8sgpt-deploy-shared.yml
+    with:
+      cluster_name: bookish-octo-robot
+      civo_region: NYC1
+      operator_namespace: k8sgpt-operator-system
+      grafana_access_mode: ingress-subpath
+      grafana_host: 17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com
+      grafana_subpath: /grafana
+    secrets:
+      civo_api_key: ${{ secrets.CIVO_API_KEY }}
+      openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}

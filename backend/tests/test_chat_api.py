@@ -16,30 +16,22 @@ Tests cover:
 """
 
 import pytest
-from unittest.mock import Mock, MagicMock, patch, AsyncMock, call
-from datetime import datetime, timedelta
-from fastapi.testclient import TestClient
+from unittest.mock import Mock, patch, AsyncMock
+from datetime import datetime, timezone
 from fastapi import HTTPException
 from pydantic import ValidationError
 
 from api.chat import (
     ChatRequest,
     ChatResponse,
-    FeedbackRequest,
     ExportRequest,
     process_chat_query,
-    submit_feedback,
-    export_conversation,
     get_chat_history,
     get_conversation_list,
     get_conversation,
 )
-from enrichment_engine import EnrichedContext
 from k8sgpt_reader import K8sGPTResult
-from conversation_history import ConversationHistory, Conversation, ChatMessage
-from query_router import EnrichmentPlan, QueryCategory
 from credential_store import StoredCredentials
-from input_sanitizer import InputSanitizer
 
 
 @pytest.fixture
@@ -78,7 +70,7 @@ def mock_k8sgpt_results():
             problem="Pod nginx is in CrashLoopBackOff",
             solution="Check pod logs with 'kubectl logs nginx' and fix the issue",
             analyzer="Pod",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={
                 "resource_name": "nginx",
                 "error": ["CrashLoopBackOff"],
@@ -93,7 +85,7 @@ def mock_k8sgpt_results():
             problem="Pod worker was OOMKilled",
             solution="Increase memory limit in pod spec",
             analyzer="Pod",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={
                 "resource_name": "worker",
                 "error": ["OOMKilled"],
@@ -108,7 +100,7 @@ def mock_k8sgpt_results():
             problem="Deployment replicas are pending",
             solution="Check node capacity and add more nodes if needed",
             analyzer="Deployment",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={
                 "resource_name": "app",
                 "error": ["Pending"],
@@ -117,62 +109,6 @@ def mock_k8sgpt_results():
         ),
     ]
     return results
-
-
-@pytest.fixture
-def mock_enriched_context(mock_k8sgpt_results):
-    """Create mock enriched context."""
-    context = EnrichedContext()
-    context.k8sgpt_results = mock_k8sgpt_results
-    context.pod_data = {
-        "pods": [
-            {
-                "name": "nginx",
-                "namespace": "default",
-                "phase": "Failed",
-                "container_statuses": [
-                    {
-                        "name": "nginx",
-                        "restart_count": 5,
-                        "last_state": {"terminated": {"reason": "CrashLoopBackOff"}},
-                    }
-                ],
-            }
-        ]
-    }
-    context.deployment_data = {
-        "deployments": [
-            {
-                "name": "app",
-                "namespace": "staging",
-                "replicas": 3,
-                "ready_replicas": 0,
-                "updated_replicas": 3,
-            }
-        ]
-    }
-    context.enrichment_plan = {
-        "categories": ["POD_ISSUE", "DEPLOYMENT_STATUS"],
-        "resource_names": ["nginx", "app"],
-        "namespaces": ["default", "staging"],
-        "include_aws_context": False,
-        "time_range": None,
-    }
-    context.cluster_name = "test-cluster"
-    context.errors = []
-    return context
-
-
-@pytest.fixture
-def mock_enrichment_plan():
-    """Create mock enrichment plan."""
-    return EnrichmentPlan(
-        categories=[QueryCategory.POD_ISSUE],
-        resource_names=["nginx"],
-        namespaces=["default"],
-        include_aws_context=False,
-        time_range=timedelta(hours=1),
-    )
 
 
 @pytest.fixture
@@ -206,24 +142,18 @@ class TestChatQueryEndpoint:
         """Test ChatRequest model accepts valid input."""
         request = ChatRequest(
             query="Why is my pod crashing?",
-            session_id="session_abc123",
             user_id="user_123",
-            cluster_name="test-cluster",
         )
 
         assert request.query == "Why is my pod crashing?"
-        assert request.session_id == "session_abc123"
         assert request.user_id == "user_123"
-        assert request.cluster_name == "test-cluster"
         assert request.max_tokens == 500  # Default
-        assert request.is_export is False  # Default
 
     def test_chat_request_validation_min_length(self):
         """Test ChatRequest rejects empty query."""
         with pytest.raises(ValidationError):
             ChatRequest(
                 query="",
-                session_id="session_abc123",
                 user_id="user_123",
             )
 
@@ -233,7 +163,6 @@ class TestChatQueryEndpoint:
         with pytest.raises(ValidationError):
             ChatRequest(
                 query=long_query,
-                session_id="session_abc123",
                 user_id="user_123",
             )
 
@@ -242,7 +171,6 @@ class TestChatQueryEndpoint:
         with pytest.raises(ValidationError):
             ChatRequest(
                 query="test query",
-                session_id="session_abc123",
                 user_id="user_123",
                 max_tokens=2001,
             )
@@ -252,30 +180,24 @@ class TestChatQueryEndpoint:
         with pytest.raises(ValidationError):
             ChatRequest(
                 query="test query",
-                session_id="session_abc123",
                 user_id="user_123",
                 max_tokens=99,
             )
 
     @pytest.mark.asyncio
     @patch("api.chat.rate_limiter")
-    @patch("api.chat.input_sanitizer")
-    @patch("api.chat.get_credentials_for_session")
     async def test_process_chat_query_rate_limit_exceeded(
-        self, mock_get_creds, mock_sanitizer, mock_rate_limiter
+        self, mock_rate_limiter
     ):
         """Test rate limiting is enforced."""
         # Setup mocks
         mock_rate_limiter.check_rate_limit = AsyncMock(
             return_value=(False, 30, 0)  # Not allowed, 30 sec retry, 0 remaining
         )
-        mock_sanitizer.validate_query.return_value = (True, None, "test query")
 
         request = ChatRequest(
             query="test query",
-            session_id="session_abc123",
             user_id="user_123",
-            cluster_name="test-cluster",
         )
 
         with pytest.raises(HTTPException) as exc_info:
@@ -284,132 +206,12 @@ class TestChatQueryEndpoint:
         assert exc_info.value.status_code == 429
         assert "Rate limit exceeded" in str(exc_info.value.detail)
 
-    @pytest.mark.asyncio
-    @patch("api.chat.input_sanitizer")
-    async def test_process_chat_query_invalid_input(self, mock_sanitizer):
-        """Test invalid input is rejected."""
-        # Setup mock
-        mock_sanitizer.validate_query.return_value = (
-            False,
-            "Query contains shell commands",
-            None,
-        )
-
-        request = ChatRequest(
-            query="bash -c 'echo hello'",
-            session_id="session_abc123",
-            user_id="user_123",
-            cluster_name="test-cluster",
-        )
-
-        with pytest.raises(HTTPException) as exc_info:
-            await process_chat_query(request)
-
-        assert exc_info.value.status_code == 400
-        assert "shell commands" in str(exc_info.value.detail)
-
-    @pytest.mark.asyncio
-    @patch("api.chat.rate_limiter")
-    @patch("api.chat.input_sanitizer")
-    @patch("api.chat.get_credentials_for_session")
-    async def test_process_chat_query_missing_credentials(
-        self, mock_get_creds, mock_sanitizer, mock_rate_limiter
-    ):
-        """Test missing credentials returns 401."""
-        # Setup mocks
-        mock_sanitizer.validate_query.return_value = (True, None, "test query")
-        mock_rate_limiter.check_rate_limit = AsyncMock(
-            return_value=(True, None, 20)
-        )
-        mock_get_creds.return_value = None
-
-        request = ChatRequest(
-            query="test query",
-            session_id="invalid_session",
-            user_id="user_123",
-            cluster_name="test-cluster",
-        )
-
-        with pytest.raises(HTTPException) as exc_info:
-            await process_chat_query(request)
-
-        assert exc_info.value.status_code == 401
-        assert "No credentials found" in str(exc_info.value.detail)
-
-    @pytest.mark.asyncio
-    @patch("api.chat.rate_limiter")
-    @patch("api.chat.input_sanitizer")
-    @patch("api.chat.get_credentials_for_session")
-    async def test_process_chat_query_missing_cluster(
-        self, mock_get_creds, mock_sanitizer, mock_rate_limiter, mock_credentials
-    ):
-        """Test missing cluster selection returns 400."""
-        # Setup mocks
-        mock_sanitizer.validate_query.return_value = (True, None, "test query")
-        mock_rate_limiter.check_rate_limit = AsyncMock(
-            return_value=(True, None, 20)
-        )
-        mock_get_creds.return_value = mock_credentials
-
-        request = ChatRequest(
-            query="test query",
-            session_id="session_abc123",
-            user_id="user_123",
-            cluster_name=None,  # No cluster
-        )
-
-        with pytest.raises(HTTPException) as exc_info:
-            await process_chat_query(request)
-
-        assert exc_info.value.status_code == 400
-        assert "No cluster selected" in str(exc_info.value.detail)
-
-    @pytest.mark.asyncio
-    @patch("api.chat.rate_limiter")
-    @patch("api.chat.input_sanitizer")
-    @patch("api.chat.get_credentials_for_session")
-    async def test_process_chat_query_cluster_not_found(
-        self,
-        mock_get_creds,
-        mock_sanitizer,
-        mock_rate_limiter,
-        mock_credentials,
-    ):
-        """Test non-existent cluster returns 404."""
-        # Setup mocks
-        mock_sanitizer.validate_query.return_value = (True, None, "test query")
-        mock_rate_limiter.check_rate_limit = AsyncMock(
-            return_value=(True, None, 20)
-        )
-        mock_get_creds.return_value = mock_credentials
-
-        # Mock cluster discovery to return clusters
-        with patch("cluster_manager.discover_clusters", new_callable=AsyncMock) as mock_discover:
-            mock_discover.return_value = [
-                {"name": "cluster-1", "version": "v1.28"},
-                {"name": "cluster-2", "version": "v1.27"},
-            ]
-
-            request = ChatRequest(
-                query="test query",
-                session_id="session_abc123",
-                user_id="user_123",
-                cluster_name="nonexistent-cluster",
-            )
-
-            with pytest.raises(HTTPException) as exc_info:
-                await process_chat_query(request)
-
-            assert exc_info.value.status_code == 404
-            assert "not found or not accessible" in str(exc_info.value.detail)
-
     def test_chat_response_structure(self, mock_k8sgpt_results):
         """Test ChatResponse has all required fields."""
         response = ChatResponse(
             query="test query",
             response="test response",
             conversation_id="conv_123",
-            citations=[],
             k8sgpt_findings=[
                 {
                     "name": result.name,
@@ -420,19 +222,9 @@ class TestChatQueryEndpoint:
                 }
                 for result in mock_k8sgpt_results[:5]
             ],
-            safety_warnings=[],
-            enrichment_plan={
-                "categories": ["POD_ISSUE"],
-                "resource_names": ["nginx"],
-                "namespaces": ["default"],
-                "include_aws_context": False,
-                "time_range": None,
-            },
             token_usage={"prompt_tokens": 150, "completion_tokens": 50},
             errors=[],
             metadata={
-                "cluster": "test-cluster",
-                "cluster_version": "v1.28",
                 "k8sgpt_result_count": 3,
             },
         )
@@ -443,7 +235,6 @@ class TestChatQueryEndpoint:
         assert len(response.k8sgpt_findings) == 3
         assert response.k8sgpt_findings[0]["kind"] == "Pod"
         assert response.k8sgpt_findings[0]["severity"] == "high"
-        assert "categories" in response.enrichment_plan
 
     def test_chat_response_k8sgpt_findings_serialization(self):
         """Test K8sGPT findings are properly serialized in response."""
@@ -476,7 +267,7 @@ class TestChatQueryEndpoint:
         assert response.k8sgpt_findings[1]["problem"] == "Pod was OOMKilled"
 
         # Verify serialization to dict works
-        response_dict = response.dict()
+        response_dict = response.model_dump()
         assert "k8sgpt_findings" in response_dict
         assert len(response_dict["k8sgpt_findings"]) == 2
 
@@ -489,145 +280,10 @@ class TestChatQueryEndpoint:
             # All optional fields omitted
         )
 
-        assert response.citations == []
         assert response.k8sgpt_findings == []
-        assert response.safety_warnings == []
         assert response.errors == []
         assert response.metadata == {}
         assert response.token_usage == {}
-
-
-class TestInputSanitizationFlow:
-    """Test input sanitization integration in chat API."""
-
-    def test_sanitizer_blocks_shell_commands(self):
-        """Test that destructive shell commands are blocked.
-
-        Note: General shell syntax (bash -c, shebangs, kubectl, etc.) is intentionally
-        allowed — this is a DevOps chatbot where users routinely include such syntax in
-        their questions. Only genuinely destructive patterns (rm -rf /, fork bombs) are
-        blocked.
-        """
-        sanitizer = InputSanitizer()
-
-        queries = [
-            "$(rm -rf /)",   # destructive rm targeting root filesystem
-            "rm -rf /tmp",   # rm -rf / variant
-        ]
-
-        for query in queries:
-            is_valid, error, _ = sanitizer.validate_query(query)
-            assert is_valid is False, f"Should block: {query}"
-
-    def test_sanitizer_allows_safe_questions(self):
-        """Test that safe questions are allowed."""
-        sanitizer = InputSanitizer()
-
-        queries = [
-            "Why is my pod crashing?",
-            "How do I debug a deployment?",
-            "What's the status of my services?",
-        ]
-
-        for query in queries:
-            is_valid, error, _ = sanitizer.validate_query(query)
-            assert is_valid is True, f"Should allow: {query}"
-
-    def test_sanitizer_cleans_backticks(self):
-        """Test that backticks are cleaned from queries."""
-        sanitizer = InputSanitizer()
-
-        query = "Show me `pod` status"
-        is_valid, error, cleaned = sanitizer.validate_query(query)
-
-        assert is_valid is True
-        assert "`" not in cleaned
-
-
-class TestQueryClassificationFlow:
-    """Test query classification integration."""
-
-    def test_query_classification_pod_issue(self):
-        """Test pod issue classification."""
-        from query_router import QueryRouter
-
-        router = QueryRouter()
-        plan = router.classify("Why is my pod crashing?")
-
-        assert QueryCategory.POD_ISSUE in plan.categories
-
-    def test_query_classification_deployment_issue(self):
-        """Test deployment issue classification."""
-        from query_router import QueryRouter
-
-        router = QueryRouter()
-        plan = router.classify("My deployment is not rolling out")
-
-        assert QueryCategory.DEPLOYMENT_STATUS in plan.categories
-
-    def test_query_classification_extracts_namespaces(self):
-        """Test that classification extracts namespaces."""
-        from query_router import QueryRouter
-
-        router = QueryRouter()
-        plan = router.classify("Show me pods in namespace production")
-
-        # Should extract namespace from query
-        assert plan.namespaces is not None
-
-    def test_enrichment_plan_structure(self, mock_enrichment_plan):
-        """Test enrichment plan has all required fields."""
-        assert mock_enrichment_plan.categories is not None
-        assert mock_enrichment_plan.resource_names is not None
-        assert mock_enrichment_plan.namespaces is not None
-        assert mock_enrichment_plan.include_aws_context is not None
-
-
-class TestEnrichmentFlow:
-    """Test enrichment context integration."""
-
-    def test_enriched_context_includes_k8sgpt_results(
-        self, mock_enriched_context, mock_k8sgpt_results
-    ):
-        """Test enriched context contains K8sGPT results."""
-        assert mock_enriched_context.k8sgpt_results is not None
-        assert len(mock_enriched_context.k8sgpt_results) == 3
-        assert all(isinstance(r, K8sGPTResult) for r in mock_enriched_context.k8sgpt_results)
-
-    def test_enriched_context_includes_pod_data(self, mock_enriched_context):
-        """Test enriched context contains pod data."""
-        assert mock_enriched_context.pod_data is not None
-        assert "pods" in mock_enriched_context.pod_data
-        assert len(mock_enriched_context.pod_data["pods"]) > 0
-
-    def test_enriched_context_includes_deployment_data(self, mock_enriched_context):
-        """Test enriched context contains deployment data."""
-        assert mock_enriched_context.deployment_data is not None
-        assert "deployments" in mock_enriched_context.deployment_data
-
-    def test_enriched_context_includes_enrichment_plan(self, mock_enriched_context):
-        """Test enriched context contains enrichment plan metadata."""
-        assert mock_enriched_context.enrichment_plan is not None
-        assert "categories" in mock_enriched_context.enrichment_plan
-        assert "resource_names" in mock_enriched_context.enrichment_plan
-
-    def test_enriched_context_tracks_errors(self, mock_enriched_context):
-        """Test enriched context has error tracking."""
-        assert isinstance(mock_enriched_context.errors, list)
-
-    def test_enriched_context_merge(self):
-        """Test enriched context can merge another context."""
-        context1 = EnrichedContext()
-        context1.pod_data = {"pods": [{"name": "pod1"}]}
-
-        context2 = EnrichedContext()
-        context2.pod_data = {"pods": [{"name": "pod2"}]}
-        context2.errors = ["error1"]
-
-        context1.merge(context2)
-
-        assert context1.pod_data == {"pods": [{"name": "pod2"}]}
-        assert "error1" in context1.errors
 
 
 class TestK8sGPTFindings:
@@ -643,7 +299,7 @@ class TestK8sGPTFindings:
             problem="CrashLoopBackOff",
             solution="Check logs",
             analyzer="Pod",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             details={"error": ["CrashLoopBackOff"]},
         )
 
@@ -687,7 +343,7 @@ class TestK8sGPTFindings:
                 problem="Minor issue",
                 solution="Minor fix",
                 analyzer="Pod",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details={},
             ),
             K8sGPTResult(
@@ -698,7 +354,7 @@ class TestK8sGPTFindings:
                 problem="Critical issue",
                 solution="Critical fix",
                 analyzer="Pod",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details={},
             ),
             K8sGPTResult(
@@ -709,7 +365,7 @@ class TestK8sGPTFindings:
                 problem="Medium issue",
                 solution="Medium fix",
                 analyzer="Pod",
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 details={},
             ),
         ]
@@ -735,23 +391,14 @@ class TestErrorHandling:
         assert "503" in source
 
     def test_http_exception_for_validation_errors(self):
-        """Test that validation errors would return HTTP 400 based on code structure."""
-        # The chat.py code at lines 336-339 handles ValueError -> 400
+        """Test that rate limiting returns HTTP 429 based on code structure."""
         import inspect
         source = inspect.getsource(process_chat_query)
-        assert "ValueError" in source
-        assert "400" in source
+        assert "429" in source
+        assert "Rate limit" in source
 
     def test_http_exception_for_auth_errors(self):
-        """Test that auth errors would return HTTP 401 based on code structure."""
-        # The chat.py code at lines 341-349 handles 401 Unauthorized
-        import inspect
-        source = inspect.getsource(process_chat_query)
-        assert "401" in source or "unauthorized" in source.lower()
-
-    def test_http_exception_for_rbac_errors(self):
-        """Test that RBAC errors would return HTTP 403 based on code structure."""
-        # The chat.py code at lines 350-356 handles 403 Forbidden
+        """Test that RBAC errors return HTTP 403 based on code structure."""
         import inspect
         source = inspect.getsource(process_chat_query)
         assert "403" in source or "forbidden" in source.lower()
@@ -759,29 +406,6 @@ class TestErrorHandling:
 
 class TestConversationHistoryIntegration:
     """Test conversation history integration in chat API."""
-
-    def test_feedback_request_structure(self):
-        """Test FeedbackRequest model."""
-        feedback = FeedbackRequest(
-            query="test query",
-            response="test response",
-            rating=5,
-            comment="Great response",
-            session_id="session_123",
-        )
-
-        assert feedback.rating == 5
-        assert feedback.comment == "Great response"
-
-    def test_feedback_request_rating_validation(self):
-        """Test FeedbackRequest rating validation."""
-        with pytest.raises(ValidationError):
-            FeedbackRequest(
-                query="test",
-                response="test",
-                rating=6,  # Invalid, > 5
-                session_id="session_123",
-            )
 
     def test_export_request_structure(self):
         """Test ExportRequest model."""
@@ -803,8 +427,8 @@ class TestConversationHistoryIntegration:
         mock_conv = Mock()
         mock_conv.id = "conv_123"
         mock_conv.messages = [
-            Mock(role="user", content="test", timestamp=datetime.utcnow()),
-            Mock(role="assistant", content="response", timestamp=datetime.utcnow()),
+            Mock(role="user", content="test", timestamp=datetime.now(timezone.utc)),
+            Mock(role="assistant", content="response", timestamp=datetime.now(timezone.utc)),
         ]
 
         mock_hist.get_user_conversations.return_value = [mock_conv]
@@ -828,15 +452,15 @@ class TestConversationHistoryIntegration:
         mock_conv1.id = "conv_1"
         mock_conv1.title = "First Conversation"
         mock_conv1.messages = [Mock(content="test message")]
-        mock_conv1.created_at = datetime.utcnow()
-        mock_conv1.updated_at = datetime.utcnow()
+        mock_conv1.created_at = datetime.now(timezone.utc)
+        mock_conv1.updated_at = datetime.now(timezone.utc)
 
         mock_conv2 = Mock()
         mock_conv2.id = "conv_2"
         mock_conv2.title = "Second Conversation"
         mock_conv2.messages = [Mock(content="another message")]
-        mock_conv2.created_at = datetime.utcnow()
-        mock_conv2.updated_at = datetime.utcnow()
+        mock_conv2.created_at = datetime.now(timezone.utc)
+        mock_conv2.updated_at = datetime.now(timezone.utc)
 
         mock_hist.get_user_conversations.return_value = [mock_conv1, mock_conv2]
 
@@ -857,11 +481,11 @@ class TestConversationHistoryIntegration:
         mock_conv = Mock()
         mock_conv.id = "conv_123"
         mock_conv.title = "Test Conversation"
-        mock_conv.created_at = datetime.utcnow()
-        mock_conv.updated_at = datetime.utcnow()
+        mock_conv.created_at = datetime.now(timezone.utc)
+        mock_conv.updated_at = datetime.now(timezone.utc)
         mock_conv.messages = [
-            Mock(role="user", content="question", timestamp=datetime.utcnow()),
-            Mock(role="assistant", content="answer", timestamp=datetime.utcnow()),
+            Mock(role="user", content="question", timestamp=datetime.now(timezone.utc)),
+            Mock(role="assistant", content="answer", timestamp=datetime.now(timezone.utc)),
         ]
 
         mock_hist.get_conversation.return_value = mock_conv
