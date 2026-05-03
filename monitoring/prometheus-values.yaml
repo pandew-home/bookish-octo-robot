@@ -1,0 +1,46 @@
+grafana:
+  service:
+    type: NodePort
+    nodePort: 30300
+
+  plugins:
+    - marcusolsson-json-datasource
+
+  env:
+    GF_PLUGINS_ALLOW_LOADING_UNSIGNED_PLUGINS: "yesoreyeram-infinity-datasource"
+    
+  envValueFrom:
+    GRAFANA_K8SGPT_TOKEN:
+      secretKeyRef:
+        name: alloy-k8sgpt-grafana-token
+        key: token
+
+  additionalDataSources:
+    - name: K8sGPT Results API
+      type: marcusolsson-json-datasource
+      uid: k8sgpt-k8s-api
+      access: proxy
+      url: "https://kubernetes.default.svc"
+      isDefault: false
+      jsonData:
+        tlsSkipVerify: true
+        httpHeaderName1: "Authorization"
+      secureJsonData:
+        httpHeaderValue1: "Bearer ${GRAFANA_K8SGPT_TOKEN}"
+
+  grafana.ini:
+    analytics:
+      check_for_updates: true
+    log:
+      mode: console
+    paths:
+      data: /var/lib/grafana/
+      logs: /var/log/grafana
+      plugins: /var/lib/grafana/plugins
+      provisioning: /etc/grafana/provisioning
+    server:
+      domain: ""
+      root_url: "%(protocol)s://%(domain)s/grafana"
+      serve_from_sub_path: true
+    unified_storage:
+      index_path: /var/lib/grafana-search/bleve

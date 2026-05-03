@@ -1,0 +1,18 @@
+# Strategic merge patch to expose Grafana as NodePort on 30300.
+# Apply with: kubectl patch svc kube-prometheus-stack-grafana -n monitoring --patch-file grafana-nodeport-patch.yaml
+# Or: kubectl apply -f grafana-nodeport-patch.yaml
+#
+# NOTE: This overrides the Helm-managed ClusterIP service.
+# Re-running `helm upgrade` will revert it — reapply this patch after upgrades.
+apiVersion: v1
+kind: Service
+metadata:
+  name: kube-prometheus-stack-grafana
+  namespace: monitoring
+spec:
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 3000
+      nodePort: 30300
+      protocol: TCP
