@@ -1,16 +1,36 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { KionCredentials, KubeconfigCredentials, KubeconfigUpload, KubeconfigParseResponse, KubeconfigAuthRequest } from '../types/credentials';
 
 /**
- * Base API URL - defaults to /api for production, can be overridden for development
+ * Get the current API base URL (checked at request time, not module load time)
+ * This allows runtime configuration to be loaded after module imports.
+ * 
+ * Base API URL determination (in order of precedence):
+ * 1. Runtime config from /api/config (window.__CONFIG__.apiBaseUrl)
+ * 2. Build-time env var REACT_APP_API_URL
+ * 3. Default /api
  */
-const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
+function getApiBaseUrl(): string {
+  // Check runtime config first (loaded by initializeApp in index.tsx)
+  const runtimeConfig = (window as any).__CONFIG__;
+  if (runtimeConfig && runtimeConfig.apiBaseUrl) {
+    return runtimeConfig.apiBaseUrl;
+  }
+  
+  // Fall back to build-time environment variable
+  if (process.env.REACT_APP_API_URL) {
+    return process.env.REACT_APP_API_URL;
+  }
+  
+  // Final default
+  return '/api';
+}
 
 /**
  * Axios instance with default configuration
+ * Uses a request interceptor to dynamically determine baseURL at request time
  */
 const apiClient: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
   timeout: 30000, // 30 seconds
   headers: {
     'Content-Type': 'application/json',
@@ -19,9 +39,14 @@ const apiClient: AxiosInstance = axios.create({
 });
 
 /**
- * Request interceptor — attach session ID from localStorage as x-session-id header
+ * Request interceptor — set baseURL dynamically and attach session ID
  */
 apiClient.interceptors.request.use((config) => {
+  // Dynamically set baseURL at request time (supports runtime config changes)
+  const baseUrl = getApiBaseUrl();
+  config.baseURL = baseUrl;
+  
+  // Attach session ID from localStorage as x-session-id header
   const sessionId = localStorage.getItem('sessionId');
   if (sessionId) {
     config.headers['x-session-id'] = sessionId;

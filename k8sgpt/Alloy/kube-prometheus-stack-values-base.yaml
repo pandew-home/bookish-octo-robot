@@ -1,0 +1,56 @@
+# Base kube-prometheus-stack values - shared across all clusters
+# Contains: generic Grafana settings, Loki datasource, and prometheus basic config
+# Cluster-specific overrides (ingress, service type, root_url): apply in separate values file
+# Applied with: helm upgrade kube-prometheus-stack ... --values base.yaml --values <cluster-override>.yaml
+
+grafana:
+  # Service exposure mode is cluster-specific; see cluster-override values
+  # Datasource configuration is shared and applies to all ingress modes (NodePort, Traefik, etc.)
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      uid: loki
+      access: proxy
+      url: http://loki.loki.svc.cluster.local:3100
+      isDefault: false
+      version: 1
+      jsonData:
+        maxLines: 1000
+
+  # Generic Grafana dashboard provisioning (backend only; dashboards load from provisioning configmap)
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: 'k8sgpt'
+          orgId: 1
+          folder: 'K8sGPT'
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/k8sgpt
+
+  # Optional: enable dashboard persistence if needed
+  # persistence:
+  #   enabled: true
+  #   type: pvc
+  #   storageClassName: longhorn
+  #   size: 5Gi
+
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 10Gi
+
+loki:
+  # Loki is deployed separately (see loki Helm chart or companion loki-values.yaml)
+  # This values file assumes Loki is already running at loki.loki.svc.cluster.local:3100
+  # via Helm: helm install loki grafana/loki-stack ...
+  enabled: false

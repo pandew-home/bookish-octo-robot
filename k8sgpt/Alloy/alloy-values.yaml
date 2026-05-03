@@ -76,14 +76,15 @@ alloy:
         }
 
         external_labels = {
-          cluster = "bookish-octo-robot",
+          cluster = "bookish-octo-robot",  // Set via Kubernetes env variable (see extraEnv below)
           source  = "k8sgpt",
         }
       }
 
   extraEnv:
+    # Cluster identity: override in cluster-specific values file
     - name: CLUSTER_NAME
-      value: bookish-octo-robot
+      value: "bookish-octo-robot"
 
 serviceAccount:
   create: true

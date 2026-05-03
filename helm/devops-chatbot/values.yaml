@@ -1,0 +1,96 @@
+image:
+  repository: ghcr.io/pandew-home/bookish-octo-robot
+  tag: latest
+  # pullPolicy: IfNotPresent keeps images cached locally after first pull.
+  # For multi-cluster deployments with different registries, consider changing to Always.
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ghcr-pull-secret
+
+replicaCount: 1
+
+nameOverride: ""
+fullnameOverride: ""
+
+namespace: devops-chatbot
+
+podLabels:
+  gitSha: ""
+
+resources:
+  requests:
+    cpu: "100m"
+    memory: "256Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+
+serviceAccount:
+  name: devops-chatbot
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+ingress:
+  enabled: true
+  className: traefik
+  host: 17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com
+  # Path configuration for subpath hosting.
+  # Default "/" hosts app at root; override to "/chatbot" for subpath serving.
+  # App and frontend must be aware of the base path via REACT_APP_API_URL and PUBLIC_URL.
+  path: /
+  pathType: Prefix
+  # TLS is disabled for test/dev clusters. For production clusters:
+  # 1. Set tls.enabled: true
+  # 2. Ensure cert-manager ClusterIssuer "letsencrypt-prod" exists
+  # 3. Update host to your production domain
+  tls:
+    enabled: false
+    secretName: devops-chatbot-tls
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: web
+
+pvc:
+  enabled: true
+  name: devops-chatbot-data
+  storageSize: 20Gi
+  storageClass: longhorn
+  accessMode: ReadWriteMany
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+resourceQuota:
+  enabled: true
+  hardLimitsCpu: "8"
+  hardLimitsMemory: "16Gi"
+  hardRequestsCpu: "4"
+  hardRequestsMemory: "8Gi"
+  persistentVolumeClaims: "2"
+  requestsStorage: 20Gi
+  pods: "10"
+  services: "5"
+  secrets: "10"
+  configmaps: "10"
+
+llm:
+  apiKey: ""
+  provider: "openrouter"
+  model: "mistralai/devstral-2512"
+  defaultRegion: "us-east-1"
+
+# Frontend and backend base-path configuration for subpath hosting
+# Set REACT_APP_API_URL so frontend API calls target the correct base path
+# Default: "/" means root path; set to "/chatbot/api" for /chatbot subpath
+app:
+  # Backend API base URL as seen by frontend (for API calls from browser)
+  # Example: "/" for root, "/chatbot/api" for subpath at /chatbot
+  apiBaseUrl: "/"
+  # Frontend PUBLIC_URL for static assets and SPA routing
+  # Example: "/" for root, "/chatbot" for subpath
+  publicUrl: "/"
