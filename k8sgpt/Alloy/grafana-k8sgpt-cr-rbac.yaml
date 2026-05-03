@@ -1,0 +1,11 @@
+# Long-lived token for the existing alloy-k8sgpt SA so Grafana can query
+# Result CRDs via the Infinity datasource. The alloy-k8sgpt ClusterRole
+# (alloy-k8sgpt-reader-cleaner) already grants get/list on results.core.k8sgpt.ai.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: alloy-k8sgpt-grafana-token
+  namespace: monitoring
+  annotations:
+    kubernetes.io/service-account.name: alloy-k8sgpt
+type: kubernetes.io/service-account-token
