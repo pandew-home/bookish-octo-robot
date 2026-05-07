@@ -21,10 +21,10 @@ runs:
 
     - name: Configure kubectl
       shell: bash
+      env:
+        CIVO_API_KEY: ${{ inputs.civo_api_key }}
       run: |
         set -euo pipefail
-        civo apikey add deploy-key "${{ inputs.civo_api_key }}"
-        civo apikey current deploy-key
         civo region current "${{ inputs.civo_region }}"
         civo kubernetes config "${{ inputs.cluster_name }}" --save
         chmod 700 ~/.kube || true
