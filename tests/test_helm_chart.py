@@ -18,6 +18,7 @@ REPO_ROOT = Path(__file__).parent.parent
 BASE_FLAGS = [
     "--set", "image.tag=test-sha",
     "--set", "llm.apiKey=placeholder",
+    "--set", "llm.createSecret=true",
 ]
 
 

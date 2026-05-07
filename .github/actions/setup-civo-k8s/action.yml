@@ -23,7 +23,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        civo apikey save deploy-key "${{ inputs.civo_api_key }}"
+        civo apikey add deploy-key "${{ inputs.civo_api_key }}"
         civo apikey current deploy-key
         civo region current "${{ inputs.civo_region }}"
         civo kubernetes config "${{ inputs.cluster_name }}" --save
