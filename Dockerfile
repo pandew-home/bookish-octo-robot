@@ -24,7 +24,7 @@ RUN /opt/venv/bin/pip install --no-cache-dir -r requirements.prod.txt
 
 # Install shared libs (changes more often, but fast)
 COPY libs/ ./libs/
-RUN /opt/venv/bin/pip install --no-cache-dir -e ./libs/devops-k8s -e ./libs/devops-kb -e ./libs/devops-prompts -e ./libs/devops-rag
+RUN /opt/venv/bin/pip install --no-cache-dir -e ./libs/devops-k8s -e ./libs/devops-kb -e ./libs/devops-rag
 
 # Stage 3: Production image
 FROM python:3.11-slim
