@@ -1,0 +1,53 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: devops-chatbot
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "3"
+    # ArgoCD Image Updater watches GHCR and rewrites image.tag in this Application
+    # via git commit. Requires:
+    #   - argocd-image-updater installed in argocd ns
+    #   - secret `argocd-image-updater-git-creds` (PAT with repo write) in argocd ns
+    #   - secret `ghcr-pull-secret` for registry auth
+    argocd-image-updater.argoproj.io/image-list: chatbot=ghcr.io/pandew-home/bookish-octo-robot
+    argocd-image-updater.argoproj.io/chatbot.update-strategy: newest-build
+    argocd-image-updater.argoproj.io/chatbot.allow-tags: regexp:^[0-9a-f]{40}$
+    argocd-image-updater.argoproj.io/chatbot.pull-secret: pullsecret:argocd/ghcr-pull-secret
+    argocd-image-updater.argoproj.io/chatbot.helm.image-name: image.repository
+    argocd-image-updater.argoproj.io/chatbot.helm.image-tag: image.tag
+    argocd-image-updater.argoproj.io/write-back-method: git
+    argocd-image-updater.argoproj.io/write-back-target: helmvalues:./argocd/apps/50-devops-chatbot.yaml
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: bookish-octo-robot
+  source:
+    repoURL: https://github.com/pandew-home/bookish-octo-robot.git
+    targetRevision: main
+    path: helm/devops-chatbot
+    helm:
+      values: |
+        image:
+          repository: ghcr.io/pandew-home/bookish-octo-robot
+          # Image Updater rewrites this tag on new GHCR pushes (see annotations above).
+          tag: "0.0.0-dev"
+        llm:
+          createSecret: false
+          existingSecret: devops-chatbot-secrets
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: devops-chatbot
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m

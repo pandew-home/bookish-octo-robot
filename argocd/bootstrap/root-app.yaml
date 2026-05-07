@@ -1,0 +1,35 @@
+# App-of-apps. Bootstrap by applying:
+#   kubectl apply -n argocd -f argocd/projects/bookish-octo-robot.yaml
+#   kubectl apply -n argocd -f argocd/bootstrap/root-app.yaml
+# After this, ArgoCD owns argocd/apps/* and reconciles every child Application.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bookish-octo-robot-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: bookish-octo-robot
+  source:
+    repoURL: https://github.com/pandew-home/bookish-octo-robot.git
+    targetRevision: main
+    path: argocd/apps
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ApplyOutOfSyncOnly=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m

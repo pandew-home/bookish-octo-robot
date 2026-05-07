@@ -1,6 +1,0 @@
-apiVersion: v2
-name: openfang
-description: OpenFang Agent Operating System
-type: application
-version: 0.1.0
-appVersion: "v0.5.6"

@@ -1,0 +1,32 @@
+# Custom RBAC supplementing the operator chart: limit secret reads to the
+# AI secret only. The chart already creates the SA, ClusterRole, and bindings.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.rbac.secretsReaderRoleName }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+    app.kubernetes.io/component: rbac
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+    resourceNames: [{{ .Values.k8sgpt.ai.secretName | quote }}]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.rbac.secretsReaderRoleName }}
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: k8sgpt-operator
+    app.kubernetes.io/component: rbac
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.rbac.secretsReaderRoleName }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.rbac.serviceAccountName }}
+    namespace: {{ .Values.namespace }}

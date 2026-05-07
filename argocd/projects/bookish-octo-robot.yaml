@@ -1,0 +1,31 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: bookish-octo-robot
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: K8sGPT operator, observability stack, and devops-chatbot
+  sourceRepos:
+    - https://github.com/pandew-home/bookish-octo-robot.git
+    - https://charts.k8sgpt.ai/
+    - https://grafana.github.io/helm-charts
+    - https://prometheus-community.github.io/helm-charts
+  destinations:
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+    - namespace: k8sgpt-operator-system
+      server: https://kubernetes.default.svc
+    - namespace: monitoring
+      server: https://kubernetes.default.svc
+    - namespace: devops-chatbot
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  namespaceResourceWhitelist:
+    - group: '*'
+      kind: '*'
+  orphanedResources:
+    warn: true

@@ -1,0 +1,25 @@
+apiVersion: core.k8sgpt.ai/v1alpha1
+kind: K8sGPT
+metadata:
+  name: {{ .Values.k8sgpt.name }}
+  namespace: {{ .Values.namespace }}
+spec:
+  version: {{ .Values.k8sgpt.version }}
+  resources:
+    {{- toYaml .Values.k8sgpt.resources | nindent 4 }}
+  ai:
+    enabled: true
+    backend: {{ .Values.k8sgpt.ai.backend }}
+    model: {{ .Values.k8sgpt.ai.model }}
+    baseUrl: {{ .Values.k8sgpt.ai.baseUrl }}
+    secret:
+      name: {{ .Values.k8sgpt.ai.secretName }}
+      key: {{ .Values.k8sgpt.ai.secretKey }}
+    anonymized: {{ .Values.k8sgpt.ai.anonymized }}
+  analysis:
+    interval: {{ .Values.k8sgpt.analysisInterval }}
+  noCache: {{ .Values.k8sgpt.noCache }}
+  filters:
+    {{- toYaml .Values.k8sgpt.filters | nindent 4 }}
+  # Do not set integrations: any non-null integrations block triggers
+  # AddIntegration in the operator and panics on a nil Trivy response.

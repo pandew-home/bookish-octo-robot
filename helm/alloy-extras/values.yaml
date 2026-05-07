@@ -1,0 +1,4 @@
+# Resources are intentionally untemplated — namespace/SA names are coupled to
+# the upstream alloy chart and the kube-prometheus-stack monitoring namespace.
+# Add values here only if a knob actually needs to vary per environment.
+{}

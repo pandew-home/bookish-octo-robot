@@ -1,0 +1,77 @@
+{
+  "title": "K8sGPT Results",
+  "uid": "k8sgpt-results",
+  "tags": ["k8sgpt", "history"],
+  "schemaVersion": 38,
+  "version": 3,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "severity",
+        "label": "Severity",
+        "description": "Derived from resource blast radius: Node/PVC=critical, StatefulSet/Deployment=high, Service/Ingress=medium, Pod/ReplicaSet/HPA=low. Escalates if error_count > 2.",
+        "type": "custom",
+        "query": "critical,high,medium,low",
+        "current": { "value": "$__all", "text": "All" },
+        "options": [
+          { "value": "$__all",    "text": "All",      "selected": true },
+          { "value": "critical",  "text": "Critical" },
+          { "value": "high",      "text": "High" },
+          { "value": "medium",    "text": "Medium" },
+          { "value": "low",       "text": "Low" }
+        ],
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "refresh": 0,
+        "sort": 0
+      },
+      {
+        "name": "kind",
+        "label": "Resource Kind",
+        "description": "Filter by the Kubernetes resource type K8sGPT analysed",
+        "type": "custom",
+        "query": "Pod,Deployment,ReplicaSet,StatefulSet,Node,HorizontalPodAutoscaler,PersistentVolumeClaim,Service,Ingress",
+        "current": { "value": "$__all", "text": "All" },
+        "options": [
+          { "value": "$__all",                  "text": "All",                    "selected": true },
+          { "value": "Pod",                     "text": "Pod" },
+          { "value": "Deployment",              "text": "Deployment" },
+          { "value": "ReplicaSet",              "text": "ReplicaSet" },
+          { "value": "StatefulSet",             "text": "StatefulSet" },
+          { "value": "Node",                    "text": "Node" },
+          { "value": "HorizontalPodAutoscaler", "text": "HorizontalPodAutoscaler" },
+          { "value": "PersistentVolumeClaim",   "text": "PersistentVolumeClaim" },
+          { "value": "Service",                 "text": "Service" },
+          { "value": "Ingress",                 "text": "Ingress" }
+        ],
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "refresh": 0,
+        "sort": 0
+      },
+      {
+        "name": "lifecycle",
+        "label": "Lifecycle",
+        "description": "current = active, updated = re-analysed since last snapshot, historical = resolved",
+        "type": "custom",
+        "query": "current,updated,historical",
+        "current": { "value": "$__all", "text": "All" },
+        "options": [
+          { "value": "$__all",    "text": "All",        "selected": true },
+          { "value": "current",   "text": "Current" },
+          { "value": "updated",   "text": "Updated" },
+          { "value": "historical","text": "Historical" }
+        ],
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "refresh": 0,
+        "sort": 0
+      }
+    ]
+  },
+  "panels": [

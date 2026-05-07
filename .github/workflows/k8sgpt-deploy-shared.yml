@@ -90,8 +90,8 @@ jobs:
           set -euo pipefail
           # Operator v0.2.27 panics in AddIntegration when spec.integrations is present.
           # Remove this check once upstream fix is confirmed in a newer release.
-          if grep -En '^[[:space:]]*integrations:' k8sgpt/k8sgpt-openrouter-cr.yaml; then
-            echo "ERROR: k8sgpt-openrouter-cr.yaml must not define spec.integrations (operator AddIntegration panic)."
+          if grep -En '^[[:space:]]*integrations:' helm/k8sgpt-instance/templates/k8sgpt-cr.yaml helm/k8sgpt-instance/values.yaml; then
+            echo "ERROR: k8sgpt-instance chart must not define spec.integrations (operator AddIntegration panic)."
             exit 1
           fi
           # Loki ingestion is CR-only via result-scraper; block direct pod log scraping.
@@ -143,10 +143,11 @@ jobs:
               || { echo "K8sGPT operator deploy failed after retries"; exit 1; }
           done
 
-      - name: Apply RBAC and K8sGPT CR
+      - name: Deploy K8sGPT instance + RBAC chart
         run: |
-          kubectl apply -f k8sgpt/rbac.yaml
-          kubectl apply -f k8sgpt/k8sgpt-openrouter-cr.yaml
+          helm upgrade --install k8sgpt-instance helm/k8sgpt-instance \
+            -n ${{ inputs.operator_namespace }} \
+            --wait --timeout=120s
 
       - name: Wait for K8sGPT CR ready
         run: |
@@ -156,17 +157,17 @@ jobs:
             --timeout=120s \
           || kubectl describe k8sgpt/k8sgpt-openrouter -n ${{ inputs.operator_namespace }}
 
-      - name: Deploy Alloy & observability manifests
+      - name: Deploy Alloy chart and extras
         run: |
           set -euo pipefail
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-          kubectl apply -f k8sgpt/Alloy/alloy-rbac.yaml
           helm upgrade --install alloy grafana/alloy \
             -n monitoring --create-namespace \
             --values k8sgpt/Alloy/alloy-values.yaml \
             --wait --timeout=120s
-          kubectl apply -f k8sgpt/Alloy/alloy-cleanup-cronjob.yaml
-          kubectl apply -f k8sgpt/Alloy/k8sgpt-result-scraper.yaml
+          helm upgrade --install alloy-extras helm/alloy-extras \
+            -n monitoring \
+            --wait --timeout=120s
 
       - name: Apply monitoring stack Helm overrides
         run: |
@@ -176,14 +177,16 @@ jobs:
           helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
             -n monitoring --create-namespace $EXTRA_FLAGS \
             --values k8sgpt/Alloy/kube-prometheus-stack-values-base.yaml \
-            --values k8sgpt/Alloy/kube-prometheus-stack-values-civo-traefik.yaml
+            --values k8sgpt/Alloy/kube-prometheus-stack-values-civo-traefik.yaml \
+            --wait --timeout=300s
 
-      - name: Deploy Grafana datasource and dashboard
-        uses: ./.github/actions/grafana-deploy
-        with:
-          access_mode: ${{ inputs.grafana_access_mode }}
-          grafana_host: ${{ inputs.grafana_host }}
-          grafana_subpath: ${{ inputs.grafana_subpath }}
+      - name: Deploy Grafana dashboards (sidecar-discovered ConfigMaps)
+        # Loki datasource is registered by kube-prometheus-stack base values.
+        # Dashboard ConfigMaps are auto-loaded by the Grafana sidecar.
+        run: |
+          helm upgrade --install grafana-dashboards helm/grafana-dashboards \
+            -n monitoring \
+            --wait --timeout=120s
 
       - name: Verify deployment
         run: |

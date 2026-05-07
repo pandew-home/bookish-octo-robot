@@ -1,0 +1,57 @@
+{
+  "title": "K8sGPT Live Results",
+  "uid": "k8sgpt-cr-live",
+  "tags": ["k8sgpt", "live", "crd"],
+  "schemaVersion": 38,
+  "version": 6,
+  "refresh": "1m",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "🔴 Critical",
+      "description": "Node or PVC issues — affects many workloads or risks data loss. Click column header to filter.",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "options": { 
+        "colorMode": "background", 
+        "graphMode": "none", 
+        "textMode": "value",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "fixed", "fixedColor": "dark-red" },
+          "unit": "short",
+          "noValue": "0"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "marcusolsson-json-datasource", "uid": "k8sgpt-k8s-api" },
+          "cacheDurationSeconds": 0,
+          "fields": [
+            { "jsonPath": "$.items[*].spec.kind", "name": "Kind", "type": "string" },
+            { "jsonPath": "$.items[*].status.lifecycle", "name": "Lifecycle", "type": "string" }
+          ],
+          "method": "GET",
+          "queryParams": "",
+          "urlPath": "/apis/core.k8sgpt.ai/v1alpha1/results"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "filterByValue",
+          "options": {
+            "filters": [
+              { "fieldName": "Lifecycle", "config": { "id": "equal", "options": { "value": "current" } } },
+              { "fieldName": "Kind", "config": { "id": "regex", "options": { "value": "^(Node|PersistentVolumeClaim)$" } } }
+            ],
+            "type": "include",
+            "match": "all"
+          }
+        },
+        { "id": "reduce", "options": { "reducers": ["count"] } }
+      ]
+    },

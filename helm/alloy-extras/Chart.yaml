@@ -1,0 +1,6 @@
+apiVersion: v2
+name: alloy-extras
+description: Cluster-scoped RBAC and supporting CronJobs for Alloy + K8sGPT result ingestion
+type: application
+version: 0.1.0
+appVersion: "1.0.0"

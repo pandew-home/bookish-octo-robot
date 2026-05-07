@@ -1,0 +1,18 @@
+{{/*
+  JSON is read with .Files.Get (not embedded in templates/) so that Grafana
+  legend placeholders like "{{severity}}" are not parsed as Helm templates.
+*/}}
+{{- range $path, $_ := .Files.Glob "dashboards/*.json" }}
+{{- $base := trimSuffix ".json" (base $path) -}}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-{{ $base }}-dashboard
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    grafana_dashboard: "1"
+data:
+  {{ base $path }}: |-
+{{ $.Files.Get $path | indent 4 }}
+{{- end }}

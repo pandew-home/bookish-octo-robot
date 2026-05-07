@@ -1,0 +1,6 @@
+apiVersion: v2
+name: k8sgpt-instance
+description: K8sGPT custom resource and namespace-scoped RBAC for the operator
+type: application
+version: 0.1.0
+appVersion: "v0.4.31"

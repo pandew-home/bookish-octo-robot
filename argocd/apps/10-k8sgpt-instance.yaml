@@ -1,0 +1,32 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: k8sgpt-instance
+  namespace: argocd
+  annotations:
+    # Wait for operator CRDs/webhook before applying the K8sGPT CR.
+    argocd.argoproj.io/sync-wave: "-2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: bookish-octo-robot
+  source:
+    repoURL: https://github.com/pandew-home/bookish-octo-robot.git
+    targetRevision: main
+    path: helm/k8sgpt-instance
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: k8sgpt-operator-system
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=false
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 10s
+        factor: 2
+        maxDuration: 5m

@@ -1,0 +1,51 @@
+# Operator namespace; the K8sGPT CR and the secrets-reader Role both live here.
+# Match argocd/apps/10-k8sgpt-instance.yaml destination.namespace.
+namespace: k8sgpt-operator-system
+
+k8sgpt:
+  name: k8sgpt-openrouter
+  version: v0.4.31
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "128Mi"
+    limits:
+      cpu: "500m"
+      memory: "256Mi"
+  ai:
+    backend: openai
+    model: qwen/qwen3-coder
+    baseUrl: https://openrouter.ai/api/v1
+    secretName: k8sgpt-ai-secret
+    secretKey: openai-api-key
+    # Send real resource names to the LLM so suggestions are actionable.
+    anonymized: false
+  analysisInterval: 5m
+  noCache: false
+  # k3s-relevant analyzer set; OLM excluded because k3s does not run it.
+  filters:
+    - Pod
+    - Log
+    - Deployment
+    - ReplicaSet
+    - StatefulSet
+    - Node
+    - ConfigMap
+    - PersistentVolumeClaim
+    - Service
+    - Ingress
+    - CronJob
+    - Job
+    - HorizontalPodAutoscaler
+    - PodDisruptionBudget
+    - NetworkPolicy
+    - MutatingWebhookConfiguration
+    - ValidatingWebhookConfiguration
+    - GatewayClass
+    - Gateway
+    - HTTPRoute
+
+rbac:
+  # Namespace-scoped read on the AI secret only — never cluster-readable.
+  serviceAccountName: k8sgpt-operator
+  secretsReaderRoleName: k8sgpt-operator-secrets-reader
