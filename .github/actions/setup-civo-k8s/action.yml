@@ -25,7 +25,7 @@ runs:
         set -euo pipefail
         civo apikey save deploy-key "${{ inputs.civo_api_key }}"
         civo apikey set deploy-key
-        civo region current "${{ inputs.civo_region }}"
+        civo region current "${{ inputs.civo_region }}" || true
         civo kubernetes config "${{ inputs.cluster_name }}" --save
         chmod 700 ~/.kube || true
         chmod 600 ~/.kube/config || true
