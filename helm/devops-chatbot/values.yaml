@@ -50,7 +50,7 @@ ingress:
   className: traefik
   # Source of truth for external chatbot URL.
   # Keep this in sync with k8s/ingress.yaml and cluster DNS host.
-  host: e11d21c7-ff38-487c-8da0-f8b9e51206c3.k8s.civo.com
+  host: 655d23be-a45d-49a6-a0e1-bd50ab91670c.k8s.civo.com
   # Path configuration for subpath hosting.
   # Chatbot is served at /devops-chat behind Traefik.
   # Keep app.apiBaseUrl and app.publicUrl aligned with this value.
@@ -125,4 +125,4 @@ app:
   publicUrl: "/"
   # Comma-separated list of allowed CORS origins.
   # Keep aligned with ingress host to avoid browser CORS drift.
-  allowedOrigins: "http://e11d21c7-ff38-487c-8da0-f8b9e51206c3.k8s.civo.com"
+  allowedOrigins: "http://655d23be-a45d-49a6-a0e1-bd50ab91670c.k8s.civo.com"
