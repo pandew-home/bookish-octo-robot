@@ -23,10 +23,9 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        # Write Civo config directly — avoids CLI apikey command compatibility issues
-        mkdir -p ~/.config/civo
-        printf '{"apikeys":{"deploy-key":"%s"},"meta":{"current_apikey":"deploy-key","url":"https://api.civo.com","current_region":"%s"}}' \
-          "${{ inputs.civo_api_key }}" "${{ inputs.civo_region }}" > ~/.config/civo/settings.json
+        civo apikey save deploy-key "${{ inputs.civo_api_key }}"
+        civo apikey set deploy-key
+        civo region current "${{ inputs.civo_region }}"
         civo kubernetes config "${{ inputs.cluster_name }}" --save
         chmod 700 ~/.kube || true
         chmod 600 ~/.kube/config || true
