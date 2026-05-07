@@ -21,11 +21,22 @@ runs:
 
     - name: Configure kubectl
       shell: bash
-      env:
-        CIVO_API_KEY: ${{ inputs.civo_api_key }}
       run: |
         set -euo pipefail
-        civo region current "${{ inputs.civo_region }}"
+        # Write Civo config directly — avoids CLI apikey command compatibility issues
+        mkdir -p ~/.config/civo
+        cat > ~/.config/civo/settings.json <<EOF
+        {
+          "apikeys": {
+            "deploy-key": "${{ inputs.civo_api_key }}"
+          },
+          "meta": {
+            "current_apikey": "deploy-key",
+            "url": "https://api.civo.com",
+            "current_region": "${{ inputs.civo_region }}"
+          }
+        }
+        EOF
         civo kubernetes config "${{ inputs.cluster_name }}" --save
         chmod 700 ~/.kube || true
         chmod 600 ~/.kube/config || true
