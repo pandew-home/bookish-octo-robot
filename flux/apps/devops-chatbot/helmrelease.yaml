@@ -26,9 +26,9 @@ spec:
     replicaCount: 1
     image:
       repository: ghcr.io/pandew-home/bookish-octo-robot
-      tag: "c8ac69de6726eb102267371295aca63f552ad630"
+      tag: "fe15112ee6c8121a267d2202eb75bb20ac90e219"
     podLabels:
-      gitSha: "c8ac69de6726eb102267371295aca63f552ad630"
+      gitSha: "fe15112ee6c8121a267d2202eb75bb20ac90e219"
     llm:
       createSecret: false
       existingSecret: devops-chatbot-secrets
