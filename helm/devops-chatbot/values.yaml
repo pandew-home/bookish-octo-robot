@@ -54,10 +54,8 @@ ingress:
   # Path configuration for subpath hosting.
   # Chatbot is served at /devops-chat behind Traefik.
   # Keep app.apiBaseUrl and app.publicUrl aligned with this value.
-  path: /devops-chat
+  path: /chatbot
   pathType: Prefix
-  # Root-built frontend assets and backend API currently resolve under /static and /api.
-  # Keep these passthrough paths to avoid regressions when serving UI at /devops-chat.
   extraPaths:
     - /api
     - /static
@@ -125,4 +123,4 @@ app:
   publicUrl: "/"
   # Comma-separated list of allowed CORS origins.
   # Keep aligned with ingress host to avoid browser CORS drift.
-  allowedOrigins: "http://655d23be-a45d-49a6-a0e1-bd50ab91670c.k8s.civo.com"
+  allowedOrigins: "http://655d23be-a45d-49a6-a0e1-bd50ab91670c.k8s.civo.com,http://655d23be-a45d-49a6-a0e1-bd50ab91670c.k8s.civo.com/chatbot"
