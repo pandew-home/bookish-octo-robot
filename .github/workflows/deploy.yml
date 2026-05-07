@@ -397,12 +397,12 @@ jobs:
     if: success() && github.event.inputs.direct_deploy == 'true' && github.event.inputs.skip_deploy != 'true' && github.event.inputs.deploy_only != 'true' && needs.detect.outputs.operator_changed == 'true'
     uses: ./.github/workflows/k8sgpt-deploy-shared.yml
     with:
-      cluster_name: ${{ env.CLUSTER_NAME }}
-      civo_region: ${{ env.CIVO_REGION }}
-      operator_namespace: ${{ env.OPERATOR_NAMESPACE }}
-      grafana_access_mode: ${{ env.GRAFANA_ACCESS_MODE }}
-      grafana_host: ${{ env.GRAFANA_HOST }}
-      grafana_subpath: ${{ env.GRAFANA_SUBPATH }}
+      cluster_name: bookish-octo-robot
+      civo_region: NYC1
+      operator_namespace: k8sgpt-operator-system
+      grafana_access_mode: ingress-subpath
+      grafana_host: 17198d1a-3422-49ec-ad09-67ced6a5a0d6.k8s.civo.com
+      grafana_subpath: /grafana
     secrets:
       civo_api_key: ${{ secrets.CIVO_API_KEY }}
       openrouter_api_key: ${{ secrets.OPENROUTER_API_KEY }}
