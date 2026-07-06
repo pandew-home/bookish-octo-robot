@@ -1,6 +1,7 @@
 """
 API endpoints for credential management (AWS + Kubeconfig).
 """
+import os
 from fastapi import APIRouter, HTTPException, Depends, Header
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
@@ -19,6 +20,7 @@ from local_k8s_auth import (
 )
 from middleware.auth_middleware import check_credential_expiration_soon
 from utils.error_handler import handle_aws_error, handle_generic_error
+from cluster_manager import discover_clusters, get_k8s_clients, cleanup_k8s_clients
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,47 @@ router = APIRouter(prefix="/api/credentials", tags=["credentials"])
 
 # Global credential store instance
 credential_store = CredentialStore(max_capacity=1000, ttl_seconds=3600)
+
+
+def get_target_eks_cluster_name() -> Optional[str]:
+    """Return configured in-cluster target EKS cluster name, if any."""
+    return (
+        os.getenv("IN_CLUSTER_EKS_CLUSTER_NAME")
+        or os.getenv("EKS_CLUSTER_NAME")
+        or None
+    )
+
+
+async def _verify_aws_access_to_target_cluster(creds: StoredCredentials) -> None:
+    """Validate that user credentials can access the configured chatbot cluster."""
+    target_cluster_name = get_target_eks_cluster_name()
+    if not target_cluster_name:
+        return
+
+    clusters = await discover_clusters(creds)
+    target_cluster = next((c for c in clusters if c.get("name") == target_cluster_name), None)
+    if target_cluster is None:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Credentials do not have access to target cluster '{target_cluster_name}'. "
+                "Use credentials with access to this chatbot cluster."
+            ),
+        )
+
+    clients = get_k8s_clients(creds, target_cluster)
+    try:
+        clients["core_v1"].list_namespace(limit=1)
+    except Exception as e:
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Credentials were validated in AWS but cannot access cluster '{target_cluster_name}'. "
+                f"Cluster access check failed: {e}"
+            ),
+        )
+    finally:
+        cleanup_k8s_clients(clients)
 
 
 class KionCredentials(BaseModel):
@@ -140,6 +183,9 @@ async def submit_aws_credentials(credentials: KionCredentials):
         
         # Set auth mode
         creds.auth_mode = "aws"
+
+        # Ensure credentials work for the chatbot's configured in-cluster target.
+        await _verify_aws_access_to_target_cluster(creds)
         
         # Generate session ID
         session_id = str(uuid.uuid4())

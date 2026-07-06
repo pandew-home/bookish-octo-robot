@@ -51,6 +51,10 @@ export const useCredentials = (): UseCredentialsState => {
         throw new Error('Authentication failed');
       }
 
+      if (response.sessionId) {
+        localStorage.setItem('sessionId', response.sessionId);
+      }
+
       // Refresh status after successful login
       await refresh();
     } catch (err: any) {
@@ -103,6 +107,7 @@ export const useCredentials = (): UseCredentialsState => {
 
     try {
       await authApi.logout();
+      localStorage.removeItem('sessionId');
       
       // Refresh status after logout
       await refresh();
