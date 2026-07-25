@@ -2,9 +2,10 @@
 API endpoints for credential management (AWS + Kubeconfig).
 """
 import os
-from fastapi import APIRouter, HTTPException, Depends, Header
+from fastapi import APIRouter, HTTPException, Depends, Header, Cookie
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Any
 import uuid
 import logging
 from datetime import datetime, timedelta
@@ -129,22 +130,52 @@ class CredentialStatusResponse(BaseModel):
     warning: Optional[dict] = None  # Warning info if expiring soon
 
 
-def get_session_id(x_session_id: Optional[str] = Header(None)) -> str:
+def get_session_id(
+    x_session_id: Optional[str] = Header(None),
+    session_id_cookie: Optional[str] = Cookie(None, alias="session_id"),
+) -> str:
     """
-    Extract session ID from header.
-    
-    Args:
-        x_session_id: Session ID from X-Session-Id header
-        
-    Returns:
-        Session ID
-        
+    Extract session ID from X-Session-Id header (legacy) or HttpOnly cookie.
+
     Raises:
-        HTTPException: If session ID is missing
+        HTTPException: If session ID is missing from both sources
     """
-    if not x_session_id:
+    session_id = x_session_id or session_id_cookie
+    if not session_id:
         raise HTTPException(status_code=401, detail="Session ID required")
-    return x_session_id
+    return session_id
+
+
+def _credential_response_with_session_cookie(
+    body: CredentialResponse,
+    session_id: str,
+) -> JSONResponse:
+    """Return credential JSON and set an HttpOnly session cookie (legacy body still includes session_id)."""
+    response = JSONResponse(content=body.model_dump())
+    response.set_cookie(
+        key="session_id",
+        value=session_id,
+        httponly=True,
+        path="/",
+        max_age=3600,
+        samesite="lax",
+    )
+    return response
+
+
+def _clear_session_cookie(payload: Dict[str, Any]) -> JSONResponse:
+    """Return JSON and expire the session cookie."""
+    response = JSONResponse(content=payload)
+    response.set_cookie(
+        key="session_id",
+        value="",
+        expires=0,
+        max_age=0,
+        path="/",
+        httponly=True,
+        samesite="lax",
+    )
+    return response
 
 
 @router.post("/aws", response_model=CredentialResponse)
@@ -194,13 +225,16 @@ async def submit_aws_credentials(credentials: KionCredentials):
         credential_store.store(session_id, creds)
         
         logger.info(f"Stored AWS credentials for user {creds.user_arn} with session {session_id[:8]}...")
-        
-        return CredentialResponse(
-            success=True,
-            session_id=session_id,
-            message="Credentials validated and stored successfully",
-            user_arn=creds.user_arn,
-            account_id=creds.account_id
+
+        return _credential_response_with_session_cookie(
+            CredentialResponse(
+                success=True,
+                session_id=session_id,  # legacy body field for frontend compatibility
+                message="Credentials validated and stored successfully",
+                user_arn=creds.user_arn,
+                account_id=creds.account_id,
+            ),
+            session_id,
         )
         
     except HTTPException:
@@ -270,13 +304,16 @@ async def submit_kubeconfig_credentials(credentials: KubeconfigCredentials):
         credential_store.store(session_id, creds)
         
         logger.info(f"Stored kubeconfig credentials with {len(kubeconfig_contexts)} contexts, session {session_id[:8]}...")
-        
-        return CredentialResponse(
-            success=True,
-            session_id=session_id,
-            message=f"Kubeconfig validated successfully. Found {len(kubeconfig_contexts)} contexts.",
-            user_arn=None,
-            account_id=None
+
+        return _credential_response_with_session_cookie(
+            CredentialResponse(
+                success=True,
+                session_id=session_id,  # legacy body field for frontend compatibility
+                message=f"Kubeconfig validated successfully. Found {len(kubeconfig_contexts)} contexts.",
+                user_arn=None,
+                account_id=None,
+            ),
+            session_id,
         )
         
     except HTTPException:
@@ -414,13 +451,16 @@ async def auth_kubeconfig_content(request: KubeconfigAuthRequest):
         credential_store.store(session_id, creds)
         
         logger.info(f"Stored kubeconfig credentials with context '{request.context}', session {session_id[:8]}...")
-        
-        return CredentialResponse(
-            success=True,
-            session_id=session_id,
-            message=f"Authenticated with context '{request.context}' successfully.",
-            user_arn=None,
-            account_id=None
+
+        return _credential_response_with_session_cookie(
+            CredentialResponse(
+                success=True,
+                session_id=session_id,  # legacy body field for frontend compatibility
+                message=f"Authenticated with context '{request.context}' successfully.",
+                user_arn=None,
+                account_id=None,
+            ),
+            session_id,
         )
         
     except HTTPException:
@@ -440,7 +480,7 @@ async def get_credential_status(session_id: str = Depends(get_session_id)):
     Get status of stored credentials (AWS or kubeconfig).
     
     Args:
-        session_id: Session ID from header
+        session_id: Session ID from header or HttpOnly cookie
         
     Returns:
         CredentialStatusResponse with expiration info
@@ -496,7 +536,7 @@ async def delete_credentials(session_id: str = Depends(get_session_id)):
     Delete stored credentials (AWS or kubeconfig).
     
     Args:
-        session_id: Session ID from header
+        session_id: Session ID from header or HttpOnly cookie
         
     Returns:
         Success message
@@ -506,7 +546,9 @@ async def delete_credentials(session_id: str = Depends(get_session_id)):
         
         if removed:
             logger.info(f"Removed credentials for session {session_id[:8]}...")
-            return {"success": True, "message": "Credentials removed successfully"}
+            return _clear_session_cookie(
+                {"success": True, "message": "Credentials removed successfully"}
+            )
         else:
             return {"success": False, "message": "No credentials found for session"}
             
