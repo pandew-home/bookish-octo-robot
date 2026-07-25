@@ -18,12 +18,14 @@ description: "Task list template for feature implementation"
 - **[Story]**: Which user story this task belongs to (e.g., US1, US2, US3)
 - Include exact file paths in descriptions
 
-## Path Conventions
+## Path Conventions (this repository)
 
-- **Single project**: `src/`, `tests/` at repository root
-- **Web app**: `backend/src/`, `frontend/src/`
-- **Mobile**: `api/src/`, `ios/src/` or `android/src/`
-- Paths shown below assume single project - adjust based on plan.md structure
+- **Backend**: `backend/`, `backend/api/`, `backend/tests/`, `backend/skills/`, `backend/prompts/`
+- **Frontend**: `frontend/src/`, `frontend/e2e/`
+- **Shared libs**: `libs/devops-k8s`, `libs/devops-kb`, `libs/devops-rag`
+- **GitOps**: `helm/<chart>/`, `argocd/apps/`, `argocd/bootstrap/`
+- **Docs / agents**: `docs/`, `AGENTS.md`, `.specify/memory/constitution.md`
+- Prefer Helm templates over adding new raw files under `k8s/` unless emergency/reference
 
 <!-- 
   ============================================================================

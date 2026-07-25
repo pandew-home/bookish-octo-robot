@@ -82,6 +82,17 @@
   Fill them out with the right functional requirements.
 -->
 
+### Constitution Constraints *(mandatory for this repo)*
+
+*From `.specify/memory/constitution.md` v2.x — delete rows that do not apply; do not weaken without amendment.*
+
+- **CC-001**: Mutating Kubernetes behavior MUST remain human-approval-gated (observe-default).
+- **CC-002**: Live cluster API evidence MUST take precedence over stale K8sGPT Result text.
+- **CC-003**: Secrets MUST NOT appear in git; sessions MUST NOT log credentials.
+- **CC-004**: Delivery changes MUST prefer Argo CD + Helm over new Flux or secret-in-chart patterns.
+- **CC-005**: Production image references MUST use git SHA tags when the feature touches deploy/image paths.
+- **CC-006**: Public URL changes MUST keep ingress path, apiBaseUrl, publicUrl, and CORS aligned.
+
 ### Functional Requirements
 
 - **FR-001**: System MUST [specific capability, e.g., "allow users to create accounts"]

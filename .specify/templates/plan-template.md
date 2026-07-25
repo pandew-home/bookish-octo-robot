@@ -29,9 +29,21 @@
 
 ## Constitution Check
 
-*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
+*GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*  
+*Source: `.specify/memory/constitution.md` (v2.x — DevOps Chatbot / bookish-octo-robot)*
 
-[Gates determined based on constitution file]
+| Gate | Pass criteria | Status |
+|------|----------------|--------|
+| Observe-default / approval | Mutating K8s paths keep human approval; no silent auto-remediation | [ ] |
+| Live API first | Chat/diagnose prefers live API; K8sGPT Results treated as supporting/stale-prone | [ ] |
+| Explainability | User-visible findings include evidence + rationale (not commands alone) | [ ] |
+| GitOps delivery | Cluster desired state via `helm/` + `argocd/`; no Flux; no secrets in chart git | [ ] |
+| Image pin | Production/image refs use git SHA tags, not floating `latest` as the pin | [ ] |
+| Secrets / session | No credentials in repo; sessions cookie/header only; no secret logging | [ ] |
+| Testability | Unit/contract tests without prod cluster; fixtures for new failure modes | [ ] |
+| Ingress/CORS alignment | If URL/path changes: host, path, apiBaseUrl, publicUrl, allowedOrigins co-updated | [ ] |
+
+Unjustified failures block plan approval. Justified exceptions go in **Complexity Tracking** below and require maintainer ack.
 
 ## Project Structure
 

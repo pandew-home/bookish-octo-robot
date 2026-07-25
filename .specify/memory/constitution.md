@@ -1,236 +1,280 @@
-# k8sgpt DevOps Troubleshooting Platform — Constitution
+<!--
+Sync Impact Report
+- Version change: 1.0.0 → 2.0.0 (MAJOR)
+- Rationale: Product is no longer absolute read-only; agentic Kubernetes tools may
+  mutate only after explicit human approval. Delivery is Argo CD + Helm (Flux retired).
+  FAISS RAG, session cookies, and single-cluster pins are first-class.
+- Modified principles:
+  - "Read-Only Product Safety" → "Observe-Default, Approval-Gated Mutation"
+  - "Operator as Source of Truth" → "Live API First; K8sGPT as Supporting Signal"
+  - "Development Access for Testing" → "Environment-Scoped Privileges"
+  - Remaining principles refined for GitOps, FAISS, and agentic stack
+- Added sections: GitOps & Supply Chain (principle), Secrets & Session Integrity (principle),
+  Architectural Decisions for Argo CD / FAISS / approval gates
+- Removed sections: Absolute ban on all write RBAC and "never suggest kubectl mutate"
+  as product-wide absolutes (replaced by approval + RBAC dual control)
+- Templates:
+  - .specify/templates/plan-template.md ✅ updated (Constitution Check gates)
+  - .specify/templates/tasks-template.md ✅ updated (path conventions)
+  - .specify/templates/spec-template.md ✅ updated (security/constitution constraints)
+  - .specify/templates/constitution-template.md ⚠ left generic (scaffold only)
+  - AGENTS.md ✅ cross-link
+- Deferred: None
+-->
+
+# DevOps Chatbot (bookish-octo-robot) Constitution
 
 > Core principles and invariants that govern this platform's development and operation.
 
 ## Meta
 
-- **Project**: k8sgpt-based DevOps Troubleshooting Platform
-- **Last Updated**: 2026-03-29
-- **Version**: 1.0.0
+- **Project**: DevOps Chatbot v2.0 (`bookish-octo-robot`) — Kubernetes troubleshooting assistant
+- **Repository**: https://github.com/pandew-home/bookish-octo-robot
+- **Baseline tag**: `faiss-202607`
+- **Ratified**: 2026-03-29
+- **Last Amended**: 2026-07-25
+- **Version**: 2.0.0
 
 ## Purpose
 
-This platform provides intelligent Kubernetes cluster troubleshooting through k8sgpt-powered analysis. The k8sgpt operator continuously analyzes clusters and produces Result CRDs, which power both a Grafana dashboard and an in-cluster troubleshooting chatbot. The system is fundamentally **read-only** — it observes, analyzes, and recommends, but never modifies the cluster.
+This platform helps DevOps engineers diagnose Kubernetes issues using:
+
+1. **Live cluster state** via authenticated Kubernetes API access (Kion temporary AWS creds and/or kubeconfig).
+2. **K8sGPT Result CRDs** as continuous analyzer signals (weather widget + chat context).
+3. **FAISS RAG** over a shared knowledge base of team solutions.
+4. An **agentic chat backend** (tools + skills) that defaults to observe/diagnose and may execute mutating API calls **only after explicit human approval**.
+
+Delivery is **Argo CD app-of-apps + Helm** (`argocd/`, `helm/`). Images ship as **git SHA** tags to GHCR. Flux is not part of this platform.
 
 ## Core Principles
 
-### 1. Read-Only Product Safety (NON-NEGOTIABLE)
+### 1. Observe-Default, Approval-Gated Mutation (NON-NEGOTIABLE)
 
-**Invariant**: The k8sgpt operator and chatbot NEVER modify the cluster under any circumstances.
-
-This platform is an **observational diagnostic tool**. Both the operator running on the cluster and the chatbot interface are designed exclusively for reading and analyzing cluster state. No component in this system has write access to Kubernetes resources.
+**Invariant**: Chat and automation MUST default to observe and diagnose. Mutating Kubernetes API operations MUST NOT execute without explicit, in-band human approval for that action.
 
 **Enforcement**:
-- All Kubernetes ServiceAccounts receive only read verbs (`get`, `list`, `watch`) in deployed manifests
-- Chatbot backend has no `create`, `update`, `patch`, or `delete` permissions in cluster RBAC
-- LLM prompts explicitly instruct the model to never suggest kubectl commands that modify resources
-- Every new feature must include a verification step confirming it adds no write operations
 
-**Rationale**: DevOps engineers rely on this tool to diagnose production issues. A tool that modifies the cluster could cause outages or data loss. Trust is paramount — users must be confident the system will not make changes.
+- `agentic_engine` / `agent_tools` MUST keep human-approval gates for mutating methods.
+- `backend/prompts/system.md` MUST instruct the model to explain, then request confirmation before mutate.
+- Production ServiceAccounts SHOULD remain least-privilege; write verbs MUST be intentional and documented when present.
+- Features that auto-remediate without a human confirmation path are FORBIDDEN unless this constitution is amended (MAJOR).
 
-### 2. Explainability
+**Rationale**: Engineers trust diagnostic tools only if they cannot silently change production. Controlled, approved mutation is a product capability—not free-fire cluster admin.
 
-**Invariant**: Every AI-generated recommendation must include reasoning that helps the engineer understand the problem before acting.
+### 2. Live API First; K8sGPT as Supporting Signal
 
-When the system surfaces an issue or suggests a fix, it must answer:
-- **Why was this flagged?** — The specific analysis that led to the finding
-- **What is the evidence?** — The relevant cluster state, events, or metrics
-- **What would fixing it involve?** — Not just a command, but the meaning behind it
+**Invariant**: Ground truth is live Kubernetes API state. K8sGPT Results MAY inform weather and chat but MUST be treated as potentially stale until verified.
 
 **Enforcement**:
-- Prompt templates require explanation sections in all recommendations
-- K8sGPT Result CRDs include `details` field with contextual information
-- Response parser validates that explanations are present before returning results
 
-**Rationale**: DevOps engineers cannot safely act on recommendations they don't understand. The goal is to transfer knowledge, not create dependency on a black box.
+- Chat assessments MUST prefer live tool observations over Result CRD text alone.
+- Weather and dashboards MAY summarize Results; chat MUST NOT present stale Findings as definitive without verification guidance.
+- Result schema changes MUST update both reader code (`k8sgpt_reader`) and any dashboard assumptions.
 
-### 3. Operator as Source of Truth
+**Rationale**: Operators can lag; wrong remediation from stale Results is worse than asking for a re-check.
 
-**Invariant**: The Grafana dashboard and chatbot derive from identical analyzed data and must remain in sync.
+### 3. Explainability
 
-Both surfaces consume the same k8sgpt Result CRDs. The operator produces analysis results once; the dashboard renders them for visual inspection, and the chatbot reads them for conversational access. There is no separate pipeline or data transformation between them.
-
-**Enforcement**:
-- No feature that displays information in one surface but not the other
-- Both surfaces use the same Result CRD schema and filters
-- Integration tests verify parity between dashboard queries and chatbot responses
-
-**Rationale**: Inconsistency between diagnostic surfaces erodes trust. An engineer might notice an issue in the dashboard and ask the chatbot about it — they expect the same answer.
-
-### 4. DevOps-First UX
-
-**Invariant**: The interface prioritizes information density, keyboard navigation, and minimal clicks to action.
-
-DevOps engineers are power users who need fast access to relevant data. The system optimizes for:
-- Dense, scannable information displays
-- Keyboard shortcuts for common actions
-- Time-to-resolution over visual polish
-- Contextual actions without deep navigation
+**Invariant**: Every AI recommendation MUST include why it was flagged, what evidence was observed, and what remediation means (not only a command).
 
 **Enforcement**:
-- UI components must support keyboard navigation
-- No unnecessary modal dialogs or multi-step wizards for common tasks
-- Search and filter available without clicking
-- Mobile-responsive is secondary to desktop keyboard-driven workflows
 
-**Rationale**: Engineers using this tool are often responding to incidents under time pressure. Every extra click or page load costs time during a critical period.
+- System prompt response format (assessment / hypothesis / remediation) MUST be preserved unless intentionally redesigned with tests.
+- Skills and tools MUST surface concrete resource names and errors—no placeholder names like `<pod>`.
+- Prefer GitOps/IaC remediation advice for lasting fixes.
 
-### 5. Reliability Over Completeness
+**Rationale**: Knowledge transfer beats black-box answers under incident pressure.
 
-**Invariant**: The system prefers accurate, actionable findings over comprehensive coverage with potential false positives.
+### 4. GitOps as Delivery Truth
 
-Noise destroys trust faster than missing occasional edge cases. A false positive about a non-existent problem wastes engineer time and trains users to ignore alerts. The platform宁可漏报 (prefer to miss) than to cry wolf.
+**Invariant**: Steady-state cluster desired state for this product lives in git via **Argo CD + Helm**. Imperative deploy is emergency-only.
 
 **Enforcement**:
-- k8sgpt analyzers are configured with conservative thresholds
-- Confidence scores below threshold are not surfaced in the dashboard or chatbot
-- Regular review of top issues to identify and suppress spurious patterns
-- Users can filter by severity, not just view all results
 
-**Rationale**: An engineer who ignores a tool because it cries wolf too often will miss real issues when they occur.
+- Application config changes go through `helm/` and/or `argocd/apps/*` on `main` (PR workflow).
+- Chart `llm.createSecret` MUST remain false for GitOps; secrets are out-of-band.
+- Production images MUST use **git SHA** tags (`ghcr.io/pandew-home/bookish-octo-robot:<sha>`); `latest` MUST NOT be the production pin.
+- Flux resources MUST NOT be reintroduced without a constitution amendment and doc rewrite.
+- `k8s/` raw manifests are reference/legacy—new features prefer Helm templates.
 
-### 6. Development Access for Testing
+**Rationale**: Pull-based reconcile beats brittle runner-to-cluster deploys; SHA tags make rollbacks auditable.
 
-**Invariant**: Development and test environments provide full read-write access for agents to deploy, test, and validate changes. Production enforces read-only access via RBAC.
+### 5. Secrets and Session Integrity
 
-The development lifecycle requires the ability to:
-- Deploy updated operator versions
-- Modify Result CRDs to test rendering
-- Create/destroy test workloads
-- Validate RBAC configurations
-
-Production environments remain strictly read-only, enforced by:
-- ClusterRole with read-only verbs only
-- No ServiceAccount with write permissions in production namespaces
-- Audit logging of all API access
+**Invariant**: Credentials and LLM keys MUST never be committed. Sessions MUST support short-lived auth without leaking tokens to logs or client-side durable storage as the only path.
 
 **Enforcement**:
-- Separate Helm values files for dev/staging vs. production
-- RBAC manifests use environment-specific namespaces
-- CI/CD pipelines validate production manifests have no write verbs
 
-**Rationale**: Agents need full access to test their changes. Production must be safe to observe but impossible to modify through the platform.
+- No API keys, kubeconfigs, or GHCR tokens in git.
+- Credential store is in-memory with TTL; session binding via HttpOnly `session_id` cookie and/or `X-Session-Id` header.
+- Logs MUST NOT include access keys, session tokens, or full kubeconfig content—session id prefixes only where needed.
+- Optional single-cluster pin (`IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME`) MUST verify access on credential submit when set.
 
-### 7. Observability
+**Rationale**: Temporary Kion creds and cookie sessions reduce blast radius; logging secrets is an incident.
 
-**Invariant**: Every query and analysis is logged with sufficient context to reconstruct what happened and enable trending.
+### 6. Reliability Over Completeness
 
-The system maintains:
-- Full audit trail of chatbot queries and responses
-- Timestamps and metadata for all Result CRDs
-- Historical data for identifying patterns over time
-- Query logs that include enrichment context (what data was available to the LLM)
+**Invariant**: Prefer accurate, actionable findings over noisy comprehensive coverage.
 
 **Enforcement**:
-- All API endpoints log requests with session ID, timestamp, and query
-- Result CRDs include creation timestamp and analyzer version
-- Conversation history stored with cluster context
-- Metrics exported for monitoring query patterns
 
-**Rationale**: When diagnosing a cluster issue, engineers need to know what the system observed at the time. Historical context prevents repeating investigations.
+- Weather and chat SHOULD de-emphasize low-confidence or unverified noise.
+- Response quality and cluster-grounding guards (when present) MUST not be removed without replacement.
+- False-positive patterns discovered in ops SHOULD be suppressed or documented.
 
-### 8. Testability
+**Rationale**: Alert fatigue trains engineers to ignore real issues.
 
-**Invariant**: All components support deterministic testing with mock Kubernetes clusters and controlled test data.
+### 7. DevOps-First UX
 
-The platform must be testable without a real cluster:
-- Unit tests use mocked Kubernetes clients returning fixture data
-- Integration tests use kind clusters or mocked API servers
-- Test data is committed to the repository for reproducibility
-- K8sGPT Result CRDs have fixture files representing common failure modes
+**Invariant**: Optimize for time-to-resolution: dense status, fast auth, clear cluster context, minimal ceremony for common tasks.
 
 **Enforcement**:
-- All Kubernetes API calls go through abstraction layers that can be mocked
-- Test fixtures cover: healthy cluster, CrashLoopBackOff, OOMKilled, Pending PVC, failing Ingress, etc.
-- CI runs tests against mock data without requiring cluster access
 
-**Rationale**: Deterministic tests with known inputs ensure the system behaves correctly before deployment. Tests that require real clusters are slow, flaky, and hard to reproduce.
+- Auth, weather, and chat MUST remain usable without multi-page wizards for the happy path.
+- Ingress host/path, `app.apiBaseUrl`, `app.publicUrl`, and CORS MUST stay aligned when URLs change.
+- Keyboard-accessible controls for primary actions where practical.
+
+**Rationale**: Incident response is desktop, high-pressure, and intolerant of UX friction.
+
+### 8. Testability and Determinism
+
+**Invariant**: Core logic MUST be testable without a production cluster; fixtures cover common failure modes.
+
+**Enforcement**:
+
+- Kubernetes access goes through mockable layers; unit tests use fixtures.
+- Backend: `pytest`; frontend: Jest/RTL; optional Playwright e2e under `frontend/e2e/`.
+- CI MUST run unit/contract tests without requiring live cluster credentials.
+- K8sGPT Result fixtures for common failures remain available for reader/weather tests.
+
+**Rationale**: Flaky cluster-only tests block delivery and hide regressions.
+
+### 9. Observability of the Assistant
+
+**Invariant**: Queries and analysis paths MUST be reconstructable enough to debug "what did the bot see?"
+
+**Enforcement**:
+
+- API logging includes session id (truncated), timestamp, and outcome class—not secrets.
+- Conversation history retains cluster-scoped context where designed.
+- Deployments expose `/api/health` (or equivalent) for smoke checks.
+
+**Rationale**: Post-incident review needs assistant context, not only cluster events.
+
+### 10. Environment-Scoped Privileges
+
+**Invariant**: Dev/test may grant elevated access for deploy and validation. Production-facing clusters MUST enforce least privilege and approval-gated mutation product behavior.
+
+**Enforcement**:
+
+- Separate values/secrets per environment; never copy prod keys into git or local fixtures.
+- Agents MAY deploy and test in designated non-prod clusters with human oversight.
+- Labels or platform policy for `environment=production` override any "agent convenience" shortcuts.
+
+**Rationale**: Agents need real clusters to verify; production must stay constrained.
 
 ## Architectural Decisions
 
-### Read-Only Chatbot Backend
+### Approval-Gated Agentic Tools
 
-**Status**: Accepted
-**Context**: The chatbot backend runs in the same cluster it monitors. If it had write permissions, a bug or compromise could modify production resources.
-**Consequences**: 
-- Positive: No risk of accidental or malicious cluster modification
-- Negative: Cannot auto-remediate issues (this is by design)
+**Status**: Accepted  
+**Context**: Absolute read-only blocked useful remediation and testing of execute paths.  
+**Consequences**: Dual control (product approval + RBAC); higher complexity than pure read-only; constitution v1 "never write" is superseded.
 
-### Decoupled Operator from Chatbot
+### Argo CD + Helm (not Flux)
 
-**Status**: Accepted
-**Context**: K8sGPT runs in each monitored cluster to analyze locally without cross-cluster authentication complexity.
-**Consequences**:
-- Positive: Each cluster's operator is self-contained; chatbot doesn't need cluster credentials for analysis
-- Negative: Must deploy/manage operator per cluster (mitigated by ArgoCD)
+**Status**: Accepted  
+**Context**: Flux path removed; app-of-apps + charts under `argocd/` and `helm/`.  
+**Consequences**: Image Updater can write SHA tags; Actions direct_deploy is emergency-only.
 
-### Result CRDs as Single Source of Truth
+### FAISS Knowledge Base on PVC
 
-**Status**: Accepted
-**Context**: Both dashboard and chatbot derive from the same k8sgpt analysis results.
-**Consequences**:
-- Positive: Single source of truth ensures consistency
-- Negative: Dashboard and chatbot tied to k8sgpt Result schema
+**Status**: Accepted  
+**Context**: Team solutions need semantic retrieval beside live diagnostics.  
+**Consequences**: RWX PVC for multi-replica; seeding on startup; index not committed to git.
 
-### RAG-Powered Knowledge Base
+### Decoupled K8sGPT Operator
 
-**Status**: Accepted
-**Context**: Engineers accumulate tribal knowledge that should be searchable alongside live analysis.
-**Consequences**:
-- Positive: Historical solutions are easily rediscovered
-- Negative: Adds complexity; KB seeding required for new deployments
+**Status**: Accepted  
+**Context**: Operator/instance analyze in-cluster; chatbot consumes Results + live API.  
+**Consequences**: Operator lifecycle managed via GitOps apps; chatbot not the sole analyzer.
+
+### In-Memory Credentials + Session Cookie
+
+**Status**: Accepted  
+**Context**: Short-lived Kion sessions; multi-replica needs sticky sessions or future external store.  
+**Consequences**: Default replicaCount often 1; horizontal scale requires session redesign.
 
 ## Non-Negotiable Rules
 
-1. **Never deploy write permissions** to production clusters via this platform's manifests
-2. **Never include kubectl apply/delete/edit commands** in AI recommendations
-3. **Never log credentials or secrets** — only session IDs and timestamps
-4. **Never skip explainability** — every finding must include reasoning
-5. **Never cache false positives** — suspicious results are logged but not surfaced
+1. MUST NOT remove mutation approval gates without a MAJOR constitution amendment and security review.
+2. MUST NOT commit secrets, kubeconfigs, or FAISS index binaries.
+3. MUST NOT pin production chatbot image to floating `latest`.
+4. MUST NOT reintroduce Flux as delivery without amending GitOps principle and docs.
+5. MUST NOT log credentials or full session tokens.
+6. MUST ground chat claims in live evidence or clearly mark unverified K8sGPT/KB signal.
+7. MUST keep Helm/Argo ingress, API base URL, and CORS aligned when changing public URLs.
+8. MUST run automated tests for behavioral changes in auth, chat tools, or Result parsing.
 
 ## Enforcement Mechanisms
 
-| Principle | Code Enforcement | Test Enforcement |
-|-----------|-------------------|------------------|
-| Read-Only Safety | RBAC manifests use only `get`, `list`, `watch` | Integration tests verify no write API calls |
-| Explainability | Prompt templates require explanation fields | Response parser validates explanation presence |
-| Operator as Source | Both surfaces consume same CRD types | Parity tests compare dashboard vs. chatbot data |
-| DevOps-First UX | Keyboard navigation in all components | Accessibility tests verify shortcuts |
-| Reliability | Confidence thresholds in config | Tests with known false positive data |
-| Dev Access | Separate prod/dev manifests | CI validates prod manifests are read-only |
-| Observability | Structured logging middleware | Log format validation tests |
-| Testability | Mockable Kubernetes clients | Deterministic test suite with fixtures |
+| Principle | Code / Config | Verification |
+|-----------|---------------|--------------|
+| Approval-gated mutation | `agentic_engine`, `agent_tools`, system prompt | Unit/integration tests for blocked mutate without approval |
+| Live API first | Chat agent tools, k8sgpt_reader usage | Tests + manual cluster smoke |
+| Explainability | `prompts/system.md`, skills | Prompt/contract tests; review |
+| GitOps | `argocd/`, `helm/`, Image Updater annotations | Argo sync health; no secret-in-chart |
+| Secrets/session | credentials API, cookie flags | No secrets in git; auth tests |
+| Reliability | weather calculator, quality guards | Fixture-based weather/chat tests |
+| Testability | mocks, fixtures, CI | `pytest`, frontend tests in CI |
+| Observability | logging middleware, health | Smoke `/api/health` |
 
 ## Exceptions
 
-### Dev/Test Cluster Access
+### Non-production elevated access
 
-**Exception**: Development and test clusters may have elevated permissions for testing purposes.
-**Rationale**: Agents need write access to validate changes during development.
-**Constraint**: This exception does not apply to any cluster labeled `environment=production`.
+**Exception**: Dev/test clusters may allow write RBAC and agent-driven deploy for validation.  
+**Constraint**: Does not apply to production-labeled environments.
 
-### Emergency Debug Mode
+### Emergency direct deploy
 
-**Exception**: In extreme diagnostic scenarios, a separate debug namespace may be granted temporary write access for load testing or chaos engineering.
-**Rationale**: Some issues require reproducing failures under load.
-**Constraint**: Debug namespace is isolated from production workloads and access expires automatically.
+**Exception**: GitHub Actions `direct_deploy` (or manual helm/kubectl) may bypass pull-based flow during outages.  
+**Constraint**: Document the change; return desired state to git promptly.
+
+### Temporary debug namespaces
+
+**Exception**: Isolated debug namespaces for chaos/load tests.  
+**Constraint**: Time-bounded; not shared with production app namespaces.
 
 ## Review Process
 
 This constitution is reviewed:
-- **On every major feature addition**: New features must be evaluated against all principles
-- **Quarterly**: Full review of principles for continued relevance
-- **On incident**: Any incident that violated a principle triggers immediate review
 
-Changes require:
-1. Proposed update with rationale
-2. Review for consistency with existing principles
-3. Sign-off from platform lead
-4. Documentation of changes in git history
+- **On every major feature**: Plan Constitution Check must pass or justify Complexity Tracking.
+- **On security/incident**: Any approval-bypass or secret leak triggers immediate review.
+- **At least quarterly**: Principles still match deployed product.
 
-## Appendix: k8sgpt Result CRD Schema Reference
+Amendments require:
 
-The platform operates on the following Result CRD structure (enforced by the operator):
+1. PR updating `.specify/memory/constitution.md` with Sync Impact Report comment.
+2. Semver bump: MAJOR (incompatible principle change), MINOR (new principle), PATCH (clarification).
+3. Propagation to plan/spec/tasks templates and `AGENTS.md` / `docs/` when behavior changes.
+4. Approval from repository maintainers before merge to `main`.
+
+## Appendix: Key paths
+
+| Path | Role |
+|------|------|
+| `argocd/` | App-of-apps GitOps |
+| `helm/devops-chatbot` | Primary app chart |
+| `backend/agentic_engine.py` | Agent loop |
+| `backend/prompts/system.md` | System prompt |
+| `backend/skills/` | Skill packs |
+| `libs/devops-{k8s,kb,rag}` | Shared libraries |
+| `docs/` | Human documentation |
+| `AGENTS.md` | AI agent operating rules |
+
+## Appendix: K8sGPT Result CRD (reference)
 
 ```yaml
 apiVersion: core.k8sgpt.ai/v1alpha1
@@ -238,13 +282,13 @@ kind: Result
 metadata:
   name: <resource>-<kind>-<hash>
   namespace: <namespace>
-  creationTimestamp: <timestamp>
 spec:
   kind: <Pod|Deployment|Service|...>
   name: <resource-name>
   namespace: <namespace>
-  error: <error-type>           # e.g., CrashLoopBackOff, OOMKilled
-  details: <explanation>        # AI-generated reasoning (REQUIRED)
+  error: <error-type>
+  details: <explanation>
   severity: <critical|major|minor|unknown>
-  sink: <target-ref>           # Where results are delivered
 ```
+
+Treat `details` as assistive text; verify against live API before acting.

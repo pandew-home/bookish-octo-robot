@@ -34,11 +34,14 @@ Instructions for AI coding agents working in this repository.
 
 ### Spec-kit (recommended for large features)
 
-Spec-driven flow is available under `.specify/` and `.claude/skills/speckit-*`:
+**Constitution (binding):** [`.specify/memory/constitution.md`](.specify/memory/constitution.md) **v2.0.0**  
+Observe-default + approval-gated mutation, live API first, Argo CD/Helm GitOps, SHA images, secrets/session rules.
 
-1. `/speckit.constitution` — principles  
+Spec-driven flow under `.specify/` and `.claude/skills/speckit-*`:
+
+1. `/speckit.constitution` — principles (this file + constitution.md)  
 2. `/speckit.specify` — requirements  
-3. `/speckit.plan` — technical plan  
+3. `/speckit.plan` — technical plan (includes Constitution Check gates)  
 4. `/speckit.tasks` — task breakdown  
 5. `/speckit.implement` — implementation  
 
