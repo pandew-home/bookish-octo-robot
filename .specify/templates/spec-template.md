@@ -84,11 +84,11 @@
 
 ### Constitution Constraints *(mandatory for this repo)*
 
-*From `.specify/memory/constitution.md` v2.x — delete rows that do not apply; do not weaken without amendment.*
+*From `.specify/memory/constitution.md` v3.x — delete rows that do not apply; do not weaken without amendment.*
 
-- **CC-001**: Mutating Kubernetes behavior MUST remain human-approval-gated (observe-default).
-- **CC-002**: Live cluster API evidence MUST take precedence over stale K8sGPT Result text.
-- **CC-003**: Secrets MUST NOT appear in git; sessions MUST NOT log credentials.
+- **CC-001**: Mutating execution MUST be policy-gated (kubeApi/wrapper + user creds); free-text recommendations allowed; no prompt dual-approval as auth.
+- **CC-002**: Live cluster API evidence MUST take precedence over stale K8sGPT Result text and memory.
+- **CC-003**: Secrets MUST NOT appear in git; sessions MUST NOT log credentials; Secret values not returned under default wrapper policy.
 - **CC-004**: Delivery changes MUST prefer Argo CD + Helm over new Flux or secret-in-chart patterns.
 - **CC-005**: Production image references MUST use git SHA tags when the feature touches deploy/image paths.
 - **CC-006**: Public URL changes MUST keep ingress path, apiBaseUrl, publicUrl, and CORS aligned.

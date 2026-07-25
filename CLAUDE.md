@@ -383,3 +383,10 @@ Major refactor pending merge:
 **Solutions**: POST `/api/solutions`, GET `/api/solutions`, GET `/api/kb/search`
 **Health**: GET `/api/health` (liveness), GET `/api/health/ready` (readiness)
 **API Docs**: http://localhost:8000/api/docs (Swagger UI)
+
+## Active Technologies
+- Python 3.11+ (backend), TypeScript/React (frontend), Vestige MCP binary (Rust, prebuilt linux/x64) + FastAPI, existing `AgentEngine`/`agent_tools`, MCP Python client (`mcp` SDK or equivalent stdio JSON-RPC client), Vestige (`vestige-mcp` / `vestige-mcp-server`) (002-vestige-memory-mcp)
+- Vestige SQLite (+ embeddings cache) on Kubernetes PVC (`/data/vestige`); no FAISS index; no external vector SaaS (002-vestige-memory-mcp)
+
+## Recent Changes
+- 002-vestige-memory-mcp: Added Python 3.11+ (backend), TypeScript/React (frontend), Vestige MCP binary (Rust, prebuilt linux/x64) + FastAPI, existing `AgentEngine`/`agent_tools`, MCP Python client (`mcp` SDK or equivalent stdio JSON-RPC client), Vestige (`vestige-mcp` / `vestige-mcp-server`)

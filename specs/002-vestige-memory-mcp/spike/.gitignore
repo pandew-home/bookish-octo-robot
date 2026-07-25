@@ -1,0 +1,5 @@
+node_modules/
+model-cache/
+data/
+results/*.log
+package-lock.json

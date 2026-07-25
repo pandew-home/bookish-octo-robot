@@ -34,8 +34,8 @@ Instructions for AI coding agents working in this repository.
 
 ### Spec-kit (recommended for large features)
 
-**Constitution (binding):** [`.specify/memory/constitution.md`](.specify/memory/constitution.md) **v2.0.0**  
-Observe-default + approval-gated mutation, live API first, Argo CD/Helm GitOps, SHA images, secrets/session rules.
+**Constitution (binding):** [`.specify/memory/constitution.md`](.specify/memory/constitution.md) **v3.0.0**  
+Observe-default + **policy-gated** mutation (`kubeApi` + user creds), free recommendations, Secret identify-only defaults, live API first, Argo CD/Helm GitOps, SHA images, Vestige-class institutional memory (FAISS product path superseded).
 
 Spec-driven flow under `.specify/` and `.claude/skills/speckit-*`:
 

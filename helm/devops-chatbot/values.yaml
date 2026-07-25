@@ -106,6 +106,36 @@ llm:
   model: "mistralai/devstral-2512"
   defaultRegion: "us-east-1"
 
+# Defense-in-depth for agent Kubernetes API wrappers (in addition to user RBAC).
+# Free-text remediation recommendations are always allowed; these gates control execution only.
+# See specs/002-vestige-memory-mcp/contracts/access-model.md
+kubeApi:
+  allowRead: true
+  # Mutating methods disabled by default (POST/PUT/PATCH/DELETE).
+  allowMutate: false
+  allowedMethods:
+    - GET
+  # Empty = no extra allowlist (deny.* and secrets.* still apply).
+  allowedSubresources: []
+  namespaceMode: any # any | allowlist | denylist
+  namespaces: []
+  allowedResources: []
+  allowedApiGroups: []
+  secrets:
+    # Identify: LIST + metadata-only GET (name, type, labels, data key names).
+    # Never return Secret data/stringData to the agent unless allowReadData is true.
+    allowIdentify: true
+    allowReadData: false
+    allowMutate: false
+  deny:
+    serviceaccounts: true
+    clusterScopedWrites: true
+    execSubresource: true
+    portforwardSubresource: true
+    proxySubresource: true
+  dryRunMutations: false
+  logDeniedRequests: true
+
 # Frontend and backend base-path configuration for subpath hosting
 # These values are surfaced by backend /api/config and consumed by the browser.
 # If these drift, the UI will call wrong endpoints and fail on click.

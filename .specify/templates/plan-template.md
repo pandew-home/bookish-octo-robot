@@ -30,18 +30,19 @@
 ## Constitution Check
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*  
-*Source: `.specify/memory/constitution.md` (v2.x — DevOps Chatbot / bookish-octo-robot)*
+*Source: `.specify/memory/constitution.md` (v3.x — DevOps Chatbot / bookish-octo-robot)*
 
 | Gate | Pass criteria | Status |
 |------|----------------|--------|
-| Observe-default / approval | Mutating K8s paths keep human approval; no silent auto-remediation | [ ] |
-| Live API first | Chat/diagnose prefers live API; K8sGPT Results treated as supporting/stale-prone | [ ] |
+| Observe-default / policy-gated mutate | Mutate default off via kubeApi/wrapper policy; free-text recommendations allowed; no prompt dual-approval as auth | [ ] |
+| Live API first | Chat/diagnose prefers live API; K8sGPT/memory treated as supporting/stale-prone | [ ] |
 | Explainability | User-visible findings include evidence + rationale (not commands alone) | [ ] |
 | GitOps delivery | Cluster desired state via `helm/` + `argocd/`; no Flux; no secrets in chart git | [ ] |
 | Image pin | Production/image refs use git SHA tags, not floating `latest` as the pin | [ ] |
-| Secrets / session | No credentials in repo; sessions cookie/header only; no secret logging | [ ] |
-| Testability | Unit/contract tests without prod cluster; fixtures for new failure modes | [ ] |
+| Secrets / session | No credentials in repo; sessions cookie/header; Secret values not returned under default policy | [ ] |
+| Testability | Unit/contract tests without prod cluster; policy matrix + fixtures | [ ] |
 | Ingress/CORS alignment | If URL/path changes: host, path, apiBaseUrl, publicUrl, allowedOrigins co-updated | [ ] |
+| Wrappers-only | Agent cluster I/O only via approved Python kube wrappers | [ ] |
 
 Unjustified failures block plan approval. Justified exceptions go in **Complexity Tracking** below and require maintainer ack.
 

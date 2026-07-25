@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "vestige-mcp-server": "^2.2.1"
+  }
+}
