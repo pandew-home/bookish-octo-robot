@@ -1,150 +1,75 @@
 # Security Guide
 
-DevOps Chatbot v2.0 implements comprehensive security controls following Kubernetes best practices.
+Security controls and practices for DevOps Chatbot v2.0.
 
-## Security Features
+## Security features
 
-### Pod Security Standards
-- **Restricted profile** enforced across all pods
-- Non-root user execution (UID 1000)
-- Read-only root filesystem
-- No privilege escalation
-- Dropped all Linux capabilities
+### Application authentication
 
-### RBAC (Role-Based Access Control)
-- Least privilege access model
-- Namespace-scoped permissions
-- Separate roles for:
-  - K8sGPT Result CRD reading
-  - Pod and service management
-  - ConfigMap and Secret access
+- **Kion temporary AWS credentials** validated via STS; optional kubeconfig path.  
+- Credentials held **in memory** with TTL (~3600s), not persisted to disk by default.  
+- Session binding via **HttpOnly `session_id` cookie** and/or **`X-Session-Id` header**.  
+- Optional **target cluster verification** on login when `IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME` is set (rejects creds that cannot list/access that cluster).
 
-### Network Policies
-- Pod-to-pod traffic segmentation
-- Ingress rules for frontend (port 80)
-- Ingress rules for backend (port 8000)
-- Egress rules for:
-  - Kubernetes API server
-  - External LLM APIs
-  - DNS resolution
+### Agent / mutation controls
 
-### Container Hardening
-- Non-root user (UID 1000, GID 1000)
-- Read-only root filesystem
-- No capabilities
-- Seccomp profile: RuntimeDefault
-- AppArmor profile: runtime/default
+- Chat agent defaults to **observe and diagnose**.  
+- Mutating Kubernetes API tool calls require **human approval** in the product path (`agentic_engine` / system prompt).  
+- Cluster **RBAC** remains the hard boundary — the chatbot SA and user tokens must not be over-privileged.
 
-### Policy Enforcement
-15 Kyverno policies enforce:
-- Security best practices
-- Resource limits and requests
-- Label requirements
-- Image pull policies
-- Immutable ConfigMaps and Secrets
+### Pod security
 
-## Pre-Deployment Checklist
+Chart/templates aim for restricted-style workloads:
 
-Before deploying to production:
+- Non-root user  
+- Read-only root filesystem where feasible  
+- No privilege escalation; drop all capabilities  
+- Seccomp RuntimeDefault (and related annotations as configured)
 
-- [ ] Install Kyverno policy engine
-- [ ] Apply NetworkPolicies
-- [ ] Enable Pod Security Standards
-- [ ] Rotate all default secrets
-- [ ] Configure external secret management (recommended)
-- [ ] Enable audit logging
-- [ ] Set up security monitoring
-- [ ] Review and customize RBAC permissions
-- [ ] Configure TLS for ingress
-- [ ] Enable pod security admission controller
+### Secrets management
 
-## Security Improvements
+- **Do not** commit LLM keys, GHCR tokens, or kubeconfigs.  
+- Helm `llm.createSecret: false` for GitOps; create `devops-chatbot-secrets` out of band (or ExternalSecrets/Vault).  
+- Image pulls via `ghcr-pull-secret`.  
+- K8sGPT AI backend secret in the operator namespace.
 
-### Implemented
+### Network
 
-1. **Pod Security Standards**: Restricted profile with comprehensive controls
-2. **RBAC**: Least privilege access with namespace scoping
-3. **Network Policies**: Traffic segmentation and egress control
-4. **Container Hardening**: Non-root, read-only filesystem, no capabilities
-5. **Kyverno Policies**: 15 policies for security and best practices
-6. **Syscall Filtering**: Seccomp and AppArmor profiles
+- ClusterIP service; Traefik (or other) ingress for external access.  
+- CORS via `app.allowedOrigins` / `ALLOWED_ORIGINS` — keep tight to real UI origins.  
+- TLS: enable via ingress + cert-manager when moving beyond lab clusters (`ingress.tls` in chart values).
 
-### Recommended for Production
+### Supply chain
 
-1. **External Secret Management**
-   - Use AWS Secrets Manager, HashiCorp Vault, or similar
-   - Rotate secrets automatically
-   - Avoid storing secrets in Kubernetes
+- Deploy images by **git SHA** tags from GHCR.  
+- Image Updater allow-tags restricted to 40-char hex SHAs on the chatbot Application.  
+- Prefer dependency pins in `requirements.txt` / lockfiles; review CI-built images.
 
-2. **TLS/mTLS**
-   - Enable TLS for all ingress traffic
-   - Consider mTLS for pod-to-pod communication
-   - Use cert-manager for certificate management
+### Policy (optional / reference)
 
-3. **Audit Logging**
-   - Enable Kubernetes audit logging
-   - Monitor API access patterns
-   - Alert on suspicious activity
+`k8s/kyverno-policies.yaml` and related manifests may enforce labels, resources, and hardening — apply only if Kyverno is installed and policies are reviewed for this cluster.
 
-4. **Image Scanning**
-   - Scan container images for vulnerabilities
-   - Use admission controllers to block vulnerable images
-   - Regularly update base images
+## Pre-deployment checklist
 
-5. **Runtime Security**
-   - Deploy Falco or similar runtime security tool
-   - Monitor for anomalous behavior
-   - Alert on policy violations
+- [ ] Secrets created out of band; not in git  
+- [ ] GHCR pull secret present in app namespace  
+- [ ] Ingress TLS plan for any non-lab exposure  
+- [ ] CORS origins match real UI URLs  
+- [ ] Chatbot and K8sGPT RBAC reviewed (least privilege)  
+- [ ] Mutation approval UX understood by operators  
+- [ ] NetworkPolicies / PSS if required by platform standards  
+- [ ] Audit logging / monitoring for the namespace  
 
-6. **Backup and Disaster Recovery**
-   - Regular backups of PVC data
-   - Test restore procedures
-   - Document recovery runbooks
+## Threat notes
 
-## Security Review
+| Risk | Mitigation |
+|------|------------|
+| Stolen browser session cookie | HttpOnly; short TTL; HTTPS in prod; logout clears cookie |
+| Over-broad AWS keys | Use short-lived Kion creds; single-cluster pin |
+| Prompt-injection → cluster change | Approval gates; RBAC; prefer read-only SA in prod |
+| Malicious image tag | SHA allow-list; signed/provenance optional future |
+| Secret leak in logs | Avoid logging tokens; redaction in error handlers |
 
-For a detailed security analysis, see the following documents:
-- [Security Review](../SECURITY_REVIEW.md) - Comprehensive security assessment
-- [Security Summary](../SECURITY_SUMMARY.md) - Executive summary
-- [Security Improvements](../SECURITY_IMPROVEMENTS.md) - Detailed improvement recommendations
+## Related
 
-## Compliance Considerations
-
-### Data Privacy
-- User credentials stored in-memory with TTL
-- Conversation history isolated per cluster
-- No PII stored in knowledge base
-
-### Access Control
-- Authentication via Kion AWS credentials
-- Authorization via Kubernetes RBAC
-- Audit trail via Kubernetes audit logs
-
-### Network Security
-- Network policies restrict traffic flow
-- TLS recommended for production
-- Egress limited to required endpoints
-
-## Incident Response
-
-### Security Incident Procedure
-
-1. **Detect**: Monitor logs and alerts
-2. **Contain**: Isolate affected pods/namespaces
-3. **Investigate**: Review audit logs and metrics
-4. **Remediate**: Apply patches or configuration changes
-5. **Document**: Record incident details and lessons learned
-
-### Emergency Contacts
-
-- Security Team: [Configure your team contact]
-- On-Call Engineer: [Configure your on-call rotation]
-- Incident Commander: [Configure your incident response lead]
-
-## Security Updates
-
-Stay informed about security updates:
-- Subscribe to Kubernetes security announcements
-- Monitor CVE databases for dependencies
-- Regularly update container images and dependencies
-- Review Kyverno policy updates
+- [Architecture](architecture.md) · [Deployment](deployment.md) · [Usage](usage.md)

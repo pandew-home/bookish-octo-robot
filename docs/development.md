@@ -1,229 +1,163 @@
 # Development Guide
 
-This guide covers local development setup and testing for DevOps Chatbot v2.0.
+Local setup, tests, and layout for DevOps Chatbot v2.0.
 
-## Local Development Setup
+**Baseline tag:** `faiss-202607`. Agent-facing rules: [../AGENTS.md](../AGENTS.md).
 
-### 1. Clone the Repository
+## Local development setup
+
+### 1. Clone
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/pandew-home/bookish-octo-robot.git
 cd bookish-octo-robot
+git checkout main
+# optional pin: git checkout faiss-202607
 ```
 
-### 2. Backend Setup
+### 2. Backend
 
 ```bash
 cd backend
-
-# Create virtual environment
 python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Windows: venv\Scripts\activate
+source venv/bin/activate
 
-# Install dependencies
 pip install -r requirements.txt
 
-# Install shared libraries in editable mode
-pip install -e ./libs/devops-k8s
-pip install -e ./libs/devops-kb
-pip install -e ./libs/devops-prompts
-pip install -e ./libs/devops-rag
-```
+# Shared libraries (paths are repo-root libs/, not backend/libs/)
+pip install -e ../libs/devops-k8s
+pip install -e ../libs/devops-kb
+pip install -e ../libs/devops-rag
 
-### 3. Frontend Setup
-
-```bash
-cd frontend
-
-# Install dependencies
-npm install
-
-# Start development server
-npm start
-```
-
-### 4. Environment Configuration
-
-Create a `.env` file in the root directory:
-
-```bash
-# Required
-LLM_API_KEY=sk-...
-DEFAULT_REGION=us-east-1
-
-# Optional
-KB_SEEDING_ENABLED=true
-KB_FORCE_RESEED=false
-LLM_PROVIDER=openai
-LLM_MODEL=gpt-4o-mini
-```
-
-See [Environment Variables](deployment.md#environment-variables) for all options.
-
-### 5. Start Backend
-
-```bash
-cd backend
 uvicorn app:app --reload --port 8000
 ```
 
-### 6. Access the Application
+There is **no** `libs/devops-prompts` package; prompts live under `backend/prompts/` (see `system.md`).
 
-- **Frontend**: http://localhost:3000
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
-
-## Testing
-
-### Backend Tests
-
-```bash
-cd backend
-
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=. --cov-report=html
-
-# Run property-based tests only
-pytest -k "property"
-
-# Run specific test file
-pytest tests/test_credential_store.py
-```
-
-### Frontend Tests
+### 3. Frontend
 
 ```bash
 cd frontend
+npm install
+npm start
+# Dev server proxies /api → localhost:8000 (see frontend package config)
+```
 
-# Run all tests
-npm test
+### 4. Environment
 
-# Run with coverage
+Create `.env` at repo root or export vars for the backend process:
+
+```bash
+LLM_API_KEY=sk-...
+DEFAULT_REGION=us-east-1
+LLM_PROVIDER=openai          # or openrouter, etc.
+LLM_MODEL=gpt-4o-mini
+KB_SEEDING_ENABLED=true
+KB_FORCE_RESEED=false
+# Optional single-cluster:
+# IN_CLUSTER_EKS_CLUSTER_NAME=my-cluster
+# EKS_CLUSTER_NAME=my-cluster
+```
+
+### 5. Access
+
+| Surface | URL |
+|---------|-----|
+| Frontend | http://localhost:3000 |
+| Backend API | http://localhost:8000 |
+| OpenAPI | http://localhost:8000/docs |
+
+## Testing
+
+### Backend
+
+```bash
+cd backend
+pytest
+pytest --cov=. --cov-report=html
+pytest -k "property"
+pytest tests/test_credential_store.py
+```
+
+### Frontend unit
+
+```bash
+cd frontend
+npm test -- --no-watch
 npm test -- --coverage
-
-# Run specific test file
 npm test -- src/components/LoginForm.test.tsx
 ```
 
-## Project Structure
+### Frontend e2e (Playwright)
+
+```bash
+cd frontend
+npx playwright install   # first time
+npx playwright test
+```
+
+Specs live under `frontend/e2e/`. Point `BASE_URL` at a running stack when testing against deploy.
+
+### Workflow lint
+
+```bash
+# See .github/workflows/workflow-lint.yml for CI expectations
+```
+
+## Project structure
 
 ```
 bookish-octo-robot/
-├── backend/                 # FastAPI backend
-│   ├── api/                # API endpoints
-│   ├── middleware/         # Rate limiting, auth
-│   ├── tests/              # Backend tests
-│   ├── utils/              # Utilities and metrics
-│   ├── app.py              # FastAPI application
-│   ├── credential_store.py # Kion credential management
-│   ├── eks_auth.py         # EKS token generation
-│   ├── cluster_manager.py  # Cluster discovery
-│   ├── query_router.py     # Query classification
-│   ├── enrichment_engine.py # Context enrichment
-│   ├── k8sgpt_reader.py    # K8sGPT CRD reading
-│   ├── weather_calculator.py # Health monitoring
-│   ├── rag_integration.py  # RAG engine
-│   ├── template_engine.py  # Prompt templates
-│   ├── conversation_history.py # History management
-│   ├── solution_manager.py # Knowledge base
-│   ├── input_sanitizer.py  # Input validation
-│   ├── response_parser.py  # Response parsing
-│   ├── startup_validator.py # Startup checks
-│   └── requirements.txt    # Python dependencies
-├── frontend/               # React frontend
-│   ├── public/            # Static assets
-│   ├── src/
-│   │   ├── components/    # React components
-│   │   ├── hooks/         # Custom hooks
-│   │   ├── types/         # TypeScript types
-│   │   ├── utils/         # Utilities
-│   │   ├── App.tsx        # Main app component
-│   │   └── index.tsx      # Entry point
-│   ├── package.json       # Node dependencies
-│   └── tsconfig.json      # TypeScript config
-├── libs/                  # Shared libraries
-│   ├── devops-k8s/       # Kubernetes utilities
-│   ├── devops-kb/        # Knowledge base
-│   ├── devops-prompts/   # Prompt templates
-│   └── devops-rag/       # RAG engine
-├── k8s/                   # Kubernetes manifests
-├── k8sgpt/               # K8sGPT Operator manifests
-├── docker/               # Docker configuration
-├── docs/                 # Documentation
-├── Dockerfile           # Multi-stage build
-└── .env                 # Environment variables
+├── AGENTS.md                 # Rules for coding agents
+├── argocd/                   # App-of-apps GitOps
+├── helm/                     # Charts (chatbot, k8sgpt-instance, alloy-extras, dashboards)
+├── backend/
+│   ├── api/                  # credentials, clusters, chat, weather, solutions
+│   ├── skills/               # SKILL.md packs for the agent
+│   ├── prompts/system.md     # System prompt
+│   ├── agentic_engine.py
+│   ├── agent_tools.py
+│   ├── rag_integration.py
+│   ├── k8sgpt_reader.py
+│   ├── weather_calculator.py
+│   ├── tests/
+│   └── requirements.txt
+├── frontend/
+│   ├── src/                  # components, hooks, types
+│   ├── e2e/                  # Playwright
+│   └── playwright.config.ts
+├── libs/
+│   ├── devops-k8s/
+│   ├── devops-kb/
+│   └── devops-rag/
+├── k8s/                      # Legacy/reference manifests
+├── k8sgpt/                   # Operator/Alloy docs & fixtures
+├── .github/workflows/
+├── docs/
+└── Dockerfile
 ```
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Run tests: `pytest` (backend) and `npm test` (frontend)
-5. Submit a pull request
+1. Branch from `main`.  
+2. Prefer small PRs; run backend + frontend tests.  
+3. Update docs/AGENTS when behavior or GitOps paths change.  
+4. Do not commit secrets, FAISS index dumps, or coverage HTML trees.  
+5. Do not reintroduce Flux.
 
-## Code Style
+## Code style
 
-### Backend (Python)
-- Follow PEP 8
-- Use type hints
-- Write docstrings for public functions
-- Keep functions focused and small
-
-### Frontend (TypeScript)
-- Follow ESLint rules
-- Use TypeScript strict mode
-- Write JSDoc comments for complex functions
-- Keep components focused and reusable
+- **Python:** PEP 8, type hints, focused modules.  
+- **TypeScript:** strict mode, ESLint, small components/hooks.  
+- **Helm/YAML:** 2-space; security context and resources explicit.
 
 ## Debugging
 
-### Backend Debugging
-- Enable debug logging: `DEBUG=true`
-- Use FastAPI's interactive docs: http://localhost:8000/docs
-- Check logs for detailed error messages
+- Backend: `DEBUG=true` / `LOG_LEVEL=DEBUG`; use `/docs`.  
+- Frontend: React DevTools; network tab for `/api/*` and session cookie.  
+- Cluster: `kubectl logs -n devops-chatbot deploy/devops-chatbot`; check Argo CD app sync.
 
-### Frontend Debugging
-- Use React DevTools browser extension
-- Check browser console for errors
-- Use network tab to inspect API calls
+## Related
 
-## Common Development Tasks
-
-### Adding a New API Endpoint
-1. Create endpoint in `backend/api/`
-2. Add route to `backend/app.py`
-3. Write tests in `backend/tests/`
-4. Update API documentation
-
-### Adding a New Frontend Component
-1. Create component in `frontend/src/components/`
-2. Write tests in same directory
-3. Export from component index
-4. Use in parent components
-
-### Updating Shared Libraries
-1. Make changes in `libs/` directory
-2. Reinstall in editable mode: `pip install -e ./libs/<library>`
-3. Test changes in backend
-4. Update version in `setup.py`
-
-## Technical Documentation
-
-For detailed implementation documentation, see:
-
-### Backend
-- [Authentication Flow](../backend/AUTHENTICATION_FLOW.md)
-- [Enrichment Engine](../backend/ENRICHMENT_ENGINE_SUMMARY.md)
-- [Error Handling & Observability](../backend/ERROR_HANDLING_OBSERVABILITY_SUMMARY.md)
-- [K8sGPT Implementation](../backend/K8SGPT_IMPLEMENTATION_SUMMARY.md)
-- [RAG Error Handling](../backend/RAG_ERROR_HANDLING.md)
-- [Startup Validation](../backend/STARTUP_VALIDATION_SUMMARY.md)
-- [Template Query Mapping](../backend/TEMPLATE_QUERY_MAPPING.md)
-
-### Docker
-- [Build Optimization](../docker/BUILD_OPTIMIZATION.md)
-- [Optimization Summary](../docker/OPTIMIZATION_SUMMARY.md)
+- [Architecture](architecture.md) · [Deployment](deployment.md) · [Usage](usage.md)

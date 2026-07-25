@@ -1,206 +1,63 @@
 # K8sGPT Setup Guide
 
-This guide explains how to install and configure K8sGPT in your Kubernetes clusters for testing the DevOps Chatbot v2.
+Install and operate K8sGPT so the DevOps Chatbot weather widget and chat agent can consume **Result CRDs**.
 
 ## Overview
 
-The K8sGPT Operator must be deployed to each EKS cluster you want to monitor. It continuously analyzes cluster resources and produces Result CRDs that the chatbot reads for health monitoring and troubleshooting.
+K8sGPT Operator (+ instance) runs analyzers on a schedule and writes Result custom resources. The chatbot reads those CRDs for health summaries and as supporting diagnostic signal (always verify against live API state).
 
-For detailed information, see the [K8sGPT README](../k8sgpt/README.md).
+Preferred install path in this repo: **Argo CD Applications + Helm charts**, not ad-hoc one-off manifests alone.
 
-## Prerequisites
+## GitOps path (recommended)
 
-- Kubernetes cluster (EKS, GKE, AKS, or local)
-- kubectl configured to access the cluster
-- Helm 3.x installed
-- OpenAI API key (or other AI backend)
+After Argo CD root app is bootstrapped ([argocd-gitops.md](argocd-gitops.md)):
 
-## Quick Start
+| Application | Purpose |
+|-------------|---------|
+| `00-k8sgpt-operator` | Operator install |
+| `10-k8sgpt-instance` | Instance CR + RBAC (`helm/k8sgpt-instance`) |
+| `30-alloy` / `35-alloy-extras` | Telemetry + cleanup CronJob helpers |
+| `40-grafana-dashboards` | Dashboard ConfigMaps |
+
+Create the AI backend secret **before** the instance becomes healthy:
 
 ```bash
-# 1. Create AI backend secret
+kubectl create namespace k8sgpt-operator-system --dry-run=client -o yaml | kubectl apply -f -
+
 kubectl create secret generic k8sgpt-ai-secret \
   --from-literal=openai-api-key=sk-... \
   -n k8sgpt-operator-system
-
-# 2. Deploy via ArgoCD
-kubectl apply -f k8sgpt/argocd-application.yaml
-
-# 3. Create K8sGPT instance
-kubectl apply -f k8sgpt/k8sgpt-cr.yaml
-
-# 4. Verify deployment
-kubectl get results -n k8sgpt-operator-system
+# Secret name/keys must match what the instance chart/values expect — verify helm/k8sgpt-instance
 ```
 
-## Installation Steps
-
-### 1. Add K8sGPT Helm Repository
+## Manual / Helm path
 
 ```bash
 helm repo add k8sgpt https://charts.k8sgpt.ai/
 helm repo update
-```
 
-### 2. Create Namespace
-
-```bash
 kubectl create namespace k8sgpt-operator-system
-```
-
-### 3. Create Secret for AI Backend
-
-For OpenAI:
-
-```bash
-kubectl create secret generic k8sgpt-secret \
-  --from-literal=openai-api-key=<your-openai-api-key> \
+# install operator per upstream docs, then:
+helm upgrade --install k8sgpt-instance ./helm/k8sgpt-instance \
   -n k8sgpt-operator-system
 ```
 
-For Azure OpenAI:
+Reference fixtures and Alloy notes also live under `k8sgpt/` (including `k8sgpt/Alloy/ALLOY_INTEGRATION.md` where present).
+
+## Verify
 
 ```bash
-kubectl create secret generic k8sgpt-secret \
-  --from-literal=azure-api-key=<your-azure-api-key> \
-  -n k8sgpt-operator-system
-```
-
-### 4. Install K8sGPT Operator
-
-```bash
-helm install k8sgpt k8sgpt/k8sgpt-operator \
-  --namespace k8sgpt-operator-system \
-  --set ai.enabled=true \
-  --set ai.backend=openai \
-  --set ai.secret.name=k8sgpt-secret \
-  --set ai.secret.key=openai-api-key
-```
-
-### 5. Create K8sGPT Custom Resource
-
-Apply the K8sGPT CR to start analysis:
-
-```bash
-kubectl apply -f k8sgpt/k8sgpt-cr.yaml
-```
-
-### 6. Verify Installation
-
-```bash
-# Check operator pods
 kubectl get pods -n k8sgpt-operator-system
-
-# Check K8sGPT instance
-kubectl get k8sgpt -n k8sgpt-operator-system
-
-# Check results
-kubectl get results -A
+kubectl get results.core.k8sgpt.ai -A
+kubectl get k8sgpt -A
 ```
 
-## Configuration
+Chatbot weather empty? Confirm Results exist and the chatbot’s credentials/SA can **get/list** those CRDs in the relevant namespaces.
 
-### K8sGPT Custom Resource
+## CI helpers
 
-The K8sGPT CR configures what the operator analyzes. See [k8sgpt-cr.yaml](../k8sgpt/k8sgpt-cr.yaml) for the full configuration.
+`.github/workflows/deploy-k8sgpt.yml` and `k8sgpt-deploy-shared.yml` support scripted/operator-oriented deploys. Steady state remains Argo CD when GitOps is enabled.
 
-Key settings:
-- **AI Backend**: OpenAI, Azure OpenAI, LocalAI, etc.
-- **Model**: GPT model to use for analysis
-- **Analyzers**: Which Kubernetes resources to analyze
-- **Filters**: Exclude specific namespaces or resources
-- **Sink**: Where to send results (webhook, S3, etc.)
+## Related
 
-### RBAC
-
-The operator requires permissions to read cluster resources and create Result CRDs. See [rbac.yaml](../k8sgpt/rbac.yaml) for the required permissions.
-
-### ArgoCD Integration
-
-For GitOps-based deployment, use the ArgoCD Application manifest:
-
-```bash
-kubectl apply -f k8sgpt/argocd-application.yaml
-```
-
-This enables:
-- Automated deployment and updates
-- Configuration drift detection
-- Rollback capabilities
-- Multi-cluster management
-
-## Troubleshooting
-
-### No Results Generated
-
-**Problem**: `kubectl get results -A` returns no results
-
-**Solution**:
-1. Check operator logs: `kubectl logs -n k8sgpt-operator-system -l app=k8sgpt-operator`
-2. Verify AI backend secret exists and is valid
-3. Check K8sGPT CR status: `kubectl describe k8sgpt -n k8sgpt-operator-system`
-4. Ensure analyzers are enabled in the CR
-
-### API Rate Limiting
-
-**Problem**: Operator hitting OpenAI rate limits
-
-**Solution**:
-1. Use a higher-tier OpenAI account
-2. Configure rate limiting in the K8sGPT CR
-3. Consider using a local AI backend (LocalAI, Ollama)
-4. Enable result caching with Redis
-
-### High Costs
-
-**Problem**: Unexpected OpenAI API costs
-
-**Solution**:
-1. Use cost-efficient models (gpt-3.5-turbo, gpt-4o-mini)
-2. Limit analyzers to critical resources only
-3. Increase analysis interval
-4. Use filters to exclude noisy namespaces
-5. Consider self-hosted AI backends
-
-## Advanced Configuration
-
-### Redis Caching
-
-Enable Redis caching to reduce API calls:
-
-```bash
-helm install k8sgpt k8sgpt/k8sgpt-operator \
-  --namespace k8sgpt-operator-system \
-  --set ai.enabled=true \
-  --set redis.enabled=true \
-  --set redis.host=redis-service \
-  --set redis.port=6379
-```
-
-### Custom Analyzers
-
-Create custom analyzers for application-specific resources. See the [K8sGPT documentation](https://docs.k8sgpt.ai/) for details.
-
-### Webhook Integration
-
-Send results to external systems:
-
-```yaml
-apiVersion: core.k8sgpt.ai/v1alpha1
-kind: K8sGPT
-metadata:
-  name: k8sgpt-sample
-spec:
-  sink:
-    type: webhook
-    webhook:
-      url: https://your-webhook-endpoint.com
-      headers:
-        Authorization: Bearer <token>
-```
-
-## References
-
-- [K8sGPT Documentation](https://docs.k8sgpt.ai/)
-- [K8sGPT GitHub](https://github.com/k8sgpt-ai/k8sgpt)
-- [K8sGPT Operator GitHub](https://github.com/k8sgpt-ai/k8sgpt-operator)
+- [Architecture](architecture.md) · [Deployment](deployment.md) · [Argo CD GitOps](argocd-gitops.md)

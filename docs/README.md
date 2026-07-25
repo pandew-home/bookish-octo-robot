@@ -1,57 +1,48 @@
 # DevOps Chatbot v2.0 Documentation
 
-Welcome to the DevOps Chatbot v2.0 documentation. This directory contains comprehensive guides for understanding, deploying, and using the chatbot.
+Guides for understanding, deploying, and using the chatbot.  
+**Baseline release tag:** `faiss-202607` · **GitOps:** Argo CD + Helm (Flux retired).
 
-## Documentation Index
+## Index
 
-### Getting Started
-- **[Architecture](architecture.md)** - System design, components, and data flow
-- **[Development](development.md)** - Local setup, testing, and contributing
+### Getting started
+- **[Architecture](architecture.md)** — System design, agentic chat, FAISS, data flows  
+- **[Development](development.md)** — Local setup, tests, repo layout  
+- **[AGENTS.md](../AGENTS.md)** — Rules for AI coding agents  
 
-### Deployment
-- **[Deployment Guide](deployment.md)** - Kubernetes deployment and configuration
-- **[K8sGPT Setup](k8sgpt-setup.md)** - Installing K8sGPT Operator in your clusters
-- **[Security](security.md)** - Security features, best practices, and compliance
+### Deployment & platform
+- **[Deployment](deployment.md)** — Images, Helm, env vars, troubleshooting  
+- **[Argo CD GitOps](argocd-gitops.md)** — App-of-apps bootstrap and image updates  
+- **[K8sGPT setup](k8sgpt-setup.md)** — Operator/instance and Results  
+- **[Security](security.md)** — Auth, cookies, mutation gates, checklists  
+- **[Flux (retired)](flux-gitops.md)** — Redirect only  
 
-### Using the Chatbot
-- **[Usage Guide](usage.md)** - How to use the chatbot for troubleshooting
+### Product
+- **[Usage](usage.md)** — Login, weather, chat, KB for operators  
 
-## Quick Links
+### Other
+- **[Implementing TLS](implementing-tls.md)** — TLS notes (if still applicable)  
+- **[Prompt flow redesign](prompt-flow-redesign.md)** — Historical design notes  
+- Screenshots under `docs/screenshots/`  
 
-### For Developers
-- [Local Development Setup](development.md#local-development-setup)
-- [Running Tests](development.md#testing)
-- [Project Structure](development.md#project-structure)
-- [Contributing Guidelines](development.md#contributing)
+## Quick links by role
 
-### For DevOps Engineers
-- [Kubernetes Deployment](deployment.md#kubernetes-deployment)
-- [Environment Variables](deployment.md#environment-variables)
-- [Troubleshooting](deployment.md#troubleshooting)
-- [K8sGPT Installation](k8sgpt-setup.md#installation-steps)
+| Role | Start here |
+|------|------------|
+| Developer | [development.md](development.md), [architecture.md](architecture.md) |
+| Platform / GitOps | [argocd-gitops.md](argocd-gitops.md), [deployment.md](deployment.md) |
+| Security | [security.md](security.md) |
+| End user | [usage.md](usage.md) |
 
-### For Security Teams
-- [Security Features](security.md#security-features)
-- [Pre-Deployment Checklist](security.md#pre-deployment-checklist)
-- [Security Improvements](security.md#security-improvements)
-- [Compliance Considerations](security.md#compliance-considerations)
+## External
 
-### For End Users
-- [Authentication](usage.md#authentication)
-- [Cluster Selection](usage.md#cluster-selection)
-- [Health Monitoring](usage.md#health-monitoring)
-- [Troubleshooting with Chat](usage.md#troubleshooting-with-chat)
-- [Saving Solutions](usage.md#saving-solutions)
+- [K8sGPT docs](https://docs.k8sgpt.ai/)  
+- [FastAPI](https://fastapi.tiangolo.com/)  
+- [React](https://react.dev/)  
+- [Argo CD](https://argo-cd.readthedocs.io/)  
 
-## Additional Resources
+## Need help?
 
-- [Main README](../README.md) - Project overview and quick start
-- [K8sGPT Documentation](https://docs.k8sgpt.ai/) - Official K8sGPT docs
-- [FastAPI Documentation](https://fastapi.tiangolo.com/) - Backend framework
-- [React Documentation](https://react.dev/) - Frontend framework
-
-## Need Help?
-
-- Check the [Troubleshooting](deployment.md#troubleshooting) section
-- Review [Common Issues](usage.md#troubleshooting)
-- Open an issue on GitHub
+1. [Deployment troubleshooting](deployment.md#troubleshooting)  
+2. [Usage troubleshooting](usage.md#troubleshooting-end-user)  
+3. Open a GitHub issue on `pandew-home/bookish-octo-robot`  

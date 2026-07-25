@@ -1,228 +1,135 @@
 # Architecture
 
-DevOps Chatbot v2.0 uses a decoupled architecture that separates cluster diagnostics from the user-facing application.
+DevOps Chatbot v2.0 separates **continuous cluster diagnostics** (K8sGPT) from the **user-facing assistant** (React + FastAPI + FAISS RAG), delivered via **Argo CD + Helm**.
 
-## System Architecture
+**Baseline:** tag `faiss-202607` on `main`.
+
+## System overview
 
 ```
-┌─────────────────────────────────────────────────────┐
-│  Target EKS Clusters (Dev, Staging, Prod)          │
-│   ├── K8sGPT Operator (per cluster)                 │
-│   │    └── Produces Result CRDs continuously        │
-│   └── ArgoCD (existing)                             │
-└──────────────┬──────────────────────────────────────┘
-               │ K8s API + AWS API
-               │ (user's Kion STS credentials)
-               │
-┌──────────────┴──────────────────────────────────────┐
-│  Common/Management Cluster                          │
-│                                                     │
-│  ┌─ DevOps Chatbot Deployment ───────────────────┐ │
-│  │  Frontend (React + nginx)                      │ │
-│  │  Backend (FastAPI)                             │ │
-│  └────────────────────────────────────────────────┘ │
-│                                                     │
-│  ┌─ Shared PVC (/data) ───────────────────────────┐ │
-│  │  Knowledge Base, FAISS Index, Solutions        │ │
-│  └────────────────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────┘
-               │
-               ▼
-        LLM Provider (OpenAI/Anthropic/Ollama)
+┌────────────────────────────────────────────────────────────┐
+│  Target cluster(s) — e.g. Civo / EKS                        │
+│                                                            │
+│  K8sGPT Operator + Instance  →  Result CRDs (periodic)     │
+│  Grafana Alloy → Loki → Grafana (observability path)       │
+│  Argo CD (in-cluster) reconciles apps from this git repo   │
+│                                                            │
+│  ┌─ devops-chatbot (Helm) ──────────────────────────────┐  │
+│  │  nginx + static React UI                             │  │
+│  │  FastAPI backend (agentic tools + RAG)               │  │
+│  │  PVC: knowledge base + FAISS index                   │  │
+│  └──────────────────────────────────────────────────────┘  │
+└────────────────────────────┬───────────────────────────────┘
+                             │ LLM provider (OpenRouter / OpenAI / …)
+                             ▼
+                    External model API
 ```
 
-## Key Components
+Users authenticate with **Kion temporary AWS credentials** (and/or kubeconfig). The backend stores credentials **in memory** with TTL, associates them with a **session id** (HttpOnly cookie and/or `X-Session-Id` header), and uses STS + EKS token flows (or local kubeconfig) to talk to the Kubernetes API.
 
-### Frontend (React + TypeScript)
-- Single-page application with React 18
-- TypeScript for type safety
-- Custom hooks for state management
-- Real-time health monitoring via weather widget
-- Multi-cluster support with cluster selector
-- Credential management with validation
+### Single-cluster vs multi-cluster
 
-### Backend (FastAPI + Python)
-- RESTful API with FastAPI
-- Async request handling with uvloop
-- Credential management with TTL-based expiration
-- EKS token generation for cluster access
-- Query classification and routing
-- Context enrichment engine
-- RAG integration for knowledge base search
-- K8sGPT Result CRD reading
-- Conversation history per cluster
-- Solution management
+- **Default multi-cluster:** discover EKS clusters the credentials can list; user picks a target.
+- **Single-cluster / in-cluster mode:** set `IN_CLUSTER_EKS_CLUSTER_NAME` or `EKS_CLUSTER_NAME`. Credential submit verifies API access to that cluster; listing is filtered or defaulted to one cluster.
 
-### Shared Libraries
-- **devops-k8s**: Kubernetes API utilities
-- **devops-kb**: Knowledge base management
-- **devops-prompts**: Prompt templates
-- **devops-rag**: RAG engine with FAISS
+## Key components
 
-### K8sGPT Operator
-- Deployed per monitored cluster
-- Continuous cluster analysis
-- Produces Result CRDs
-- Configurable analyzers and filters
-- Optional webhook integration
+### Frontend (`frontend/`)
 
-## Data Flow
+- React 18 + TypeScript SPA
+- Auth forms (AWS / kubeconfig), weather widget, chat UI, solution save
+- Hooks for credentials, cluster, chat, weather
+- Playwright specs under `frontend/e2e/`
 
-### Authentication Flow
-1. User enters Kion AWS credentials
-2. Backend validates via STS GetCallerIdentity
-3. Credentials stored in-memory with 3600s TTL
-4. Session token returned to frontend
+### Backend (`backend/`)
 
-### Cluster Selection Flow
-1. User selects cluster from dropdown
-2. Backend generates EKS bearer token
-3. Kubernetes API client configured
-4. Cluster-specific conversation history loaded
+| Area | Role |
+|------|------|
+| `api/credentials.py` | Validate/store creds; session cookie + header |
+| `api/clusters.py` | Discover/switch clusters; single-cluster filter |
+| `api/chat.py` | Chat entry; agent run; mutation approval detection |
+| `api/weather.py` | Health summary from K8sGPT Results |
+| `api/solutions.py` | Knowledge base write path |
+| `agentic_engine.py` / `agent_tools.py` | Tool-using agent; approval for mutations |
+| `skills/` + `skills.py` | Skill packs (k8s-check, triage skills, …) |
+| `prompts/system.md` | System prompt template (versioned in git) |
+| `rag_integration.py` | KB/FAISS + LLM orchestration |
+| `k8sgpt_reader.py` | Result CRD parsing |
+| `weather_calculator.py` | Map findings → weather status |
+| `conversation_history.py` | Per-session/cluster history |
 
-### Health Monitoring Flow
-1. Frontend polls weather endpoint every 60s
-2. Backend reads K8sGPT Result CRDs
-3. Weather calculator determines health status
-4. Top issues returned to frontend
-5. Weather widget displays status
+### Shared libraries (`libs/`)
 
-### Chat Flow
-1. User submits query
-2. Query router classifies intent
-3. Enrichment engine gathers context:
-   - K8sGPT Result CRDs
-   - Kubernetes API calls
-   - AWS API calls
-   - Knowledge base search
-4. Template engine builds prompt
-5. LLM generates response
-6. Response parser extracts structured data
-7. Response returned to frontend
-8. Conversation history updated
+- **devops-k8s** — cluster/client helpers  
+- **devops-kb** — knowledge base storage  
+- **devops-rag** — embeddings / FAISS / LLM client pieces  
 
-### Solution Saving Flow
-1. User clicks "Save to KB" on message
-2. Frontend shows solution form
-3. User fills in metadata
-4. Backend saves to knowledge base
-5. FAISS index updated
-6. Solution immediately available for search
+Local dev installs these editable from `backend/`. Production image installs or vendors as defined by the root `Dockerfile`.
 
-## Security Architecture
+### GitOps (`argocd/` + `helm/`)
+
+- App-of-apps root → numbered Applications (operator → instance → monitoring → alloy → chatbot).
+- Chatbot chart: deployment, service, ingress, PVC, PDB, resource quota, optional secret template (disabled by default).
+- Image Updater can rewrite chatbot image SHA in the Application values.
+
+Raw manifests under `k8s/` are **legacy/reference**; prefer Helm + Argo CD for new changes.
+
+### K8sGPT + observability
+
+- Operator + instance analyze resources on an interval and emit Result CRDs.
+- Alloy extras include cleanup CronJob (`ttlSecondsAfterFinished` on jobs) and scraping helpers.
+- Grafana dashboards chart packages K8sGPT-oriented dashboards.
+
+## Data flows
 
 ### Authentication
-- Kion AWS credentials (temporary)
-- STS validation
-- In-memory storage with TTL
 
-### Authorization
-- Kubernetes RBAC
-- Namespace-scoped permissions
-- Least privilege access
+1. User submits Kion AWS fields or kubeconfig content/context.  
+2. Backend validates (STS or kubeconfig parse/auth).  
+3. Optional target-cluster access check when single-cluster env is set.  
+4. Session UUID stored; response includes `session_id` JSON **and** HttpOnly cookie.  
+5. Later requests use cookie and/or `X-Session-Id`.
 
-### Network Security
-- Network policies for pod-to-pod traffic
-- Ingress rules for frontend/backend
-- Egress rules for external APIs
+### Cluster selection
 
-### Container Security
-- Non-root user (UID 1000)
-- Read-only root filesystem
-- No capabilities
-- Seccomp and AppArmor profiles
+1. List clusters (filtered in single-cluster mode).  
+2. On select, generate EKS bearer token (or use kubeconfig context) and cache clients.  
+3. Conversation context switches with the selected cluster.
 
-## Scalability Considerations
+### Health (weather)
 
-### Horizontal Scaling
-- Frontend: Stateless, can scale horizontally
-- Backend: Stateless (except in-memory credentials), can scale horizontally
-- Knowledge Base: Shared PVC, requires ReadWriteMany access mode
+1. Frontend polls weather API.  
+2. Backend reads K8sGPT Result CRDs for the active cluster.  
+3. Weather calculator aggregates severity → UI icon/status.
 
-### Performance Optimization
-- LLM response caching
-- Conversation history limits
-- Cost-efficient models (gpt-4o-mini)
-- Targeted context enrichment
-- FAISS for fast semantic search
+### Chat (agentic)
 
-### Resource Limits
-- Frontend: 256Mi memory, 200m CPU
-- Backend: 512Mi memory, 500m CPU
-- Shared PVC: 10Gi storage
+1. User query → `AgentEngine` with K8s tools, skills, K8sGPT summary, KB hits.  
+2. Default: observe/diagnose; mutating API calls require human approval phrases/path.  
+3. Response structured per `prompts/system.md` (assessment, hypothesis, remediation).  
+4. History updated for the session/cluster.
 
-## High Availability
+### Knowledge base
 
-### Application HA
-- Multiple replicas for frontend and backend
-- Health checks and readiness probes
-- Rolling updates with zero downtime
+1. Solutions saved via API → PVC-backed store.  
+2. FAISS index updated for semantic retrieval on later chats.
 
-### Data HA
-- Shared PVC with ReadWriteMany
-- Regular backups recommended
-- Disaster recovery procedures
+## Security architecture (summary)
 
-### Dependency HA
-- LLM provider fallback (optional)
-- Graceful degradation without KB
-- Continue operation if K8sGPT unavailable
+- Temporary credentials only; TTL store; no long-lived AWS keys in the app.  
+- Session cookie HttpOnly; header still supported for clients.  
+- Pod: non-root, dropped caps, seccomp (see chart/templates).  
+- Secrets out of band; chart does not embed API keys in git.  
+- Mutation gated in product; cluster RBAC should still least-privilege the service account for production.
 
-## Monitoring and Observability
+See [security.md](security.md).
 
-### Metrics
-- Prometheus metrics endpoint
-- Request latency and error rates
-- LLM token usage
-- Cache hit rates
+## Scalability notes
 
-### Logging
-- Structured JSON logging
-- Configurable log levels
-- Request/response logging
-- Error tracking
+- UI/API pods are largely stateless except **in-memory** credentials and conversation cache — multi-replica needs sticky sessions or external session/cred store (not default).  
+- FAISS/KB on PVC: use `ReadWriteMany` (e.g. Longhorn) if scaling replicas.  
+- Resource requests/limits tuned in `helm/devops-chatbot/values.yaml` for small co-tenant nodes.
 
-### Tracing
-- Request ID propagation
-- Distributed tracing support (optional)
-- Performance profiling
+## Related
 
-## Cost Optimization
-
-### LLM Costs
-- Use cost-efficient models
-- Response caching
-- Conversation history limits
-- Targeted context enrichment
-
-### Infrastructure Costs
-- Right-sized resource requests
-- Horizontal pod autoscaling
-- Spot instances for non-critical workloads
-
-### Storage Costs
-- Efficient FAISS indexing
-- Conversation history pruning
-- Knowledge base deduplication
-
-## Future Enhancements
-
-### Planned Features
-- Multi-tenancy support
-- Advanced RBAC integration
-- Custom analyzer plugins
-- Real-time collaboration
-- Mobile app
-
-### Integration Opportunities
-- Slack/Teams notifications
-- PagerDuty integration
-- Jira ticket creation
-- GitHub issue linking
-- Grafana dashboards
-
-## References
-
-- [Design Document](../devops-chatbot-v2-design.md)
-- [Architecture Document](../devops-chatbot-v2-architecture.md)
-- [K8sGPT Documentation](https://docs.k8sgpt.ai/)
+- [Deployment](deployment.md) · [Argo CD GitOps](argocd-gitops.md) · [Development](development.md) · [Usage](usage.md)

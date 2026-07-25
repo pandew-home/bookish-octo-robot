@@ -1,25 +1,28 @@
 # DevOps Chatbot v2.0
 
-A Kubernetes-native troubleshooting assistant with real-time cluster health monitoring, RAG-powered chat, and a shared team knowledge base. Uses Kion AWS credentials for authentication and K8sGPT Operator for automated cluster diagnostics.
+Kubernetes-native troubleshooting assistant with real-time health signals (K8sGPT), **FAISS RAG** over a shared knowledge base, and an agentic chat backend. Auth uses short-lived **Kion AWS** credentials (and/or kubeconfig). Delivery is **Argo CD + Helm** (Flux is retired).
+
+**Release pin:** git tag `faiss-202607` · **Repo:** https://github.com/pandew-home/bookish-octo-robot
 
 ## Features
 
-- **Simplified Authentication** — Kion temporary credentials for both K8s and AWS APIs
-- **Real-Time Health Monitoring** — Weather widget driven by K8sGPT diagnostics
-- **RAG-Powered Chat** — Semantic search over team knowledge base
-- **Multi-Cluster Support** — One deployment, multiple EKS clusters
-- **Scaling Detection** — HPA and Node analyzer integration via K8sGPT
+- **Short-lived auth** — Kion STS credentials and/or kubeconfig; HttpOnly session cookie (+ `X-Session-Id`)
+- **Health weather widget** — Driven by K8sGPT Result CRDs
+- **Agentic chat** — Live Kubernetes API tools, skills, KB retrieval; mutations require explicit approval
+- **FAISS knowledge base** — Shared PVC-backed index for team solutions
+- **Single- or multi-cluster** — Optional pin via `IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME`
+- **GitOps** — Argo CD app-of-apps + Helm charts; images from GHCR by git SHA
 
-## Quick Start
+## Quick start
 
-### Local Development
+### Local development
 
 ```bash
 # Backend
 cd backend
-python3 -m venv venv && source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-pip install -e ../libs/devops-k8s -e ../libs/devops-kb -e ../libs/devops-prompts -e ../libs/devops-rag
+pip install -e ../libs/devops-k8s -e ../libs/devops-kb -e ../libs/devops-rag
 uvicorn app:app --reload --port 8000
 
 # Frontend
@@ -27,100 +30,75 @@ cd frontend
 npm install && npm start
 ```
 
-Copy `.env.example` to `.env` and set `LLM_API_KEY` and `DEFAULT_REGION`.
+Set `LLM_API_KEY` and `DEFAULT_REGION` (see [docs/development.md](docs/development.md)).
 
-### Kubernetes Deployment
+### Cluster (GitOps)
 
 ```bash
-kubectl create namespace devops-chatbot
+# Once: Argo CD project + root app
+kubectl apply -n argocd -f argocd/projects/bookish-octo-robot.yaml
+kubectl apply -n argocd -f argocd/bootstrap/root-app.yaml
+
+# Secrets (not committed)
 kubectl create secret generic devops-chatbot-secrets \
   --from-literal=llm-api-key=sk-... \
-  --from-literal=llm-provider=openai \
-  --from-literal=llm-model=gpt-4o-mini \
+  --from-literal=llm-provider=openrouter \
+  --from-literal=llm-model=mistralai/devstral-2512 \
   -n devops-chatbot
-kubectl apply -f k8s/
 ```
 
-### K8sGPT Operator
+Details: [docs/argocd-gitops.md](docs/argocd-gitops.md), [docs/deployment.md](docs/deployment.md).
 
-```bash
-# Create API key secret
-kubectl create secret generic k8sgpt-ai-secret \
-  --from-literal=openai-api-key=sk-... \
-  -n k8sgpt-operator-system
+### K8sGPT
 
-# Deploy operator via ArgoCD
-kubectl apply -f k8sgpt/Alloy/argocd-application.yaml
+Prefer Argo CD apps `00-k8sgpt-operator` / `10-k8sgpt-instance` and chart `helm/k8sgpt-instance`.  
+See [docs/k8sgpt-setup.md](docs/k8sgpt-setup.md).
 
-# Deploy K8sGPT instance + supporting resources
-kubectl apply -f k8sgpt/namespace.yaml
-kubectl apply -f k8sgpt/rbac.yaml
-kubectl apply -f k8sgpt/k8sgpt-openrouter-cr.yaml
-
-# Setup Alloy + Grafana integration (AUTOMATED VIA GITHUB ACTIONS)
-# For manual setup, see k8sgpt/Alloy/ALLOY_INTEGRATION.md
-# Recommendation: Use GitHub Actions workflows instead (deploy-k8sgpt.yml)
-# which handle: Helm chart installation, datasource registration, dashboard import
-```
-
-See [K8sGPT + Alloy Integration](k8sgpt/Alloy/ALLOY_INTEGRATION.md) for full setup details.
-
-## Architecture
+## Architecture (short)
 
 ```text
-User → Frontend (React) → Backend (FastAPI)
-                               ├── Kion/STS → EKS bearer token
-                               ├── K8sGPT Result CRDs
-                               ├── RAG engine (FAISS + LLM)
-                               └── Knowledge base (PVC)
+User → React UI → FastAPI (agent tools + RAG)
+                     ├── Session cookie / X-Session-Id
+                     ├── Kion/STS → EKS API (or kubeconfig)
+                     ├── K8sGPT Result CRDs
+                     └── FAISS KB on PVC
 
-K8sGPT Operator (per cluster)
-    └── Analyzes: Pod, Deployment, Node, HPA, PVC, Service, Ingress
-    └── Interval: 2 minutes, noCache: true
-
-Grafana Alloy → Loki → Grafana dashboard at http://cluster-host/grafana (Traefik subpath)
-CronJob → deletes Results older than 24h
+Argo CD → helm/devops-chatbot (+ operator, alloy, grafana charts)
+GHCR    → ghcr.io/pandew-home/bookish-octo-robot:<git-sha>
 ```
 
 ## Documentation
 
-- [Architecture](docs/architecture.md)
-- [Development](docs/development.md)
-- [Deployment](docs/deployment.md)
-- [Flux GitOps Setup](docs/flux-gitops.md)
-- [K8sGPT Setup](docs/k8sgpt-setup.md)
-- [K8sGPT + Alloy Integration](k8sgpt/Alloy/ALLOY_INTEGRATION.md)
-- [Security](docs/security.md)
-- [Usage](docs/usage.md)
+| Doc | Topic |
+|-----|--------|
+| [AGENTS.md](AGENTS.md) | Rules for AI coding agents |
+| [docs/architecture.md](docs/architecture.md) | Design & data flows |
+| [docs/development.md](docs/development.md) | Local dev & tests |
+| [docs/deployment.md](docs/deployment.md) | Deploy, env, troubleshooting |
+| [docs/argocd-gitops.md](docs/argocd-gitops.md) | App-of-apps GitOps |
+| [docs/k8sgpt-setup.md](docs/k8sgpt-setup.md) | K8sGPT |
+| [docs/security.md](docs/security.md) | Security |
+| [docs/usage.md](docs/usage.md) | End-user usage |
+| [docs/README.md](docs/README.md) | Full index |
 
-## Endpoints
+## Endpoints (typical)
 
-### Ingresses by Cluster
+| Mode | URL |
+|------|-----|
+| Local UI | http://localhost:3000 |
+| Local API | http://localhost:8000/docs |
+| Cluster | Host/path from `helm/devops-chatbot/values.yaml` (e.g. `/chatbot` + `/api`) |
 
-#### Civo Staging (2nd Stage Testing)
-- **DevOps Chatbot:** `http://5f361a88-3ba6-486a-990a-f146df27e219.k8s.civo.com` (Traefik)
-  - Backend: `devops-chatbot:80` → Pods: `10.0.1.18:8080`, `10.0.0.169:8080`
-- **Grafana:** `http://grafana.k8s.civo.com` (Traefik)
-  - Credentials: see Vault / k8s secret
-- **Prometheus:** ClusterIP only (port-forward to access)
-
-### Local Development
-- **Frontend:** `http://localhost:3000`
-- **Backend API:** `http://localhost:8000`
-- **API Docs:** `http://localhost:8000/docs`
-- **DevOps Chatbot (Port-Forward):** `kubectl port-forward svc/devops-chatbot 8080:80 -n devops-chatbot`
-- **Grafana (Port-Forward):** `kubectl port-forward svc/prometheus-grafana 30300:80 -n monitoring`
+Do not hardcode lab hostnames from older docs; values change per environment.
 
 ## Testing
 
 ```bash
-# Backend
 cd backend && pytest
-
-# Frontend
 cd frontend && npm test -- --no-watch
-
-# K8sGPT integration (apply test Result CRD)
-kubectl apply -f k8sgpt/test-hpa-result-cr.yaml
-kubectl get results.core.k8sgpt.ai --all-namespaces
+# Optional: cd frontend && npx playwright test
 ```
+
+## License
+
+See [LICENSE](LICENSE).

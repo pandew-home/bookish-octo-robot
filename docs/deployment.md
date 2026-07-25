@@ -1,149 +1,170 @@
 # Deployment Guide
 
-This guide covers deploying DevOps Chatbot v2.0 to Kubernetes clusters.
+Deploy DevOps Chatbot v2.0 with **Docker → GHCR → Argo CD/Helm**. Prefer GitOps over imperative `kubectl apply` for ongoing delivery.
 
-## Docker Image
+**Baseline tag:** `faiss-202607`.
 
-The application uses an optimized multi-stage Docker build:
-- **Target Size:** <500MB (~365MB actual)
-- **Build Time:** ~4 minutes with BuildKit
-- **Performance:** uvloop + httptools for 2-4x faster request handling
+## Recommended path (GitOps)
 
-### Build the Image
+1. Build/push image (CI on `main` or local build).  
+2. Ensure cluster secrets exist.  
+3. Bootstrap Argo CD apps (once).  
+4. Let Argo CD reconcile `helm/devops-chatbot` and sibling charts.
+
+Full bootstrap and Image Updater notes: **[argocd-gitops.md](argocd-gitops.md)**.
+
+### One-time Argo CD
 
 ```bash
-# Standard build
-docker build -t devops-chatbot:v2.0 .
-
-# With BuildKit (recommended - faster)
-DOCKER_BUILDKIT=1 docker build -t devops-chatbot:v2.0 .
-
-# Verify size
-docker images devops-chatbot:v2.0
+kubectl apply -n argocd -f argocd/projects/bookish-octo-robot.yaml
+kubectl apply -n argocd -f argocd/bootstrap/root-app.yaml
 ```
 
-For detailed optimization information, see [Docker Build Optimization](../docker/BUILD_OPTIMIZATION.md).
-
-## Kubernetes Deployment
-
-### 1. Create Namespace
+### Runtime secrets
 
 ```bash
-kubectl create namespace devops-chatbot
-```
+kubectl create namespace devops-chatbot --dry-run=client -o yaml | kubectl apply -f -
 
-### 2. Create Secrets
-
-```bash
-# Create secret with LLM configuration
 kubectl create secret generic devops-chatbot-secrets \
   --from-literal=llm-api-key=sk-... \
-  --from-literal=llm-provider=openai \
-  --from-literal=llm-model=gpt-4o-mini \
+  --from-literal=llm-provider=openrouter \
+  --from-literal=llm-model=mistralai/devstral-2512 \
   -n devops-chatbot
 
-# Or apply the secrets.yaml after editing
-# Edit k8s/secrets.yaml with your values first
-kubectl apply -f k8s/secrets.yaml
+kubectl create secret docker-registry ghcr-pull-secret \
+  --docker-server=ghcr.io \
+  --docker-username=<user> \
+  --docker-password=<token> \
+  -n devops-chatbot
 ```
 
-### 3. Deploy Application
+## Docker image
 
 ```bash
-# Apply all manifests
+DOCKER_BUILDKIT=1 docker build -t ghcr.io/pandew-home/bookish-octo-robot:local .
+```
+
+Production tags are **git SHAs** (`ghcr.io/pandew-home/bookish-octo-robot:<40-char-sha>`). Avoid pinning production to `latest`.
+
+## Helm (without Argo CD)
+
+Useful for smoke tests:
+
+```bash
+helm upgrade --install devops-chatbot ./helm/devops-chatbot \
+  -n devops-chatbot --create-namespace \
+  --set image.tag=<git-sha> \
+  --set llm.createSecret=false \
+  --set llm.existingSecret=devops-chatbot-secrets
+```
+
+Source values: `helm/devops-chatbot/values.yaml` (ingress host/path, resources, PVC, CORS, LLM secret ref).
+
+### Ingress alignment
+
+Keep these consistent when changing host or path:
+
+| Setting | Purpose |
+|---------|---------|
+| `ingress.host` / `ingress.path` | External URL (chart default path `/chatbot`) |
+| `ingress.extraPaths` | `/api`, `/static`, favicon, manifest |
+| `app.apiBaseUrl` | Usually `/api` for root-built image |
+| `app.publicUrl` | Usually `/` unless frontend rebuilt for subpath assets |
+| `app.allowedOrigins` | CORS; include scheme+host (+ path origin if needed) |
+
+`k8s/ingress.yaml` may lag the chart — treat **Helm values + Argo Application** as authoritative.
+
+## Legacy raw manifests
+
+```bash
 kubectl apply -f k8s/
-
-# Verify deployment
-kubectl get pods -n devops-chatbot
-kubectl get svc -n devops-chatbot
 ```
 
-### 4. Access the Application
+Still present for reference/emergency. Prefer `helm/` + Argo CD. Port-forward example:
 
 ```bash
-# Port forward for local access
-kubectl port-forward -n devops-chatbot svc/devops-chatbot 30080:30080
-
-# Access at http://localhost:30080
+kubectl port-forward -n devops-chatbot svc/devops-chatbot 8080:80
+# http://localhost:8080
 ```
 
-For production deployment with ingress, see [k8s/ingress.yaml](../k8s/ingress.yaml).
+## GitHub Actions
 
-## Environment Variables
+Workflow: `.github/workflows/deploy.yml`
 
-### Required
+| Job area | Behavior |
+|----------|----------|
+| detect / build / test | CI; push image to GHCR |
+| deploy / smoke | Optional; `direct_deploy` is emergency-oriented |
+| k8sgpt workflows | Separate deploy helpers under `.github/workflows/` |
 
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `LLM_API_KEY` | API key for LLM provider | `sk-...` |
-| `DEFAULT_REGION` | Default AWS region | `us-east-1` |
+Do not assume Actions is the only deployer — **Argo CD is steady state**.
 
-### Optional
+## Environment variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `LLM_PROVIDER` | LLM provider (openai, anthropic, ollama) | `openai` |
-| `LLM_MODEL` | Model to use | `gpt-4o-mini` |
-| `KB_SEEDING_ENABLED` | Enable knowledge base seeding on startup | `true` |
-| `KB_FORCE_RESEED` | Force re-seeding even if KB exists | `false` |
-| `AI_API_BASE` | Custom API endpoint (for OpenRouter, Ollama) | - |
-| `DEBUG` | Enable debug logging | `false` |
-| `LOG_LEVEL` | Logging level | `INFO` |
-| `PORT` | Backend port | `8000` |
-| `CORS_ORIGINS` | CORS allowed origins | `*` |
+### Required (runtime)
 
-See [.env](../.env) for a complete example.
+| Variable | Description |
+|----------|-------------|
+| `LLM_API_KEY` (or secret key in `devops-chatbot-secrets`) | LLM provider key |
+| `DEFAULT_REGION` | Default AWS region for STS/EKS |
 
-## Pre-Deployment Checklist
+### Common optional
 
-Before deploying to production, ensure you've completed the [Security Checklist](security.md#pre-deployment-checklist).
+| Variable | Description | Notes |
+|----------|-------------|--------|
+| `LLM_PROVIDER` | `openai`, `openrouter`, `anthropic`, … | Chart/secret |
+| `LLM_MODEL` | Model id | Chart/secret |
+| `KB_SEEDING_ENABLED` | Seed KB on startup | default often true |
+| `KB_FORCE_RESEED` | Force reseed | |
+| `DATA_ROOT` / FAISS paths | Index and KB locations on PVC | |
+| `IN_CLUSTER_EKS_CLUSTER_NAME` | Target cluster name | Single-cluster mode |
+| `EKS_CLUSTER_NAME` | Fallback target name | Same |
+| `ALLOWED_ORIGINS` / chart `app.allowedOrigins` | CORS | Must match browser origin |
+| `REACT_APP_API_URL` / `app.apiBaseUrl` | API base for UI | |
+| `DEBUG` / `LOG_LEVEL` | Logging | |
+
+### Auth session behavior
+
+- Credential APIs set HttpOnly cookie `session_id` (1h).  
+- APIs also accept legacy `X-Session-Id` header.  
+- Logout/delete clears cookie when credentials are removed.
+
+## Pre-deploy checklist
+
+- [ ] Secrets created (LLM, GHCR pull, K8sGPT AI)  
+- [ ] Argo CD project + root app healthy  
+- [ ] Ingress host/path/CORS match the real URL  
+- [ ] Image tag is a real SHA present in GHCR  
+- [ ] Security checklist: [security.md](security.md)  
+- [ ] K8sGPT Results visible: `kubectl get results.core.k8sgpt.ai -A`
 
 ## Troubleshooting
 
-### Credential Issues
+### Invalid credentials
 
-**Problem**: "Invalid credentials" error
+- Refresh Kion temporary keys; confirm region; STS must succeed.
 
-**Solution**:
-1. Verify Kion credentials are current (not expired)
-2. Check AWS region is correct
-3. Ensure credentials have EKS and STS permissions
+### No clusters / 403 on target cluster
 
-### Cluster Discovery Fails
+- Check `eks:ListClusters` and describe/auth for the target.  
+- If single-cluster env is set, credentials must reach that cluster’s API.
 
-**Problem**: No clusters appear in dropdown
+### Weather empty
 
-**Solution**:
-1. Verify credentials have `eks:ListClusters` permission
-2. Check DEFAULT_REGION matches cluster region
-3. Review backend logs for API errors
+- K8sGPT operator/instance running; Results exist; RBAC allows read of Result CRDs.
 
-### K8sGPT Results Not Showing
+### KB / FAISS empty
 
-**Problem**: Weather widget shows "No data"
+- PVC mounted; seeding logs; `KB_SEEDING_ENABLED=true`; index path writable.
 
-**Solution**:
-1. Verify K8sGPT Operator is deployed to target cluster
-2. Check Result CRDs exist: `kubectl get results -A`
-3. Verify credentials have permission to read CRDs
-4. Check backend logs for RBAC errors
+### UI calls wrong host / CORS errors
 
-### Knowledge Base Not Working
+- Realign `ingress.*`, `app.apiBaseUrl`, `app.publicUrl`, `allowedOrigins` and redeploy.
 
-**Problem**: No KB results in chat responses
+### Image change not visible
 
-**Solution**:
-1. Verify PVC is mounted at `/data`
-2. Check KB seeding completed: Look for "KB seeding complete" in logs
-3. Verify FAISS index exists: `ls /data/faiss_index`
-4. Enable KB seeding: Set `KB_SEEDING_ENABLED=true`
+- Confirm SHA tag pulled (Image Updater / Helm values); avoid sticky old pods with failed pulls; check `imagePullSecrets`.
 
-### High LLM Costs
+## Related
 
-**Problem**: Unexpected API costs
-
-**Solution**:
-1. Use cost-efficient models: `gpt-4o-mini`, `claude-3-haiku`
-2. Enable caching (already implemented)
-3. Reduce conversation history limit
-4. Monitor token usage in logs
+- [Argo CD GitOps](argocd-gitops.md) · [K8sGPT setup](k8sgpt-setup.md) · [Architecture](architecture.md)

@@ -23,9 +23,11 @@ K8s/EKS, Helm, ArgoCD, Python, AWS, Vault, Kyverno
 
 ## Project Overview
 
-DevOps Chatbot v2.0 is a Kubernetes-native troubleshooting assistant using Kion AWS credentials for authentication, K8sGPT Operator for cluster diagnostics, and RAG-powered knowledge base search. The system is a monolith deployment (frontend + backend) that can troubleshoot multiple EKS clusters, with K8sGPT Operator deployed per monitored cluster.
+DevOps Chatbot v2.0 is a Kubernetes-native troubleshooting assistant using Kion AWS credentials (and/or kubeconfig) for authentication, K8sGPT Operator for diagnostics, FAISS RAG for the knowledge base, and an agentic FastAPI chat backend. Delivery is **Argo CD app-of-apps + Helm** (`argocd/`, `helm/`). Flux is retired.
 
-**Key Architecture**: Decoupled diagnostics (K8sGPT per cluster) from user interface (single centralized deployment). Uses Kion temporary AWS credentials for both Kubernetes API and AWS API access.
+**Key Architecture**: Decoupled diagnostics (K8sGPT) from the UI/API monolith. Optional single-cluster pin via `IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME`. Session: HttpOnly cookie + `X-Session-Id`. Mutations require human approval in chat.
+
+**Agent rules:** see root [AGENTS.md](AGENTS.md). **Docs index:** [docs/README.md](docs/README.md). **Baseline tag:** `faiss-202607`.
 
 ## Build and Development Commands
 
@@ -84,29 +86,27 @@ docker build --target frontend-builder -t frontend-build .
 docker build --target backend-builder -t backend-build .
 ```
 
-### Kubernetes Deployment
+### Kubernetes Deployment (GitOps preferred)
 
 ```bash
-# Deploy application
-kubectl create namespace devops-chatbot
+# Secrets out-of-band
+kubectl create namespace devops-chatbot --dry-run=client -o yaml | kubectl apply -f -
 kubectl create secret generic devops-chatbot-secrets \
   --from-literal=llm-api-key=sk-... \
-  --from-literal=llm-provider=openai \
-  --from-literal=llm-model=gpt-4o-mini \
+  --from-literal=llm-provider=openrouter \
+  --from-literal=llm-model=mistralai/devstral-2512 \
   -n devops-chatbot
-kubectl apply -f k8s/
 
-# Deploy K8sGPT to monitored cluster
-kubectl create secret generic k8sgpt-ai-secret \
-  --from-literal=openai-api-key=sk-... \
-  -n k8sgpt-operator-system
-kubectl apply -f k8sgpt/argocd-application.yaml
-kubectl apply -f k8sgpt/k8sgpt-cr.yaml
+# Argo CD bootstrap (once)
+kubectl apply -n argocd -f argocd/projects/bookish-octo-robot.yaml
+kubectl apply -n argocd -f argocd/bootstrap/root-app.yaml
 
-# Verify deployment
+# Verify
+kubectl get applications -n argocd
 kubectl get pods -n devops-chatbot
-kubectl logs -n devops-chatbot deployment/devops-chatbot --all-containers
 ```
+
+See docs/argocd-gitops.md and docs/deployment.md. Raw `k8s/` manifests are legacy/reference.
 
 ## Critical Architecture Patterns
 
@@ -116,9 +116,11 @@ The system uses **Kion temporary AWS credentials** (ASIA* access keys) instead o
 
 1. User submits Kion credentials (access key, secret key, session token, region) → `POST /api/credentials/aws`
 2. Backend validates via STS GetCallerIdentity → `backend/eks_auth.py:validate_credentials()`
-3. Credentials stored in-memory with 3600s TTL → `backend/credential_store.py:CredentialStore`
-4. For each K8s API call, backend generates EKS bearer token → `backend/eks_auth.py:get_eks_bearer_token()`
-5. Bearer token format: `k8s-aws-v1.{base64_presigned_url}` (60s expiration, regenerated per request)
+3. Optional target-cluster access check when `IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME` is set
+4. Credentials stored in-memory with 3600s TTL → `backend/credential_store.py:CredentialStore`
+5. Session id returned in JSON and set as HttpOnly cookie `session_id` (header `X-Session-Id` still accepted)
+6. For each K8s API call, backend generates EKS bearer token → `backend/eks_auth.py:get_eks_bearer_token()`
+7. Bearer token format: `k8s-aws-v1.{base64_presigned_url}` (60s expiration, regenerated per request)
 
 **IMPORTANT**: `CredentialStore` is in-memory and not distributed-safe. With `replicas: 2` in deployment.yaml, credentials stored in Pod A won't be accessible from Pod B. Solutions: implement Redis-backed store, use sticky sessions, or reduce to single replica.
 
