@@ -1,9 +1,8 @@
 import React, { useMemo } from 'react';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { Box, Container, AppBar, Toolbar, Typography, Alert } from '@mui/material';
+import { Box, Container, AppBar, Toolbar, Typography, Alert, CircularProgress } from '@mui/material';
 import LoginForm from './components/LoginForm';
-import ClusterSelector from './components/ClusterSelector';
 import { CredentialBadge } from './components/CredentialBadge';
 import { WeatherWidget } from './components/WeatherWidget';
 import { ChatInterface } from './components/ChatInterface';
@@ -142,7 +141,7 @@ function App() {
     );
   }
 
-  // Render cluster selector if authenticated but no cluster selected
+  // Resolve single cluster context automatically after authentication
   if (!cluster.selectedCluster) {
     return (
       <ThemeProvider theme={theme}>
@@ -159,11 +158,12 @@ function App() {
           
           <Container maxWidth="md" sx={{ mt: 8 }}>
             <Box sx={{ textAlign: 'center', mb: 4 }}>
+              <CircularProgress size={36} sx={{ mb: 2 }} />
               <Typography variant="h5" gutterBottom>
-                Select a Cluster
+                Connecting to Cluster
               </Typography>
               <Typography variant="body1" color="text.secondary">
-                Choose an EKS cluster to monitor and troubleshoot
+                Resolving single-cluster context for this session
               </Typography>
             </Box>
 
@@ -172,13 +172,6 @@ function App() {
                 {cluster.error}
               </Alert>
             )}
-
-            <ClusterSelector
-              clusters={cluster.clusters}
-              selectedCluster={cluster.selectedCluster}
-              onSelectCluster={cluster.selectCluster}
-              loading={cluster.isLoading}
-            />
           </Container>
         </Box>
       </ThemeProvider>
@@ -197,15 +190,9 @@ function App() {
               DevOps Chatbot v2
             </Typography>
             
-            {/* Cluster selector in header */}
-            <Box sx={{ mr: 2, minWidth: 250 }}>
-              <ClusterSelector
-                clusters={cluster.clusters}
-                selectedCluster={cluster.selectedCluster}
-                onSelectCluster={cluster.selectCluster}
-                loading={cluster.isLoading}
-              />
-            </Box>
+            <Typography variant="body2" sx={{ mr: 2 }}>
+              Cluster: {cluster.selectedCluster}
+            </Typography>
 
             {/* Credential badge */}
             <CredentialBadge />

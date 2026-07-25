@@ -6,7 +6,11 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import logging
 
-from api.credentials import get_session_id, get_credentials_for_session
+from api.credentials import (
+    get_session_id,
+    get_credentials_for_session,
+    get_target_eks_cluster_name,
+)
 from cluster_manager import discover_clusters, get_k8s_clients, cluster_cache
 from local_k8s_auth import discover_local_clusters, get_local_k8s_client
 from utils.error_handler import handle_aws_error, handle_k8s_error, handle_generic_error
@@ -87,6 +91,20 @@ async def list_clusters(session_id: str = Depends(get_session_id)):
             clusters = _discover_kubeconfig_clusters(creds)
         else:
             clusters = await discover_clusters(creds)
+            target_cluster_name = get_target_eks_cluster_name()
+            if target_cluster_name:
+                clusters = [c for c in clusters if c.get("name") == target_cluster_name]
+                if not clusters:
+                    raise HTTPException(
+                        status_code=403,
+                        detail=(
+                            f"No access to configured target cluster '{target_cluster_name}'. "
+                            "Please use credentials with access to this cluster."
+                        ),
+                    )
+            elif clusters:
+                # Single-cluster mode: present one default cluster when no explicit target is configured.
+                clusters = [clusters[0]]
         
         # Cache results
         cluster_cache.set(session_id, clusters)
@@ -368,4 +386,3 @@ def clear_cluster_specific_cache(session_id: str) -> None:
     # We keep the cluster list cache since it's still valid for the user's credentials
     
     logger.debug(f"Cleared cluster-specific cache for session {session_id[:8]}...")
-

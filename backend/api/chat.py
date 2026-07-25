@@ -11,6 +11,7 @@
 import logging
 from datetime import datetime
 from typing import Optional
+import re
 
 from fastapi import APIRouter, HTTPException, Query
 from kubernetes.client.exceptions import ApiException
@@ -29,6 +30,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 conversation_history = ConversationHistory()
+APPROVAL_RE = re.compile(r"\b(approve|approved|confirm|confirmed)\b", re.IGNORECASE)
 
 
 class ChatRequest(BaseModel):
@@ -42,6 +44,16 @@ class ChatRequest(BaseModel):
     max_tokens: int = Field(
         500, ge=100, le=2000, description="Maximum tokens for response"
     )
+
+
+def _is_mutation_approval_prompt(query: str) -> bool:
+    """Detect explicit user confirmation to allow mutating Kubernetes API calls."""
+    if not query:
+        return False
+    lowered = query.lower()
+    if not APPROVAL_RE.search(lowered):
+        return False
+    return "change" in lowered or "apply" in lowered or "execute" in lowered or "proceed" in lowered
 
 
 class ChatResponse(BaseModel):
@@ -91,6 +103,8 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             k8s_clients=k8s_clients,
             kb_search_func=rag.search_knowledge_base,
             cluster_version=cluster_version,
+            execution_mode="execute",
+            require_human_approval=not _is_mutation_approval_prompt(request.query),
         )
         rag_response = await agent.run(query=request.query)
         logger.info("[CHAT_QUERY] agent done: %d chars", len(rag_response["response"]))

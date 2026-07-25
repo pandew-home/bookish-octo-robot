@@ -140,7 +140,7 @@ describe('App Component', () => {
       });
     });
 
-    it('should show cluster selector after authentication', () => {
+    it('should resolve single-cluster context after authentication', () => {
       (hooks.useCredentials as jest.Mock).mockReturnValue({
         ...mockCredentials,
         isAuthenticated: true,
@@ -149,13 +149,13 @@ describe('App Component', () => {
 
       render(<App />);
       
-      expect(screen.getByTestId('cluster-selector')).toBeInTheDocument();
+      expect(screen.getByText('Connecting to Cluster')).toBeInTheDocument();
       expect(screen.getByTestId('credential-badge')).toBeInTheDocument();
       expect(screen.queryByTestId('login-form')).not.toBeInTheDocument();
     });
   });
 
-  describe('Cluster Selection Flow', () => {
+  describe('Single Cluster Flow', () => {
     beforeEach(() => {
       (hooks.useCredentials as jest.Mock).mockReturnValue({
         ...mockCredentials,
@@ -164,7 +164,7 @@ describe('App Component', () => {
       });
     });
 
-    it('should display cluster selector with available clusters', () => {
+    it('should show connecting state while cluster is not yet selected', () => {
       const clusters: ClusterInfo[] = [
         {
           name: 'dev-cluster',
@@ -189,36 +189,7 @@ describe('App Component', () => {
 
       render(<App />);
       
-      expect(screen.getByText('dev-cluster')).toBeInTheDocument();
-      expect(screen.getByText('prod-cluster')).toBeInTheDocument();
-      expect(screen.getByText('Select a Cluster')).toBeInTheDocument();
-    });
-
-    it('should call selectCluster when user selects a cluster', async () => {
-      const user = userEvent.setup();
-      const clusters: ClusterInfo[] = [
-        {
-          name: 'dev-cluster',
-          endpoint: 'https://dev.eks.amazonaws.com',
-          version: '1.28',
-          status: 'ACTIVE',
-          region: 'us-east-1',
-        },
-      ];
-
-      (hooks.useCluster as jest.Mock).mockReturnValue({
-        ...mockCluster,
-        clusters,
-      });
-
-      render(<App />);
-      
-      const clusterButton = screen.getByText('dev-cluster');
-      await user.click(clusterButton);
-      
-      await waitFor(() => {
-        expect(mockSelectCluster).toHaveBeenCalledWith('dev-cluster');
-      });
+      expect(screen.getByText('Connecting to Cluster')).toBeInTheDocument();
     });
 
     it('should display error message when cluster discovery fails', () => {
