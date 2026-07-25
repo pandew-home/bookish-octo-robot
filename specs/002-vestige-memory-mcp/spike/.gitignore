@@ -1,5 +1,8 @@
 node_modules/
 model-cache/
 data/
-results/*.log
+results/
 package-lock.json
+*.db
+*.db-shm
+*.db-wal
