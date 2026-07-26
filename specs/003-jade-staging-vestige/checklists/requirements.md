@@ -31,5 +31,7 @@
 
 ## Notes
 
-- Checklist validated 2026-07-26; ready for `/speckit.plan` and `/speckit.tasks`.
+- Checklist validated 2026-07-26; ready for plan/tasks/implement.
 - Implementation details (Dockerfile stages, exact Helm keys) belong in plan.md, not spec.md.
+- **2026-07-26 remediation** (speckit-analyze): Status → Ready; MVP includes US4; RBAC before push; FR-001 actor wording; SC-008/SC-009; cluster naming; pytest gate.
+- **2026-07-26 clarify + sync**: Vendor-first binaries; PVC ≥10Gi (not 40Gi); image re-pin primary rollback; preserve conversations (FR-013/SC-010); local/any-runner pytest. Plan, tasks, quickstart, contract, data-model, research aligned with [spec.md](../spec.md).
