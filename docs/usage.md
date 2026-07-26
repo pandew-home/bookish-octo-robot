@@ -44,22 +44,24 @@ Poll interval is on the order of a minute. Empty weather usually means operator 
 2. The backend agent may:
    - Read live Kubernetes API state (tooling)
    - Use K8sGPT findings as supporting signal
-   - Search the FAISS knowledge base
+   - Recall relevant prior lessons from Vestige memory (automatic)
    - Load **skills** (e.g. networking/rbac/workload triage, k8s-check)
 3. Responses follow the system prompt structure: live assessment, root cause hypothesis, remediation.
+4. Memory is **automatic** — no manual "Save to KB" step. After durable diagnosis/fix turns, lessons are ingested into Vestige memory for future recall.
 
 #### Mutations and approval
 
 The assistant is **not** free-fire admin:
 
 - Default posture is diagnose / observe.  
-- Mutating Kubernetes API actions require **explicit user approval** in the product flow (and still must be allowed by cluster RBAC).  
+- Mutating Kubernetes API **execution** is gated by **kubeApi policy** (Helm/env defaults + user cluster RBAC).  
+- Free-text **recommendations** (kubectl suggestions, YAML snippets, remediation advice) are always allowed — no approval ceremony needed.  
 - Prefer GitOps/IaC remediations when advising production changes.
 
-### Knowledge base
+### Knowledge base (deprecated)
 
-- Save useful answers via **Save to KB** (metadata + content).  
-- Entries feed semantic search for later chats (FAISS on shared PVC in cluster).
+- Manual "Save to KB" has been removed (returns 410 Gone).  
+- Memory is now automatic via Vestige — lessons are recalled and ingested without user action.
 
 ### Switching clusters
 

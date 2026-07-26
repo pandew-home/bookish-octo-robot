@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react';
 import { KionCredentials, KubeconfigCredentials } from '../types/credentials';
 import { authApi } from '../services/api';
 import { useCredentialStatus } from './useCredentialStatus';
+import { formatApiError, toApiError } from '../utils/apiError';
 
 export interface UseCredentialsState {
   isAuthenticated: boolean;
@@ -57,10 +58,10 @@ export const useCredentials = (): UseCredentialsState => {
 
       // Refresh status after successful login
       await refresh();
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.detail || err.message || 'Failed to authenticate';
-      setError(errorMessage);
-      throw new Error(errorMessage);
+    } catch (err: unknown) {
+      const msg = formatApiError(toApiError(err));
+      setError(msg);
+      throw new Error(msg);
     } finally {
       setIsLoading(false);
     }
@@ -74,25 +75,17 @@ export const useCredentials = (): UseCredentialsState => {
     setError(null);
 
     try {
-      console.log('[useCredentials] loginKubeconfig called with path:', credentials.kubeconfigPath);
       const response = await authApi.loginKubeconfig(credentials);
-      console.log('[useCredentials] loginKubeconfig response:', response);
-      
+
       if (!response.success) {
-        console.error('[useCredentials] loginKubeconfig failed - success=false');
         throw new Error('Kubeconfig authentication failed');
       }
 
-      console.log('[useCredentials] loginKubeconfig successful, refreshing status...');
-      // Refresh status after successful login
       await refresh();
-    } catch (err: any) {
-      console.error('[useCredentials] loginKubeconfig error:', err);
-      console.error('[useCredentials] Error response:', err.response);
-      console.error('[useCredentials] Error message:', err.message);
-      const errorMessage = err.response?.data?.detail || err.message || 'Failed to authenticate with kubeconfig';
-      setError(errorMessage);
-      throw new Error(errorMessage);
+    } catch (err: unknown) {
+      const msg = formatApiError(toApiError(err));
+      setError(msg);
+      throw new Error(msg);
     } finally {
       setIsLoading(false);
     }
@@ -108,13 +101,12 @@ export const useCredentials = (): UseCredentialsState => {
     try {
       await authApi.logout();
       localStorage.removeItem('sessionId');
-      
-      // Refresh status after logout
+
       await refresh();
-    } catch (err: any) {
-      const errorMessage = err.response?.data?.detail || err.message || 'Failed to logout';
-      setError(errorMessage);
-      throw new Error(errorMessage);
+    } catch (err: unknown) {
+      const msg = formatApiError(toApiError(err));
+      setError(msg);
+      throw new Error(msg);
     } finally {
       setIsLoading(false);
     }

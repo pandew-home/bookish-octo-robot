@@ -1,12 +1,12 @@
 # DevOps Chatbot v2.0 Documentation
 
 Guides for understanding, deploying, and using the chatbot.  
-**Baseline release tag:** `faiss-202607` · **GitOps:** Argo CD + Helm (Flux retired).
+**GitOps:** Argo CD + Helm (Flux retired).
 
 ## Index
 
 ### Getting started
-- **[Architecture](architecture.md)** — System design, agentic chat, FAISS, data flows  
+- **[Architecture](architecture.md)** — System design, agentic chat, Vestige memory, data flows  
 - **[Development](development.md)** — Local setup, tests, repo layout  
 - **[AGENTS.md](../AGENTS.md)** — Rules for AI coding agents  
 

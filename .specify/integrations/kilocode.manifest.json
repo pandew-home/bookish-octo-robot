@@ -1,0 +1,17 @@
+{
+  "integration": "kilocode",
+  "version": "0.14.2",
+  "installed_at": "2026-07-25T14:52:10.335665+00:00",
+  "files": {
+    ".kilo/commands/speckit.analyze.md": "68b76fc781914b3ba66f382d57daba05da2f05ea15aacba2a7f7fa5f7967cced",
+    ".kilo/commands/speckit.clarify.md": "dc4b0b053d6bf00853ed8f05372528dd5c4933b85fe0991cae4746a2edaefee1",
+    ".kilo/commands/speckit.constitution.md": "17ddcdba00d3640534c7dedd50727ac4b3c9939faca602a57455d10ea7c8f401",
+    ".kilo/commands/speckit.implement.md": "8d519c43a9f778b63ca4536d9af977f5932b73ccc79f8aa27c42cf615235ef26",
+    ".kilo/commands/speckit.converge.md": "d8ea7ce9bb1b8161fa5c7937dfa5f8a981dcf37fe293978efe3d5969733a213e",
+    ".kilo/commands/speckit.plan.md": "751ef19c84ce15ff3c8ec65400380db742b50b20abed688e0b7621e660b70be6",
+    ".kilo/commands/speckit.checklist.md": "f82c4e4c7109fbbe6e13b8752144c96dd64f2103a5031d69abea1be9d313b5b5",
+    ".kilo/commands/speckit.specify.md": "4317296c28a8ccdbe41c7769147a6d85090815c91634250330f107485607b246",
+    ".kilo/commands/speckit.tasks.md": "8217bcad9eb75c31abd7f2c27ba3ee239dab62c0eedd89c5be861ae3a377bcba",
+    ".kilo/commands/speckit.taskstoissues.md": "44ab2a7caac6b319470400c7ae0687bd99dd589283563d403be1194e48f312ab"
+  }
+}

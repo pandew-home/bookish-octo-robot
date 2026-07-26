@@ -2,8 +2,6 @@
 
 Deploy DevOps Chatbot v2.0 with **Docker → GHCR → Argo CD/Helm**. Prefer GitOps over imperative `kubectl apply` for ongoing delivery.
 
-**Baseline tag:** `faiss-202607`.
-
 ## Recommended path (GitOps)
 
 1. Build/push image (CI on `main` or local build).  
@@ -114,9 +112,11 @@ Do not assume Actions is the only deployer — **Argo CD is steady state**.
 |----------|-------------|--------|
 | `LLM_PROVIDER` | `openai`, `openrouter`, `anthropic`, … | Chart/secret |
 | `LLM_MODEL` | Model id | Chart/secret |
-| `KB_SEEDING_ENABLED` | Seed KB on startup | default often true |
-| `KB_FORCE_RESEED` | Force reseed | |
-| `DATA_ROOT` / FAISS paths | Index and KB locations on PVC | |
+| `MEMORY_BACKEND` | `noop` \| `vestige` | Chart default `vestige`; code default when unset is `noop` |
+| `VESTIGE_HTTP_URL` | Local Vestige MCP URL | Default `http://127.0.0.1:3928` |
+| `VESTIGE_DATA_DIR` | Vestige SQLite dir on PVC | Default `/data/vestige` |
+| `FASTEMBED_CACHE_PATH` | Embedding model cache | Default `/data/vestige/model-cache` |
+| `DATA_ROOT` | Chatbot data PVC root | Conversations + Vestige under `/data` |
 | `IN_CLUSTER_EKS_CLUSTER_NAME` | Target cluster name | Single-cluster mode |
 | `EKS_CLUSTER_NAME` | Fallback target name | Same |
 | `ALLOWED_ORIGINS` / chart `app.allowedOrigins` | CORS | Must match browser origin |
@@ -153,9 +153,12 @@ Do not assume Actions is the only deployer — **Argo CD is steady state**.
 
 - K8sGPT operator/instance running; Results exist; RBAC allows read of Result CRDs.
 
-### KB / FAISS empty
+### Memory degraded / no recall
 
-- PVC mounted; seeding logs; `KB_SEEDING_ENABLED=true`; index path writable.
+- Vestige runs **inside** the chatbot container (supervisord). Check pod logs for the `vestige` program:  
+  `kubectl logs -n devops-chatbot deploy/devops-chatbot --all-containers` / tmp supervisor logs.  
+- Confirm PVC has `/data/vestige` writable (fsGroup 1000).  
+- Chat still works with `MEMORY_BACKEND=noop` or Vestige down; look for `memory_degraded` in chat metadata.
 
 ### UI calls wrong host / CORS errors
 
@@ -164,6 +167,43 @@ Do not assume Actions is the only deployer — **Argo CD is steady state**.
 ### Image change not visible
 
 - Confirm SHA tag pulled (Image Updater / Helm values); avoid sticky old pods with failed pulls; check `imagePullSecrets`.
+
+## Vestige Memory (colocated in chatbot image)
+
+Vestige MCP runs **in the same container** as the FastAPI app (supervisord) and stores SQLite + embedding cache on the **chatbot PVC** under `/data/vestige`.
+
+| Item | Value |
+|------|--------|
+| Binary | Baked into chatbot image (`vestige` **2.2.1** linux/x64) |
+| Listen | `127.0.0.1:3928` (not Service-exposed) |
+| Data | `/data/vestige` on PVC `devops-chatbot-data` |
+| Model cache | `/data/vestige/model-cache` |
+| Client | `MEMORY_BACKEND=vestige`, `VESTIGE_HTTP_URL=http://127.0.0.1:3928` |
+
+**Single replica recommended** — local SQLite single-writer.
+
+### Backup
+
+```bash
+kubectl exec -n devops-chatbot deploy/devops-chatbot -- \
+  tar czf - -C /data/vestige . > vestige-backup.tar.gz
+```
+
+### Wipe
+
+```bash
+kubectl exec -n devops-chatbot deploy/devops-chatbot -- rm -rf /data/vestige/*
+kubectl rollout restart deployment/devops-chatbot -n devops-chatbot
+```
+
+### Verify health
+
+```bash
+kubectl exec -n devops-chatbot deploy/devops-chatbot -- \
+  curl -s http://127.0.0.1:3928/health
+```
+
+Set `memory.backend=noop` to skip MemoryPort→Vestige (Vestige process may still run in the image).
 
 ## Related
 

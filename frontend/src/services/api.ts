@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosRequestConfig } from 'axios';
 import { KionCredentials, KubeconfigCredentials, KubeconfigUpload, KubeconfigParseResponse, KubeconfigAuthRequest } from '../types/credentials';
+import { ApiClientError, toApiError } from '../utils/apiError';
 
 /**
  * Get the current API base URL (checked at request time, not module load time)
@@ -31,7 +32,8 @@ function getApiBaseUrl(): string {
  * Uses a request interceptor to dynamically determine baseURL at request time
  */
 const apiClient: AxiosInstance = axios.create({
-  timeout: 30000, // 30 seconds
+  // Agent turns can exceed 30s; fail the turn without stranding the UI.
+  timeout: 120000,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -45,29 +47,31 @@ apiClient.interceptors.request.use((config) => {
   // Dynamically set baseURL at request time (supports runtime config changes)
   const baseUrl = getApiBaseUrl();
   config.baseURL = baseUrl;
-  
+
   // Attach session ID from localStorage as x-session-id header
   const sessionId = localStorage.getItem('sessionId');
   if (sessionId) {
     config.headers['x-session-id'] = sessionId;
   }
+
+  // Correlation id for logs ↔ UI
+  if (!config.headers['X-Request-Id'] && !config.headers['x-request-id']) {
+    config.headers['X-Request-Id'] = Math.random().toString(16).slice(2, 14);
+  }
   return config;
 });
 
 /**
- * Response interceptor for handling common errors
+ * Response interceptor — normalize failures to ApiClientError
  */
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
-    if (error.response?.status === 401) {
-      // Credentials expired or invalid
-      console.error('Authentication failed:', error.response.data);
-    } else if (error.response?.status === 429) {
-      // Rate limit exceeded
-      console.error('Rate limit exceeded:', error.response.data);
-    }
-    return Promise.reject(error);
+    const apiError = toApiError(error);
+    console.error(
+      `[api] code=${apiError.code} status=${apiError.status ?? '-'} request_id=${apiError.requestId ?? '-'} message=${apiError.message}`
+    );
+    return Promise.reject(new ApiClientError(apiError));
   }
 );
 
@@ -248,79 +252,6 @@ export const resultsApi = {
    */
   async getResultById(id: string): Promise<any> {
     const response = await apiClient.get(`/results/${id}`);
-    return response.data;
-  },
-};
-
-/**
- * Solutions/Knowledge Base API
- */
-export const solutionsApi = {
-  /**
-   * Submit a new solution to the knowledge base
-   * @param solution - Solution data
-   * @returns Promise with submission confirmation
-   */
-  async submitSolution(solution: {
-    title: string;
-    description: string;
-    tags: string[];
-    runbookUrl?: string;
-    automationScript?: string;
-    estimatedFixTime?: number;
-    sourceConversation?: string;
-  }): Promise<{ success: boolean; id: string }> {
-    const response = await apiClient.post('/solutions', {
-      title: solution.title,
-      description: solution.description,
-      tags: solution.tags,
-      runbook_url: solution.runbookUrl,
-      automation_script: solution.automationScript,
-      estimated_fix_time: solution.estimatedFixTime,
-      source_conversation: solution.sourceConversation,
-    });
-    return response.data;
-  },
-
-  /**
-   * Get all solutions from the knowledge base
-   * @param filters - Optional filters for tags, pagination
-   * @returns Promise with list of solutions
-   */
-  async getSolutions(filters?: {
-    tags?: string[];
-    limit?: number;
-    offset?: number;
-  }): Promise<any[]> {
-    const params = new URLSearchParams();
-    
-    if (filters?.tags) {
-      filters.tags.forEach(t => params.append('tags', t));
-    }
-    if (filters?.limit) {
-      params.append('limit', filters.limit.toString());
-    }
-    if (filters?.offset) {
-      params.append('offset', filters.offset.toString());
-    }
-    
-    const queryString = params.toString();
-    const url = queryString ? `/solutions?${queryString}` : '/solutions';
-    
-    const response = await apiClient.get(url);
-    return response.data;
-  },
-
-  /**
-   * Search knowledge base using semantic search
-   * @param query - Search query
-   * @param topK - Number of results to return
-   * @returns Promise with search results
-   */
-  async searchKnowledgeBase(query: string, topK: number = 5): Promise<any[]> {
-    const response = await apiClient.get('/kb/search', {
-      params: { query, top_k: topK },
-    });
     return response.data;
   },
 };

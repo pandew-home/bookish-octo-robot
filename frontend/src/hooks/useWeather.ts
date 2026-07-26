@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { WeatherData } from '../types/weather';
 import apiClient from '../services/api';
+import { formatApiError, toApiError } from '../utils/apiError';
 
 const WEATHER_POLL_INTERVAL = 60000; // 60 seconds
 
@@ -64,21 +65,10 @@ export const useWeather = (
       }
 
       setWeatherData(data);
-    } catch (err: any) {
-      let errorMessage = 'Failed to fetch weather data';
-
-      if (err.response?.status === 401) {
-        errorMessage = 'Authentication required';
-      } else if (err.response?.status === 404) {
-        errorMessage = 'No cluster selected';
-      } else if (err.response?.data?.detail) {
-        errorMessage = err.response.data.detail;
-      } else if (err.message) {
-        errorMessage = err.message;
-      }
-
-      setError(errorMessage);
-      console.error('Failed to fetch weather:', err);
+    } catch (err: unknown) {
+      const apiErr = toApiError(err);
+      setError(formatApiError(apiErr));
+      console.error('Failed to fetch weather:', apiErr);
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);

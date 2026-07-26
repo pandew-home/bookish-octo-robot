@@ -23,11 +23,11 @@ K8s/EKS, Helm, ArgoCD, Python, AWS, Vault, Kyverno
 
 ## Project Overview
 
-DevOps Chatbot v2.0 is a Kubernetes-native troubleshooting assistant using Kion AWS credentials (and/or kubeconfig) for authentication, K8sGPT Operator for diagnostics, FAISS RAG for the knowledge base, and an agentic FastAPI chat backend. Delivery is **Argo CD app-of-apps + Helm** (`argocd/`, `helm/`). Flux is retired.
+DevOps Chatbot v2.0 is a Kubernetes-native troubleshooting assistant using Kion AWS credentials (and/or kubeconfig) for authentication, K8sGPT Operator for diagnostics, Vestige institutional memory, and an agentic FastAPI chat backend. Delivery is **Argo CD app-of-apps + Helm** (`argocd/`, `helm/`). Flux is retired.
 
-**Key Architecture**: Decoupled diagnostics (K8sGPT) from the UI/API monolith. Optional single-cluster pin via `IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME`. Session: HttpOnly cookie + `X-Session-Id`. Mutations require human approval in chat.
+**Key Architecture**: Decoupled diagnostics (K8sGPT) from the UI/API monolith. Optional single-cluster pin via `IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME`. Session: HttpOnly cookie + `X-Session-Id`. Mutations gated by kubeApi policy + user RBAC.
 
-**Agent rules:** see root [AGENTS.md](AGENTS.md). **Docs index:** [docs/README.md](docs/README.md). **Baseline tag:** `faiss-202607`.
+**Agent rules:** see root [AGENTS.md](AGENTS.md). **Docs index:** [docs/README.md](docs/README.md).
 
 ## Build and Development Commands
 
@@ -42,7 +42,6 @@ pip install -r requirements.txt
 
 # Install shared libraries in editable mode (REQUIRED for development)
 pip install -e ../libs/devops-k8s
-pip install -e ../libs/devops-kb
 pip install -e ../libs/devops-rag
 
 # Run backend
@@ -154,8 +153,7 @@ LLMClient (generate response) → libs/devops-rag/src/devops_rag/llm_client.py
 Three reusable libraries in `libs/` installed via editable mode (`pip install -e`):
 
 - **devops-k8s**: Kubernetes client wrappers, health monitoring, event correlation
-- **devops-kb**: Knowledge base storage on PVC, solution CRUD, snapshot management
-- **devops-rag**: RAG engine with FAISS, LLM client abstraction (OpenAI/Anthropic/Ollama), embeddings
+- **devops-rag**: LLM client abstraction (OpenAI/Anthropic/Ollama)
 
 When modifying libraries: changes are immediately reflected in backend (editable install). No reinstall needed unless changing `pyproject.toml`.
 
@@ -315,14 +313,10 @@ async def example(session_id: str = Depends(get_session_id)):
 - `backend/skills.py` - Skill discovery from `backend/skills/<name>/SKILL.md`
 - `backend/prompts/system.md` - Editable system prompt (override via `SYSTEM_PROMPT_PATH` env var)
 
-**LLM Integration**:
-- `backend/rag_integration.py` - LLM client + KB init, reads config from env vars
-- `libs/devops-rag/src/devops_rag/rag_engine.py` - Core RAG logic
-- `libs/devops-rag/src/devops_rag/llm_client.py` - LLM provider abstraction (OpenAI/Anthropic/Ollama)
-
-**Knowledge Base**:
-- `backend/solution_manager.py` - Solution CRUD
-- `libs/devops-kb/` - KB storage library
+**LLM + memory**:
+- `backend/rag_integration.py` - LLM client singleton (env-driven)
+- `libs/devops-rag/src/devops_rag/llm_client.py` - OpenAI/Anthropic/Ollama clients
+- `backend/memory/` - Vestige MemoryPort (recall/ingest)
 - `backend/conversation_history.py` - Chat history management
 
 **Observability**:
@@ -380,13 +374,12 @@ Major refactor pending merge:
 **Chat**: POST `/api/chat`, GET `/api/chat/history`, POST `/api/chat/export`
 **Weather**: GET `/api/weather`, GET `/api/weather/details`
 **Results**: GET `/api/results`, GET `/api/results/{id}`
-**Solutions**: POST `/api/solutions`, GET `/api/solutions`, GET `/api/kb/search`
 **Health**: GET `/api/health` (liveness), GET `/api/health/ready` (readiness)
 **API Docs**: http://localhost:8000/api/docs (Swagger UI)
 
 ## Active Technologies
 - Python 3.11+ (backend), TypeScript/React (frontend), Vestige MCP binary (Rust, prebuilt linux/x64) + FastAPI, existing `AgentEngine`/`agent_tools`, MCP Python client (`mcp` SDK or equivalent stdio JSON-RPC client), Vestige (`vestige-mcp` / `vestige-mcp-server`) (002-vestige-memory-mcp)
-- Vestige SQLite (+ embeddings cache) on Kubernetes PVC (`/data/vestige`); no FAISS index; no external vector SaaS (002-vestige-memory-mcp)
+- Vestige SQLite (+ embeddings cache) on Kubernetes PVC (`/data/vestige`); no external vector SaaS (002-vestige-memory-mcp)
 
 ## Recent Changes
 - 002-vestige-memory-mcp: Added Python 3.11+ (backend), TypeScript/React (frontend), Vestige MCP binary (Rust, prebuilt linux/x64) + FastAPI, existing `AgentEngine`/`agent_tools`, MCP Python client (`mcp` SDK or equivalent stdio JSON-RPC client), Vestige (`vestige-mcp` / `vestige-mcp-server`)

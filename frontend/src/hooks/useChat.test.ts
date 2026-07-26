@@ -115,7 +115,7 @@ describe('useChat', () => {
       expect(result.current.messages).toHaveLength(0);
     });
 
-    it('should handle API errors gracefully', async () => {
+    it('should handle API errors gracefully without wiping the thread', async () => {
       mockApiClient.post.mockRejectedValue({
         response: {
           status: 400,
@@ -131,12 +131,39 @@ describe('useChat', () => {
         await result.current.sendMessage('Test message');
       });
 
-      // Should have user message and error message
+      // User + error assistant; history preserved for correction
       expect(result.current.messages).toHaveLength(2);
       expect(result.current.messages[0].role).toBe('user');
       expect(result.current.messages[1].role).toBe('assistant');
-      expect(result.current.messages[1].content).toBe('Invalid query format');
-      expect(result.current.error).toBe('Invalid query format');
+      expect(result.current.messages[1].content).toContain('Invalid query format');
+      expect(result.current.messages[1].content).toContain('continue');
+      expect(result.current.error).toContain('Invalid query format');
+      expect(result.current.isLoading).toBe(false);
+    });
+
+    it('should allow another send after a recoverable error', async () => {
+      mockApiClient.post
+        .mockRejectedValueOnce({
+          response: { status: 500, data: { detail: 'Server glitch' }, headers: {} },
+        })
+        .mockResolvedValueOnce({
+          data: { response: 'Recovered answer', errors: [] },
+        });
+
+      const { result } = renderHook(() => useChat(selectedCluster, isAuthenticated));
+
+      await act(async () => {
+        await result.current.sendMessage('First');
+      });
+      expect(result.current.isLoading).toBe(false);
+
+      await act(async () => {
+        await result.current.sendMessage('Second');
+      });
+
+      expect(result.current.messages.length).toBeGreaterThanOrEqual(3);
+      const last = result.current.messages[result.current.messages.length - 1];
+      expect(last.content).toContain('Recovered answer');
     });
 
     it('should handle 401 authentication errors', async () => {
@@ -155,9 +182,9 @@ describe('useChat', () => {
         await result.current.sendMessage('Test message');
       });
 
-      expect(result.current.messages[1].content).toBe(
-        'Authentication required. Please log in again.'
-      );
+      // 401 is not recoverable — no "continue this chat" soft prompt required
+      expect(result.current.messages[1].content).toContain('Credentials expired');
+      expect(result.current.messages[1].errorType).toBe('auth_error');
     });
 
     it('should handle 429 rate limit errors', async () => {
@@ -176,7 +203,7 @@ describe('useChat', () => {
         await result.current.sendMessage('Test message');
       });
 
-      expect(result.current.messages[1].content).toBe(
+      expect(result.current.messages[1].content).toContain(
         'Rate limit exceeded. Try again in 30 seconds.'
       );
     });

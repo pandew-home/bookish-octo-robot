@@ -1,15 +1,16 @@
 # DevOps Chatbot v2.0
 
-Kubernetes-native troubleshooting assistant with real-time health signals (K8sGPT), **FAISS RAG** over a shared knowledge base, and an agentic chat backend. Auth uses short-lived **Kion AWS** credentials (and/or kubeconfig). Delivery is **Argo CD + Helm** (Flux is retired).
+Kubernetes-native troubleshooting assistant with real-time health signals (K8sGPT), **Vestige institutional memory**, and an agentic chat backend. Auth uses short-lived **Kion AWS** credentials (and/or kubeconfig). Delivery is **Argo CD + Helm** (Flux is retired).
 
-**Release pin:** git tag `faiss-202607` · **Repo:** https://github.com/pandew-home/bookish-octo-robot
+**Repo:** https://github.com/pandew-home/bookish-octo-robot
 
 ## Features
 
 - **Short-lived auth** — Kion STS credentials and/or kubeconfig; HttpOnly session cookie (+ `X-Session-Id`)
 - **Health weather widget** — Driven by K8sGPT Result CRDs
-- **Agentic chat** — Live Kubernetes API tools, skills, KB retrieval; mutations require explicit approval
-- **FAISS knowledge base** — Shared PVC-backed index for team solutions
+- **Agentic chat** — Live Kubernetes API tools + skills; mutations gated by `kubeApi` policy + user RBAC
+- **Vestige memory** — Colocated MCP in the chatbot image; data on the app PVC; automatic recall/ingest
+- **Free recommendations** — Remediation advice always allowed; execution is policy-gated
 - **Single- or multi-cluster** — Optional pin via `IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME`
 - **GitOps** — Argo CD app-of-apps + Helm charts; images from GHCR by git SHA
 
@@ -22,7 +23,7 @@ Kubernetes-native troubleshooting assistant with real-time health signals (K8sGP
 cd backend
 python3 -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 pip install -r requirements.txt
-pip install -e ../libs/devops-k8s -e ../libs/devops-kb -e ../libs/devops-rag
+pip install -e ../libs/devops-k8s -e ../libs/devops-rag
 uvicorn app:app --reload --port 8000
 
 # Frontend
@@ -57,13 +58,13 @@ See [docs/k8sgpt-setup.md](docs/k8sgpt-setup.md).
 ## Architecture (short)
 
 ```text
-User → React UI → FastAPI (agent tools + RAG)
+User → React UI → FastAPI (agent tools + MemoryPort)
                      ├── Session cookie / X-Session-Id
                      ├── Kion/STS → EKS API (or kubeconfig)
                      ├── K8sGPT Result CRDs
-                     └── FAISS KB on PVC
+                     └── Vestige MCP (same image, loopback :3928, PVC /data/vestige)
 
-Argo CD → helm/devops-chatbot (+ operator, alloy, grafana charts)
+Argo CD → helm/devops-chatbot (+ operator, alloy, grafana)
 GHCR    → ghcr.io/pandew-home/bookish-octo-robot:<git-sha>
 ```
 
@@ -79,26 +80,3 @@ GHCR    → ghcr.io/pandew-home/bookish-octo-robot:<git-sha>
 | [docs/k8sgpt-setup.md](docs/k8sgpt-setup.md) | K8sGPT |
 | [docs/security.md](docs/security.md) | Security |
 | [docs/usage.md](docs/usage.md) | End-user usage |
-| [docs/README.md](docs/README.md) | Full index |
-
-## Endpoints (typical)
-
-| Mode | URL |
-|------|-----|
-| Local UI | http://localhost:3000 |
-| Local API | http://localhost:8000/docs |
-| Cluster | Host/path from `helm/devops-chatbot/values.yaml` (e.g. `/chatbot` + `/api`) |
-
-Do not hardcode lab hostnames from older docs; values change per environment.
-
-## Testing
-
-```bash
-cd backend && pytest
-cd frontend && npm test -- --no-watch
-# Optional: cd frontend && npx playwright test
-```
-
-## License
-
-See [LICENSE](LICENSE).

@@ -1,0 +1,35 @@
+{{/*
+  Chatbot pod ServiceAccount is intentionally minimal:
+  only read K8sGPT Result CRDs on the host cluster.
+
+  Live Kubernetes diagnostics (pods, events, generic API) use the
+  authenticated user's session clients (Kion/EKS bearer or kubeconfig),
+  not this ServiceAccount.
+*/}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "devops-chatbot.fullname" . }}-k8sgpt-reader
+  labels:
+    {{- include "devops-chatbot.labels" . | nindent 4 }}
+    app: devops-chatbot
+rules:
+  - apiGroups: ["core.k8sgpt.ai"]
+    resources: ["results"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "devops-chatbot.fullname" . }}-k8sgpt-reader
+  labels:
+    {{- include "devops-chatbot.labels" . | nindent 4 }}
+    app: devops-chatbot
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "devops-chatbot.fullname" . }}-k8sgpt-reader
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "devops-chatbot.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}

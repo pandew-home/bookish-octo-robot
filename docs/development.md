@@ -2,7 +2,7 @@
 
 Local setup, tests, and layout for DevOps Chatbot v2.0.
 
-**Baseline tag:** `faiss-202607`. Agent-facing rules: [../AGENTS.md](../AGENTS.md).
+Agent-facing rules: [../AGENTS.md](../AGENTS.md).
 
 ## Local development setup
 
@@ -12,7 +12,6 @@ Local setup, tests, and layout for DevOps Chatbot v2.0.
 git clone https://github.com/pandew-home/bookish-octo-robot.git
 cd bookish-octo-robot
 git checkout main
-# optional pin: git checkout faiss-202607
 ```
 
 ### 2. Backend
@@ -27,7 +26,6 @@ pip install -r requirements.txt
 
 # Shared libraries (paths are repo-root libs/, not backend/libs/)
 pip install -e ../libs/devops-k8s
-pip install -e ../libs/devops-kb
 pip install -e ../libs/devops-rag
 
 uvicorn app:app --reload --port 8000
@@ -53,8 +51,8 @@ LLM_API_KEY=sk-...
 DEFAULT_REGION=us-east-1
 LLM_PROVIDER=openai          # or openrouter, etc.
 LLM_MODEL=gpt-4o-mini
-KB_SEEDING_ENABLED=true
-KB_FORCE_RESEED=false
+MEMORY_BACKEND=noop          # or vestige when local/in-cluster Vestige is up
+# VESTIGE_HTTP_URL=http://localhost:3928
 # Optional single-cluster:
 # IN_CLUSTER_EKS_CLUSTER_NAME=my-cluster
 # EKS_CLUSTER_NAME=my-cluster
@@ -129,8 +127,7 @@ bookish-octo-robot/
 │   └── playwright.config.ts
 ├── libs/
 │   ├── devops-k8s/
-│   ├── devops-kb/
-│   └── devops-rag/
+│   └── devops-rag/           # LLM client only
 ├── k8s/                      # Legacy/reference manifests
 ├── k8sgpt/                   # Operator/Alloy docs & fixtures
 ├── .github/workflows/
@@ -143,7 +140,7 @@ bookish-octo-robot/
 1. Branch from `main`.  
 2. Prefer small PRs; run backend + frontend tests.  
 3. Update docs/AGENTS when behavior or GitOps paths change.  
-4. Do not commit secrets, FAISS index dumps, or coverage HTML trees.  
+4. Do not commit secrets or coverage HTML trees.  
 5. Do not reintroduce Flux.
 
 ## Code style

@@ -17,7 +17,6 @@ httpx<0.28
 
 # Shared libraries (local)
 -e ./libs/devops-k8s
--e ./libs/devops-kb
 -e ./libs/devops-rag
 
 # Additional dependencies

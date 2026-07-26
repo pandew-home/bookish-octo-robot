@@ -1,36 +1,26 @@
 # devops-rag
 
-RAG (Retrieval-Augmented Generation) engine for DevOps chatbot.
+LLM client abstraction for the DevOps chatbot agentic loop.
 
-## Features
+Providers:
 
-- FAISS vector store for semantic search (install the `vector-search` extra)
-- Sentence-transformers for embeddings (install the `embeddings` extra)
-- LLM client abstraction (OpenAI, Anthropic, Ollama)
-- Embedding cache for cost optimization
-- Response generation with citations
+- OpenAI-compatible (`OpenAIClient`, including OpenRouter)
+- Anthropic (`AnthropicClient`)
+- Ollama (`OllamaClient`)
 
-## Installation
+Institutional memory is **not** in this package — use Vestige via `backend/memory` (MemoryPort).
 
-```bash
-pip install -e .
-```
+## Install
 
 ```bash
-# Optional extras for advanced search
-pip install -e .[vector-search,embeddings]
+pip install -e ./libs/devops-rag
 ```
 
 ## Usage
 
 ```python
-from devops_rag import RAGEngine, LLMClient
+from devops_rag import OpenAIClient
 
-llm_client = LLMClient(provider="openai", api_key="...")
-rag_engine = RAGEngine(llm_client=llm_client)
-
-response = rag_engine.process_query("Why is my pod failing?")
-print(response.content)
+client = OpenAIClient(api_key="...", model="gpt-4o-mini")
+text = client.generate("Explain CrashLoopBackOff")
 ```
-
-Install the optional extras when you need FAISS indexing or local embeddings.

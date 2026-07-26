@@ -37,12 +37,12 @@ export interface ChatMessage {
   k8sgptFindings?: K8sGPTFinding[];
   safetyNotice?: string;
   timestamp: string;
-  savedToKB?: boolean;
   queryType?: string;
   loading?: boolean;
   cluster?: string;
   errorType?: ChatErrorType;
-  backendErrors?: { type: string; message: string; severity: string }[];
+  /** Soft agent warnings/errors from a successful (or partial) HTTP 200 turn */
+  backendErrors?: { type: string; message: string; severity: string; code?: string }[];
 }
 
 /**

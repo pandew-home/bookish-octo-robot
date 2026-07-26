@@ -9,13 +9,13 @@ forwards it to :func:`execute_tool`, which routes by name to a small impl.
 # renaming, or removing one changes what the chatbot can do — sometimes in
 # ways that are hard to spot from a diff (the LLM picks tools by name and
 # description). AI assistants: do NOT add a new tool, broaden a tool's
-# parameters, change a description, or relax the mutating-method guard
-# without explicit human sign-off.
+# parameters, change a description, or relax the policy guard without
+# explicit human sign-off.
 #
-# The mutating-method guard in ``_tool_k8s_api_request`` is the only thing
-# stopping the model from issuing destructive POST/PUT/PATCH/DELETE calls.
-# Do not remove or weaken it. If you need to support an approved write flow,
-# that is a feature change — flag it for review.
+# The ``authorize()`` call in ``_tool_k8s_api_request`` enforces KubeApiPolicy
+# on every cluster call (read or mutate). Do not remove or weaken it.
+# If you need to support an approved write flow, update the policy — that is
+# a feature change — flag it for review.
 """
 
 from __future__ import annotations
@@ -23,15 +23,18 @@ from __future__ import annotations
 import logging
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from skills import Skill
+
+from kube_policy.authorize import WrapperRequest, authorize
+from kube_policy.redact import redact_response
+from kube_policy.policy import KubeApiPolicy
 
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ITEMS = 50
 MAX_TOOL_STRING_CHARS = 2000
-MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
 @dataclass
@@ -40,11 +43,68 @@ class AgentContext:
 
     k8s_clients: Dict[str, Any]
     k8sgpt_results: List[Any]
-    kb_search_func: Optional[Callable[..., List[Dict[str, Any]]]]
     skills: Dict[str, Skill]
     cluster_version: str
-    execution_mode: str
-    require_human_approval: bool
+    kube_policy: Optional[KubeApiPolicy] = None
+
+
+def _deny_payload(reason: str, request: WrapperRequest) -> Dict[str, Any]:
+    """Structured denial matching contracts/access-model.md."""
+    return {
+        "blocked": True,
+        "reason": reason,
+        "request": {
+            "method": request.method,
+            "group": request.group,
+            "version": request.version,
+            "resource": request.resource,
+            "namespace": request.namespace,
+            "name": request.name,
+            "subresource": request.subresource,
+        },
+    }
+
+
+def _authorize_or_deny(
+    ctx: AgentContext,
+    *,
+    method: str,
+    resource: str,
+    namespace: str = "",
+    name: str = "",
+    group: str = "",
+    version: str = "v1",
+    subresource: str = "",
+) -> Optional[Dict[str, Any]]:
+    """Return a deny payload if blocked; None if the call may proceed.
+
+    Single chokepoint: every cluster tool must call this before touching the API.
+    """
+    wrapper_req = WrapperRequest(
+        method=method,
+        group=group,
+        version=version,
+        resource=resource,
+        namespace=namespace,
+        name=name,
+        subresource=subresource,
+    )
+    policy = ctx.kube_policy
+    if policy is None:
+        return _deny_payload("policy_not_loaded", wrapper_req)
+    authz = authorize(wrapper_req, policy)
+    if not authz.allowed:
+        if policy.logDeniedRequests:
+            logger.info(
+                "kubeApi deny reason=%s method=%s resource=%s ns=%s name=%s",
+                authz.reason,
+                method,
+                resource,
+                namespace,
+                name,
+            )
+        return _deny_payload(authz.reason, wrapper_req)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -67,9 +127,6 @@ def build_tool_specs(ctx: AgentContext) -> List[Dict[str, Any]]:
 
     if ctx.k8sgpt_results:
         tools.append(_spec_list_k8sgpt_findings())
-
-    if ctx.kb_search_func is not None:
-        tools.append(_spec_search_knowledge_base())
 
     for skill in ctx.skills.values():
         tools.append(_spec_skill(skill))
@@ -149,24 +206,6 @@ def _spec_list_k8sgpt_findings() -> Dict[str, Any]:
     }
 
 
-def _spec_search_knowledge_base() -> Dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": "search_knowledge_base",
-            "description": "Search the knowledge base for troubleshooting references.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"},
-                    "top_k": {"type": "integer", "minimum": 1, "maximum": 10},
-                },
-                "required": ["query"],
-            },
-        },
-    }
-
-
 def _spec_k8s_api_request() -> Dict[str, Any]:
     return {
         "type": "function",
@@ -229,9 +268,46 @@ def _spec_skill(skill: Skill) -> Dict[str, Any]:
 # Execution.
 # ---------------------------------------------------------------------------
 
+_K8S_TOOLS = frozenset(
+    {
+        "get_service_status",
+        "get_pod_status",
+        "list_resource_events",
+        "k8s_api_request",
+    }
+)
+
+
+def _ensure_k8s_auth_fresh(ctx: AgentContext) -> Optional[Dict[str, Any]]:
+    """
+    Re-mint EKS bearer if stale before a live cluster tool call.
+
+    Long agent loops can exceed the ~60s EKS token TTL; request-start refresh
+    alone is not enough. Returns an error payload if refresh fails, else None.
+    """
+    ensure = ctx.k8s_clients.get("_ensure_auth_fresh")
+    if ensure is None:
+        return None
+    try:
+        ensure()
+    except Exception as e:
+        logger.warning("K8s auth refresh before tool failed: %s", e)
+        # FastAPI HTTPException has .detail; keep message usable for the agent.
+        detail = getattr(e, "detail", None) or str(e)
+        return {
+            "error": f"Cluster credentials could not be refreshed: {detail}",
+            "code": "k8s_auth_refresh_failed",
+        }
+    return None
+
+
 def execute_tool(name: str, args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     """Dispatch a tool call by name. Always returns a JSON-serializable dict."""
     try:
+        if name in _K8S_TOOLS:
+            auth_err = _ensure_k8s_auth_fresh(ctx)
+            if auth_err is not None:
+                return auth_err
         if name == "get_service_status":
             return _tool_get_service_status(args, ctx)
         if name == "get_pod_status":
@@ -240,8 +316,6 @@ def execute_tool(name: str, args: Dict[str, Any], ctx: AgentContext) -> Dict[str
             return _tool_list_resource_events(args, ctx)
         if name == "list_k8sgpt_findings":
             return _tool_list_k8sgpt_findings(args, ctx)
-        if name == "search_knowledge_base":
-            return _tool_search_knowledge_base(args, ctx)
         if name == "k8s_api_request":
             return _tool_k8s_api_request(args, ctx)
         skill = ctx.skills.get(name)
@@ -262,6 +336,17 @@ def _tool_get_service_status(args: Dict[str, Any], ctx: AgentContext) -> Dict[st
     name = args.get("name")
     if not namespace or not name:
         return {"error": "namespace and name are required."}
+
+    denied = _authorize_or_deny(
+        ctx, method="GET", resource="services", namespace=namespace, name=name
+    )
+    if denied:
+        return denied
+    denied_ep = _authorize_or_deny(
+        ctx, method="GET", resource="endpoints", namespace=namespace, name=name
+    )
+    if denied_ep:
+        return denied_ep
 
     svc = core_v1.read_namespaced_service(name=name, namespace=namespace)
     endpoints = core_v1.read_namespaced_endpoints(name=name, namespace=namespace)
@@ -298,6 +383,12 @@ def _tool_get_pod_status(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, A
     if not namespace or not name:
         return {"error": "namespace and name are required."}
 
+    denied = _authorize_or_deny(
+        ctx, method="GET", resource="pods", namespace=namespace, name=name
+    )
+    if denied:
+        return denied
+
     pod = core_v1.read_namespaced_pod(name=name, namespace=namespace)
     container_statuses = []
     for status in pod.status.container_statuses or []:
@@ -329,6 +420,12 @@ def _tool_list_resource_events(args: Dict[str, Any], ctx: AgentContext) -> Dict[
     namespace = args.get("namespace")
     if not namespace:
         return {"error": "namespace is required."}
+
+    denied = _authorize_or_deny(
+        ctx, method="GET", resource="events", namespace=namespace
+    )
+    if denied:
+        return denied
 
     resource_name = args.get("resource_name")
     limit = max(1, min(int(args.get("limit", 10)), 20))
@@ -378,30 +475,6 @@ def _tool_list_k8sgpt_findings(args: Dict[str, Any], ctx: AgentContext) -> Dict[
     }
 
 
-def _tool_search_knowledge_base(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
-    if ctx.kb_search_func is None:
-        return {"error": "Knowledge base search is unavailable."}
-
-    query = args.get("query")
-    if not query:
-        return {"error": "query is required."}
-
-    top_k = max(1, min(int(args.get("top_k", 5)), 10))
-    results = ctx.kb_search_func(query, top_k=top_k)
-
-    normalized = []
-    for result in results[:top_k]:
-        normalized.append(
-            {
-                "title": result.get("title"),
-                "snippet": (result.get("content") or result.get("snippet") or "")[:500],
-                "source": result.get("source", "knowledge-base"),
-            }
-        )
-
-    return {"query": query, "count": len(normalized), "results": normalized}
-
-
 def _tool_k8s_api_request(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, Any]:
     core_v1 = ctx.k8s_clients.get("core_v1")
     if core_v1 is None:
@@ -425,21 +498,30 @@ def _tool_k8s_api_request(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
     if not version or not resource:
         return {"error": "version and resource are required."}
 
-    # MAINTENANCE: This guard is the only thing keeping the LLM from issuing
-    # destructive writes. Do not weaken without human review.
-    if method in MUTATING_METHODS:
-        if ctx.require_human_approval:
-            return _blocked_request(
-                method, version, group, namespace, resource, name, subresource,
-                approval_required=True,
-                reason=f"Human approval required for mutating method {method}. Action not executed.",
-            )
-        if ctx.execution_mode == "observe-only":
-            return _blocked_request(
-                method, version, group, namespace, resource, name, subresource,
-                approval_required=False,
-                reason=f"Execution mode is observe-only; mutating method {method} is disabled.",
-            )
+    # MAINTENANCE: Every cluster call goes through authorize() then API then redact().
+    # Do not weaken without human review.
+    wrapper_req = WrapperRequest(
+        method=method,
+        group=group,
+        version=version,
+        resource=resource,
+        namespace=namespace,
+        name=name,
+        subresource=subresource,
+    )
+    denied = _authorize_or_deny(
+        ctx,
+        method=method,
+        resource=resource,
+        namespace=namespace,
+        name=name,
+        group=group,
+        version=version,
+        subresource=subresource,
+    )
+    if denied:
+        return denied
+    policy = ctx.kube_policy  # non-None after successful authorize
 
     base = f"/apis/{group}/{version}" if group else f"/api/{version}"
     path_parts = [base]
@@ -454,6 +536,16 @@ def _tool_k8s_api_request(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
     if not path.startswith("/"):
         path = "/" + path
 
+    # dryRunMutations: inject Kubernetes dryRun=All for mutating verbs
+    query_params = dict(query)
+    if (
+        policy.dryRunMutations
+        and method in {"POST", "PUT", "PATCH", "DELETE"}
+    ):
+        existing = query_params.get("dryRun")
+        if not existing:
+            query_params["dryRun"] = "All"
+
     api_client = core_v1.api_client
     headers: Dict[str, str] = {}
     if content_type:
@@ -464,13 +556,15 @@ def _tool_k8s_api_request(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
     response_data, status_code, response_headers = api_client.call_api(
         path,
         method,
-        query_params=list(query.items()),
+        query_params=list(query_params.items()),
         body=body,
         header_params=headers,
         auth_settings=["BearerToken"],
         response_type="object",
         _return_http_data_only=False,
     )
+
+    response_data = redact_response(response_data, wrapper_req, policy)
 
     limited = _limit_tool_result(
         response_data,
@@ -483,34 +577,6 @@ def _tool_k8s_api_request(args: Dict[str, Any], ctx: AgentContext) -> Dict[str, 
         "status_code": status_code,
         "response_headers": dict(response_headers),
         "result": limited,
-    }
-
-
-def _blocked_request(
-    method: str,
-    version: str,
-    group: str,
-    namespace: str,
-    resource: str,
-    name: str,
-    subresource: str,
-    *,
-    approval_required: bool,
-    reason: str,
-) -> Dict[str, Any]:
-    return {
-        "approval_required": approval_required,
-        "blocked": True,
-        "reason": reason,
-        "request": {
-            "method": method,
-            "version": version,
-            "group": group,
-            "namespace": namespace,
-            "resource": resource,
-            "name": name,
-            "subresource": subresource,
-        },
     }
 
 

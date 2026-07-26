@@ -5,14 +5,25 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 import logging
+import threading
 
 from api.credentials import (
     get_session_id,
     get_credentials_for_session,
     get_target_eks_cluster_name,
 )
-from cluster_manager import discover_clusters, get_k8s_clients, cluster_cache
-from local_k8s_auth import discover_local_clusters, get_local_k8s_client
+from cluster_manager import (
+    discover_clusters,
+    get_k8s_clients,
+    cluster_cache,
+    ensure_eks_bearer_fresh,
+    refresh_eks_bearer_on_clients,
+)
+from local_k8s_auth import (
+    discover_local_clusters,
+    get_k8s_clients_bundle_from_content,
+    get_k8s_clients_bundle_from_path,
+)
 from utils.error_handler import handle_aws_error, handle_k8s_error, handle_generic_error
 
 logger = logging.getLogger(__name__)
@@ -22,6 +33,7 @@ router = APIRouter(prefix="/api/clusters", tags=["clusters"])
 # Session storage for selected clusters and K8s clients
 _session_clusters: Dict[str, Dict[str, Any]] = {}
 _session_k8s_clients: Dict[str, Dict[str, Any]] = {}
+_session_lock = threading.RLock()
 
 
 class ClusterInfo(BaseModel):
@@ -153,37 +165,23 @@ def _discover_kubeconfig_clusters(creds) -> List[Dict[str, Any]]:
 
 def _get_kubeconfig_k8s_clients(creds, cluster: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Create Kubernetes API clients using kubeconfig.
-    
-    Args:
-        creds: StoredCredentials with kubeconfig_path
-        cluster: Cluster metadata with context_name
-        
-    Returns:
-        Dictionary of K8s API clients
+    Create Kubernetes API clients using kubeconfig with a dedicated ApiClient.
+
+    Does not mutate process-global kubernetes config. All typed APIs share one
+    ApiClient so logout/cleanup can wipe auth material.
     """
-    from kubernetes import client as k8s_client
-    from local_k8s_auth import get_k8s_client_from_content
+    context_name = cluster.get("context_name", cluster["name"])
 
-    context_name = cluster.get('context_name', cluster['name'])
-
-    # Use kubeconfig content (from upload auth) or path (from file auth)
     if creds.kubeconfig_content:
-        core_v1 = get_k8s_client_from_content(creds.kubeconfig_content, context_name)
-    else:
-        core_v1 = get_local_k8s_client(creds.kubeconfig_path, context_name)
-        from kubernetes import config
-        config.load_kube_config(config_file=creds.kubeconfig_path, context=context_name)
-    
-    return {
-        'core_v1': core_v1,
-        'apps_v1': k8s_client.AppsV1Api(),
-        'custom_objects': k8s_client.CustomObjectsApi(),
-        'networking_v1': k8s_client.NetworkingV1Api(),
-        'rbac_v1': k8s_client.RbacAuthorizationV1Api(),
-        '_api_client': None,  # No explicit cleanup needed for kubeconfig
-        '_ca_cert_path': None
-    }
+        return get_k8s_clients_bundle_from_content(
+            creds.kubeconfig_content, context_name
+        )
+    if not creds.kubeconfig_path:
+        raise HTTPException(
+            status_code=400,
+            detail="Kubeconfig path or content is required for local cluster access.",
+        )
+    return get_k8s_clients_bundle_from_path(creds.kubeconfig_path, context_name)
 
 
 @router.post("/select", response_model=ClusterSelectResponse)
@@ -230,14 +228,7 @@ async def select_cluster(
             logger.info(
                 f"Switching from cluster {current_cluster_name} to {request.cluster_name} for session {session_id[:8]}..."
             )
-            
-            # Clean up old K8s clients before switching
-            old_clients = _session_k8s_clients.get(session_id)
-            if old_clients:
-                from cluster_manager import cleanup_k8s_clients
-                cleanup_k8s_clients(old_clients)
-                logger.debug(f"Cleaned up K8s clients for old cluster {current_cluster_name}")
-        
+
         # Get cluster list (from cache or discover)
         cached_clusters = cluster_cache.get(session_id)
         if cached_clusters is None:
@@ -247,38 +238,48 @@ async def select_cluster(
             else:
                 cached_clusters = await discover_clusters(creds)
             cluster_cache.set(session_id, cached_clusters)
-        
+
         # Find the selected cluster
         selected_cluster = None
         for cluster in cached_clusters:
             if cluster['name'] == request.cluster_name:
                 selected_cluster = cluster
                 break
-        
+
         if selected_cluster is None:
             raise HTTPException(
                 status_code=404,
                 detail=f"Cluster '{request.cluster_name}' not found"
             )
-        
+
         # Create K8s clients based on auth mode
         logger.info(f"Creating K8s clients for cluster {request.cluster_name} (auth_mode={creds.auth_mode})")
         if creds.auth_mode == "kubeconfig":
             k8s_clients = _get_kubeconfig_k8s_clients(creds, selected_cluster)
         else:
             k8s_clients = get_k8s_clients(creds, selected_cluster)
-        
-        # Store in session
-        _session_clusters[session_id] = selected_cluster
-        _session_k8s_clients[session_id] = k8s_clients
-        
+
+        # Always replace prior clients (same-name re-select still needs cleanup).
+        with _session_lock:
+            old_clients = _session_k8s_clients.pop(session_id, None)
+            _session_clusters[session_id] = selected_cluster
+            _session_k8s_clients[session_id] = k8s_clients
+        if old_clients is not None:
+            from cluster_manager import cleanup_k8s_clients
+
+            cleanup_k8s_clients(old_clients)
+            logger.debug(
+                "Cleaned up previous K8s clients for session %s...",
+                session_id[:8],
+            )
+
         # Clear cached cluster-specific data when switching
         if is_switching:
             clear_cluster_specific_cache(session_id)
             logger.debug(f"Cleared cluster-specific cache for session {session_id[:8]}...")
-        
+
         logger.info(f"Selected cluster {request.cluster_name} for session {session_id[:8]}...")
-        
+
         return ClusterSelectResponse(
             success=True,
             message=f"Successfully selected cluster '{request.cluster_name}'",
@@ -299,67 +300,175 @@ async def select_cluster(
 def get_selected_cluster(session_id: str) -> Dict[str, Any]:
     """
     Get the selected cluster for a session.
-    
-    Args:
-        session_id: Session ID
-        
-    Returns:
-        Cluster metadata dictionary
-        
+
     Raises:
         HTTPException: If no cluster is selected
     """
-    cluster = _session_clusters.get(session_id)
-    
+    with _session_lock:
+        cluster = _session_clusters.get(session_id)
+
     if cluster is None:
         raise HTTPException(
             status_code=400,
-            detail="No cluster selected. Please select a cluster first."
+            detail="No cluster selected. Please select a cluster first.",
         )
-    
+
     return cluster
+
+
+def ensure_session_k8s_auth_fresh(session_id: str, clients: Dict[str, Any]) -> None:
+    """
+    Refresh EKS bearer on the given clients if stale (mid-chat / multi-tool).
+
+    Uses current store credentials. Raises HTTPException if creds expired.
+    No-op for kubeconfig sessions.
+    """
+    if clients.get("_auth_mode") == "kubeconfig":
+        return
+    # Legacy maps may omit _auth_mode; only refresh when AWS creds are present.
+    creds = get_credentials_for_session(session_id)
+    if creds.auth_mode != "aws" and clients.get("_auth_mode") != "aws":
+        return
+
+    cluster_name = (
+        clients.get("_cluster_name")
+        or (_session_clusters.get(session_id) or {}).get("name")
+        or (_session_clusters.get(session_id) or {}).get("cluster_name")
+    )
+    if not cluster_name:
+        return
+
+    try:
+        ensure_eks_bearer_fresh(clients, creds, str(cluster_name))
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to refresh EKS bearer mid-session: %s", e)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Unable to refresh cluster access token. "
+                "Re-select the cluster or re-authenticate."
+            ),
+        ) from e
 
 
 def get_k8s_clients_for_session(session_id: str) -> Dict[str, Any]:
     """
-    Get Kubernetes API clients for a session.
-    
-    Args:
-        session_id: Session ID
-        
-    Returns:
-        Dictionary of K8s API clients
-        
-    Raises:
-        HTTPException: If no cluster is selected
+    Get Kubernetes API clients for a session (request-scoped snapshot).
+
+    - Re-validates stored credentials (401 + teardown on expiry).
+    - Refreshes EKS bearer tokens (60s TTL) so tools work past select time.
+    - Returns a **shallow copy** of the clients map so logout `clear()` on the
+      session dict does not empty the in-flight request's dict keys.
+    - Attaches ``_ensure_auth_fresh`` for mid-agent EKS re-mint (shared ApiClient).
+    - Re-checks session ownership after STS so concurrent logout/re-select cannot
+      hand a closed or replaced client map to the request.
     """
-    clients = _session_k8s_clients.get(session_id)
-    
-    if clients is None:
-        raise HTTPException(
-            status_code=400,
-            detail="No cluster selected. Please select a cluster first."
+    # Fail closed if credentials expired/missing; may clear session clients via hook.
+    creds = get_credentials_for_session(session_id)
+
+    with _session_lock:
+        clients = _session_k8s_clients.get(session_id)
+        cluster = _session_clusters.get(session_id)
+
+        if clients is None or cluster is None:
+            raise HTTPException(
+                status_code=400,
+                detail="No cluster selected. Please select a cluster first.",
+            )
+        if clients.get("_closed"):
+            raise HTTPException(
+                status_code=400,
+                detail="Cluster session ended. Please re-select the cluster.",
+            )
+        # Snapshot refs under lock; do STS/network outside the global lock.
+        cluster_name = cluster.get("name") or cluster.get("cluster_name")
+        need_aws_refresh = (
+            creds.auth_mode == "aws" or clients.get("_auth_mode") == "aws"
         )
-    
-    return clients
+        if need_aws_refresh and clients.get("_api_client") is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Unable to refresh cluster access token. "
+                    "Re-select the cluster or re-authenticate."
+                ),
+            )
+
+    if need_aws_refresh and cluster_name:
+        try:
+            # Always mint at request start so the first tool has a full ~60s window.
+            # STS runs outside the global lock; ownership re-checked below.
+            refresh_eks_bearer_on_clients(clients, creds, str(cluster_name))
+        except Exception as e:
+            logger.error("Failed to refresh EKS bearer for session: %s", e)
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Unable to refresh cluster access token. "
+                    "Re-select the cluster or re-authenticate."
+                ),
+            ) from e
+
+    # Re-verify session still owns this map after any out-of-lock STS work.
+    # Concurrent clear_session_cluster pops the map and cleanup marks closed.
+    with _session_lock:
+        current = _session_k8s_clients.get(session_id)
+        if current is not clients or clients.get("_closed"):
+            raise HTTPException(
+                status_code=400,
+                detail="Cluster session ended. Please re-select the cluster.",
+            )
+        if need_aws_refresh and clients.get("_api_client") is None:
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "Unable to refresh cluster access token. "
+                    "Re-select the cluster or re-authenticate."
+                ),
+            )
+        if "core_v1" not in clients and "custom_objects" not in clients:
+            raise HTTPException(
+                status_code=400,
+                detail="Cluster session ended. Please re-select the cluster.",
+            )
+        # Shallow copy: session map clear/pop does not mutate this dict identity.
+        # Same ApiClient as session map — auth refresh updates shared configuration.
+        snap = dict(clients)
+
+    sid = session_id
+
+    def _ensure_auth_fresh() -> None:
+        ensure_session_k8s_auth_fresh(sid, snap)
+
+    snap["_ensure_auth_fresh"] = _ensure_auth_fresh
+    snap["_session_id"] = session_id
+    return snap
 
 
 def clear_session_cluster(session_id: str) -> None:
     """
     Clear selected cluster and K8s clients for a session.
-    
-    Args:
-        session_id: Session ID
+
+    Closes API clients, wipes bearer/CA material, and drops session maps so
+    logout / expiry leaves no usable cluster credentials in memory.
     """
-    if session_id in _session_clusters:
-        del _session_clusters[session_id]
-    
-    if session_id in _session_k8s_clients:
-        # Cleanup K8s clients (close connections, remove temp files)
+    with _session_lock:
+        _session_clusters.pop(session_id, None)
+        clients = _session_k8s_clients.pop(session_id, None)
+
+    if clients is not None:
         from cluster_manager import cleanup_k8s_clients
-        cleanup_k8s_clients(_session_k8s_clients[session_id])
-        del _session_k8s_clients[session_id]
-    
+
+        cleanup_k8s_clients(clients)
+
+    # Drop discovery cache entries that may retain cluster endpoints/CA data.
+    try:
+        cluster_cache.invalidate(session_id)
+    except Exception as e:
+        logger.debug(f"cluster_cache invalidate failed for {session_id[:8]}...: {e}")
+
     logger.debug(f"Cleared cluster selection for session {session_id[:8]}...")
 
 

@@ -24,20 +24,20 @@ podLabels:
 # Resource sizing: g4s.kube.medium nodes (2 vCPU / 3.7GB RAM).
 # Cluster co-tenants: openfang (128Mi/512Mi), gastown (256Mi/768Mi).
 # Observed idle: 4m CPU, 146Mi memory.
+# Single replica recommended: colocated Vestige uses SQLite on the shared PVC.
 resources:
   requests:
-    # Generous vs idle (4m) but gives scheduler an accurate bin-pack signal.
-    cpu: "100m"
-    # Above observed idle (146Mi) to absorb FAISS index load and conversation cache.
-    memory: "256Mi"
-  limits:
-    # Python + FAISS + asyncio can spike during RAG queries and LLM streaming.
-    # Matches openfang/gastown ceiling; all three are bursty, not concurrent.
-    cpu: "1000m"
-    # Covers FAISS vector ops, LLM response buffering, and KB seeding peaks.
+    # Chatbot + local Vestige MCP (embeddings/model cache warm path).
+    cpu: "200m"
     memory: "512Mi"
+  limits:
+    # Vestige embedding model + LLM streaming + tool-result compaction.
+    cpu: "1500m"
+    memory: "1536Mi"
 
 serviceAccount:
+  # Bound only to core.k8sgpt.ai/results (see templates/rbac.yaml).
+  # Live K8s tools use the user's session credentials, not this SA.
   name: devops-chatbot
 
 service:
@@ -135,6 +135,17 @@ kubeApi:
     proxySubresource: true
   dryRunMutations: false
   logDeniedRequests: true
+
+# Vestige MCP is colocated in the chatbot image (supervisord) and writes under
+# the chatbot PVC at /data/vestige. Default URL is loopback only.
+# Set backend to "noop" to skip memory (Vestige process still runs unless image is customized).
+memory:
+  backend: "vestige"
+  vestigeHttpUrl: "http://127.0.0.1:3928"
+  # Optional bearer for local Vestige; leave empty for loopback without auth.
+  vestigeAuthSecret: ""
+  dataDir: "/data/vestige"
+  modelCacheDir: "/data/vestige/model-cache"
 
 # Frontend and backend base-path configuration for subpath hosting
 # These values are surfaced by backend /api/config and consumed by the browser.

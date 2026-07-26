@@ -34,7 +34,13 @@ spec:
       initContainers:
         - name: setup-dirs
           image: busybox:1.35
-          command: ["sh", "-c", "mkdir -p /tmp/supervisor /tmp/envoy /var/log/supervisor /var/run/supervisor"]
+          command:
+            - sh
+            - -c
+            - |
+              mkdir -p /tmp/supervisor /tmp/envoy /var/log/supervisor /var/run/supervisor \
+                /data/conversations /data/vestige /data/vestige/model-cache
+              chown -R 1000:1000 /data/conversations /data/vestige 2>/dev/null || true
           resources:
             requests:
               cpu: 10m
@@ -49,6 +55,8 @@ spec:
               mountPath: /var/log
             - name: run
               mountPath: /var/run
+            - name: data
+              mountPath: /data
           securityContext:
             allowPrivilegeEscalation: false
             runAsUser: 1000
@@ -89,10 +97,6 @@ spec:
               value: "https://openrouter.ai/api/v1"
             - name: DEFAULT_REGION
               value: {{ .Values.llm.defaultRegion | quote }}
-            - name: KB_SEEDING_ENABLED
-              value: "true"
-            - name: KB_FORCE_RESEED
-              value: "false"
             # Runtime frontend contract values (served by backend /api/config).
             # These MUST stay aligned with ingress paths in values.yaml and k8s/ingress.yaml.
             # A mismatch here causes UI clicks to call non-existent API routes.
@@ -104,6 +108,59 @@ spec:
             # Must include the public ingress origin used by browsers.
             - name: ALLOWED_ORIGINS
               value: {{ .Values.app.allowedOrigins | quote }}
+            - name: KUBE_API_ALLOW_READ
+              value: {{ .Values.kubeApi.allowRead | quote }}
+            - name: KUBE_API_ALLOW_MUTATE
+              value: {{ .Values.kubeApi.allowMutate | quote }}
+            - name: KUBE_API_ALLOWED_METHODS
+              value: {{ join "," .Values.kubeApi.allowedMethods | quote }}
+            - name: KUBE_API_ALLOWED_SUBRESOURCES
+              value: {{ join "," .Values.kubeApi.allowedSubresources | quote }}
+            - name: KUBE_API_NAMESPACE_MODE
+              value: {{ .Values.kubeApi.namespaceMode | quote }}
+            - name: KUBE_API_NAMESPACES
+              value: {{ join "," .Values.kubeApi.namespaces | quote }}
+            - name: KUBE_API_ALLOWED_RESOURCES
+              value: {{ join "," .Values.kubeApi.allowedResources | quote }}
+            - name: KUBE_API_ALLOWED_API_GROUPS
+              value: {{ join "," .Values.kubeApi.allowedApiGroups | quote }}
+            - name: KUBE_API_SECRETS_ALLOW_IDENTIFY
+              value: {{ .Values.kubeApi.secrets.allowIdentify | quote }}
+            - name: KUBE_API_SECRETS_ALLOW_READ_DATA
+              value: {{ .Values.kubeApi.secrets.allowReadData | quote }}
+            - name: KUBE_API_SECRETS_ALLOW_MUTATE
+              value: {{ .Values.kubeApi.secrets.allowMutate | quote }}
+            - name: KUBE_API_DENY_SERVICEACCOUNTS
+              value: {{ .Values.kubeApi.deny.serviceaccounts | quote }}
+            - name: KUBE_API_DENY_CLUSTER_SCOPED_WRITES
+              value: {{ .Values.kubeApi.deny.clusterScopedWrites | quote }}
+            # Contract names (policy.py); SUBRESOURCE aliases also accepted by loader.
+            - name: KUBE_API_DENY_EXEC
+              value: {{ .Values.kubeApi.deny.execSubresource | quote }}
+            - name: KUBE_API_DENY_PORTFORWARD
+              value: {{ .Values.kubeApi.deny.portforwardSubresource | quote }}
+            - name: KUBE_API_DENY_PROXY
+              value: {{ .Values.kubeApi.deny.proxySubresource | quote }}
+            - name: KUBE_API_DRY_RUN_MUTATIONS
+              value: {{ .Values.kubeApi.dryRunMutations | quote }}
+            - name: KUBE_API_LOG_DENIED
+              value: {{ .Values.kubeApi.logDeniedRequests | quote }}
+            - name: MEMORY_BACKEND
+              value: {{ .Values.memory.backend | quote }}
+            - name: VESTIGE_HTTP_URL
+              value: {{ .Values.memory.vestigeHttpUrl | quote }}
+            - name: VESTIGE_DATA_DIR
+              value: {{ .Values.memory.dataDir | quote }}
+            - name: FASTEMBED_CACHE_PATH
+              value: {{ .Values.memory.modelCacheDir | quote }}
+            {{- if .Values.memory.vestigeAuthSecret }}
+            - name: VESTIGE_AUTH_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.memory.vestigeAuthSecret | quote }}
+                  key: auth-token
+                  optional: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           volumeMounts:
@@ -119,7 +176,7 @@ spec:
             httpGet:
               path: /api/health
               port: 8080
-            initialDelaySeconds: 30
+            initialDelaySeconds: 45
             periodSeconds: 10
             timeoutSeconds: 5
             failureThreshold: 3
@@ -127,7 +184,7 @@ spec:
             httpGet:
               path: /api/health/ready
               port: 8080
-            initialDelaySeconds: 90
+            initialDelaySeconds: 60
             periodSeconds: 5
             timeoutSeconds: 3
             failureThreshold: 3

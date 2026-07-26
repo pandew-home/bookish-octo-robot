@@ -47,7 +47,7 @@ Built after a successful `/api/chat/query` for policy + ingest.
 | k8sgpt_summary | string? | Truncated findings |
 | tool_evidence_summary | string? | Optional compact tool outcomes |
 | conversation_id | string | For correlation (not secret) |
-| user_id | string | Prefer opaque/hash if stored in metadata |
+| user_id | string | **Conversation history only** — do **not** use for Vestige recall/ingest filters (memory is shared across users per cluster) |
 
 ### MemoryServiceHealth
 
@@ -103,4 +103,9 @@ MemoryRecord --(Vestige graph)--> related MemoryRecords (internal to Vestige)
 ## Scoping
 
 MVP: **shared team memory** per deployment namespace (one Vestige data dir).  
-Metadata SHOULD include `cluster=<name>` when known for better recall filtering; hard multi-tenant isolation is out of scope.
+Memory is **institutional** — all users on the chatbot share findings for a cluster (like a shared ops runbook), not private per-user memory.
+
+- Metadata **MUST** prefer `cluster=<name>` for recall/ingest filtering when known.  
+- Metadata **MUST NOT** filter recall by `user_id` (do not partition institutional findings by who first asked).  
+- Hard multi-tenant user isolation of memory is **out of scope**.  
+- Chat **conversation history** remains per-user path on disk; that is separate from Vestige memory.

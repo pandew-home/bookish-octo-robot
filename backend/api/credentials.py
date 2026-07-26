@@ -27,8 +27,26 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/credentials", tags=["credentials"])
 
-# Global credential store instance
-credential_store = CredentialStore(max_capacity=1000, ttl_seconds=3600)
+def _on_session_credentials_removed(session_id: str) -> None:
+    """Tear down session K8s clients/caches when credentials are scrubbed."""
+    try:
+        from api.clusters import clear_session_cluster
+
+        clear_session_cluster(session_id)
+    except Exception as e:
+        logger.warning(
+            "Failed to clear session cluster state for %s...: %s",
+            session_id[:8],
+            e,
+        )
+
+
+# Global credential store instance — on remove/expire, empty session K8s clients.
+credential_store = CredentialStore(
+    max_capacity=1000,
+    ttl_seconds=3600,
+    on_session_removed=_on_session_credentials_removed,
+)
 
 
 def get_target_eks_cluster_name() -> Optional[str]:
@@ -142,7 +160,14 @@ def get_session_id(
     """
     session_id = x_session_id or session_id_cookie
     if not session_id:
-        raise HTTPException(status_code=401, detail="Session ID required")
+        from utils.error_handler import AUTH_REQUIRED, api_error
+
+        raise api_error(
+            AUTH_REQUIRED,
+            "Session ID required. Please log in again.",
+            401,
+            recoverable=False,
+        )
     return session_id
 
 
@@ -533,31 +558,36 @@ async def get_credential_status(session_id: str = Depends(get_session_id)):
 @router.delete("/")
 async def delete_credentials(session_id: str = Depends(get_session_id)):
     """
-    Delete stored credentials (AWS or kubeconfig).
-    
-    Args:
-        session_id: Session ID from header or HttpOnly cookie
-        
-    Returns:
-        Success message
+    Delete stored credentials (AWS or kubeconfig) and tear down session state.
+
+    Scrubs secret material, closes per-session K8s clients (bearer/CA),
+    invalidates cluster cache, and clears the session cookie.
     """
     try:
+        # Always clear cluster clients first so leftover handles cannot outlive
+        # a missing credential row (e.g. already-expired store entry).
+        from api.clusters import clear_session_cluster
+
+        clear_session_cluster(session_id)
+
         removed = credential_store.remove(session_id)
-        
+
         if removed:
             logger.info(f"Removed credentials for session {session_id[:8]}...")
             return _clear_session_cookie(
                 {"success": True, "message": "Credentials removed successfully"}
             )
-        else:
-            return {"success": False, "message": "No credentials found for session"}
-            
+        # No store entry — still clear cookie so browser cannot reuse session id.
+        return _clear_session_cookie(
+            {"success": False, "message": "No credentials found for session"}
+        )
+
     except Exception as e:
         logger.error(f"Error deleting credentials: {e}")
         raise handle_generic_error(
             e,
             "deleting credentials",
-            "Unable to delete credentials. Please try again."
+            "Unable to delete credentials. Please try again.",
         )
 
 

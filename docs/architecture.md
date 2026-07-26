@@ -1,8 +1,6 @@
 # Architecture
 
-DevOps Chatbot v2.0 separates **continuous cluster diagnostics** (K8sGPT) from the **user-facing assistant** (React + FastAPI + FAISS RAG), delivered via **Argo CD + Helm**.
-
-**Baseline:** tag `faiss-202607` on `main`.
+DevOps Chatbot v2.0 separates **continuous cluster diagnostics** (K8sGPT) from the **user-facing assistant** (React + FastAPI + Vestige memory), delivered via **Argo CD + Helm**.
 
 ## System overview
 
@@ -13,11 +11,11 @@ DevOps Chatbot v2.0 separates **continuous cluster diagnostics** (K8sGPT) from t
 │  K8sGPT Operator + Instance  →  Result CRDs (periodic)     │
 │  Grafana Alloy → Loki → Grafana (observability path)       │
 │  Argo CD (in-cluster) reconciles apps from this git repo   │
-│                                                            │
-│  ┌─ devops-chatbot (Helm) ──────────────────────────────┐  │
-│  │  nginx + static React UI                             │  │
-│  │  FastAPI backend (agentic tools + RAG)               │  │
-│  │  PVC: knowledge base + FAISS index                   │  │
+│  ┌─ devops-chatbot (Helm, single image) ────────────────┐  │
+│  │  static React UI + FastAPI (agentic tools)           │  │
+│  │  colocated Vestige MCP (supervisord → :3928)         │  │
+│  │  kubeApi policy layer (authorize + redact)           │  │
+│  │  PVC /data → conversations + /data/vestige           │  │
 │  └──────────────────────────────────────────────────────┘  │
 └────────────────────────────┬───────────────────────────────┘
                              │ LLM provider (OpenRouter / OpenAI / …)
@@ -37,7 +35,7 @@ Users authenticate with **Kion temporary AWS credentials** (and/or kubeconfig). 
 ### Frontend (`frontend/`)
 
 - React 18 + TypeScript SPA
-- Auth forms (AWS / kubeconfig), weather widget, chat UI, solution save
+- Auth forms (AWS / kubeconfig), weather widget, chat UI
 - Hooks for credentials, cluster, chat, weather
 - Playwright specs under `frontend/e2e/`
 
@@ -47,13 +45,14 @@ Users authenticate with **Kion temporary AWS credentials** (and/or kubeconfig). 
 |------|------|
 | `api/credentials.py` | Validate/store creds; session cookie + header |
 | `api/clusters.py` | Discover/switch clusters; single-cluster filter |
-| `api/chat.py` | Chat entry; agent run; mutation approval detection |
+| `api/chat.py` | Chat entry; agent run; memory recall/ingest |
 | `api/weather.py` | Health summary from K8sGPT Results |
-| `api/solutions.py` | Knowledge base write path |
-| `agentic_engine.py` / `agent_tools.py` | Tool-using agent; approval for mutations |
+| `agentic_engine.py` / `agent_tools.py` | Tool-using agent; kubeApi policy enforcement |
+| `memory/` | MemoryPort interface + Vestige MCP client + scrub |
+| `kube_policy/` | Authorize + redact wrapper for K8s API calls |
 | `skills/` + `skills.py` | Skill packs (k8s-check, triage skills, …) |
 | `prompts/system.md` | System prompt template (versioned in git) |
-| `rag_integration.py` | KB/FAISS + LLM orchestration |
+| `rag_integration.py` | LLM client singleton (memory via MemoryPort) |
 | `k8sgpt_reader.py` | Result CRD parsing |
 | `weather_calculator.py` | Map findings → weather status |
 | `conversation_history.py` | Per-session/cluster history |
@@ -61,8 +60,8 @@ Users authenticate with **Kion temporary AWS credentials** (and/or kubeconfig). 
 ### Shared libraries (`libs/`)
 
 - **devops-k8s** — cluster/client helpers  
-- **devops-kb** — knowledge base storage  
-- **devops-rag** — embeddings / FAISS / LLM client pieces  
+- **devops-rag** — LLM client abstraction (OpenAI/Anthropic/Ollama)  
+
 
 Local dev installs these editable from `backend/`. Production image installs or vendors as defined by the root `Dockerfile`.
 
@@ -104,15 +103,39 @@ Raw manifests under `k8s/` are **legacy/reference**; prefer Helm + Argo CD for n
 
 ### Chat (agentic)
 
-1. User query → `AgentEngine` with K8s tools, skills, K8sGPT summary, KB hits.  
-2. Default: observe/diagnose; mutating API calls require human approval phrases/path.  
-3. Response structured per `prompts/system.md` (assessment, hypothesis, remediation).  
-4. History updated for the session/cluster.
+1. User query → `AgentEngine` with K8s tools, skills, K8sGPT summary, Vestige memory recall.  
+2. Default: observe/diagnose; mutations gated by **kubeApi policy** (Helm/env defaults + user creds).  
+3. Free-text recommendations are always allowed.  
+4. Response structured per `prompts/system.md` (assessment, hypothesis, remediation).  
+5. History updated for the session/cluster; durable turns trigger automatic memory ingest.
 
-### Knowledge base
+### Vestige memory
 
-1. Solutions saved via API → PVC-backed store.  
-2. FAISS index updated for semantic retrieval on later chats.
+1. Vestige MCP binary is **baked into the chatbot image** and started by supervisord on `127.0.0.1:3928`.  
+2. SQLite + embedding cache live on the chatbot PVC at `/data/vestige`.  
+3. On each chat turn, MemoryPort recalls prior lessons; durable turns auto-ingest.  
+4. `MEMORY_BACKEND=vestige` (Helm/image product default) or `noop` to disable client use. When the env var is **unset**, the factory defaults to `noop` for safe local boot.
+
+## API errors (backend → frontend)
+
+Failed HTTP responses use a standard envelope (plus `detail` mirror for older clients):
+
+```json
+{
+  "error": {
+    "code": "rbac_forbidden",
+    "message": "User-facing sentence.",
+    "details": null,
+    "request_id": "a1b2c3d4",
+    "recoverable": true
+  },
+  "detail": "User-facing sentence."
+}
+```
+
+- `X-Request-Id` is set on every response (middleware).
+- Chat soft failures stay **HTTP 200** with structured `errors[]` so the thread is not derailed.
+- Recoverable chat errors keep history; the user can rephrase and continue without re-login.
 
 ## Security architecture (summary)
 
@@ -120,14 +143,16 @@ Raw manifests under `k8s/` are **legacy/reference**; prefer Helm + Argo CD for n
 - Session cookie HttpOnly; header still supported for clients.  
 - Pod: non-root, dropped caps, seccomp (see chart/templates).  
 - Secrets out of band; chart does not embed API keys in git.  
-- Mutation gated in product; cluster RBAC should still least-privilege the service account for production.
+- **kubeApi policy** (`backend/kube_policy/`) is the authorization chokepoint: authorize + redact on every K8s API wrapper call. Defaults: mutate-off, GET-oriented, Secret identify-only.  
+- Free-text recommendations are not gated — only mutation execution is policy-controlled.  
+- Cluster RBAC least-privileges the pod ServiceAccount to **K8sGPT Result CRDs only** (`core.k8sgpt.ai/results`). Live diagnostics use per-session user credentials after cluster select; logout/expiry scrubs secrets and closes session clients.
 
 See [security.md](security.md).
 
 ## Scalability notes
 
 - UI/API pods are largely stateless except **in-memory** credentials and conversation cache — multi-replica needs sticky sessions or external session/cred store (not default).  
-- FAISS/KB on PVC: use `ReadWriteMany` (e.g. Longhorn) if scaling replicas.  
+- Vestige is colocated (same pod/image); prefer `replicaCount: 1` for SQLite single-writer.  
 - Resource requests/limits tuned in `helm/devops-chatbot/values.yaml` for small co-tenant nodes.
 
 ## Related

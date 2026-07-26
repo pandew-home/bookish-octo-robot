@@ -175,7 +175,9 @@ def get_k8s_clients(creds: StoredCredentials, cluster: Dict[str, Any]) -> Dict[s
             'networking_v1': k8s_client.NetworkingV1Api(api_client),
             'rbac_v1': k8s_client.RbacAuthorizationV1Api(api_client),
             '_api_client': api_client,
-            '_ca_cert_path': ca_cert_path  # Store for cleanup
+            '_ca_cert_path': ca_cert_path,  # Store for cleanup
+            '_auth_mode': 'aws',
+            '_cluster_name': cluster_name,
         }
         
         logger.info(f"Created K8s API clients for cluster {cluster_name}")
@@ -193,28 +195,139 @@ def get_k8s_clients(creds: StoredCredentials, cluster: Dict[str, Any]) -> Dict[s
         )
 
 
+# EKS get-token tokens last ~60s. Refresh before this age so multi-round agent
+# tool calls never ride a near-expired bearer for the full loop.
+EKS_BEARER_MAX_AGE_SECONDS = 45
+
+
+def refresh_eks_bearer_on_clients(
+    clients: Dict[str, Any],
+    creds: StoredCredentials,
+    cluster_name: str,
+) -> None:
+    """
+    Mint a fresh EKS bearer (60s TTL) onto an existing ApiClient configuration.
+
+    Call at request start and before each K8s tool use so long agent turns do
+    not fail after the initial token expires.
+
+    Raises:
+        RuntimeError: If the session map is torn down (no ApiClient / config).
+            Callers should map this to HTTP 503 so clients re-select / re-auth.
+    """
+    import time
+
+    if clients.get("_closed"):
+        raise RuntimeError(
+            "Cannot refresh EKS bearer: K8s clients were closed "
+            f"(cluster={cluster_name!r})."
+        )
+    api_client = clients.get("_api_client")
+    if api_client is None:
+        raise RuntimeError(
+            "Cannot refresh EKS bearer: session K8s ApiClient is missing "
+            f"(cluster={cluster_name!r}; session may have been cleared)."
+        )
+    conf = getattr(api_client, "configuration", None)
+    if conf is None:
+        raise RuntimeError(
+            "Cannot refresh EKS bearer: ApiClient configuration is missing "
+            f"(cluster={cluster_name!r})."
+        )
+    bearer_token = get_eks_bearer_token(creds, cluster_name)
+    conf.api_key = {"authorization": f"Bearer {bearer_token}"}
+    clients["_token_refreshed_at"] = time.monotonic()
+    clients["_auth_mode"] = "aws"
+    clients["_cluster_name"] = cluster_name
+    logger.debug("Refreshed EKS bearer for cluster %s", cluster_name)
+
+
+def ensure_eks_bearer_fresh(
+    clients: Dict[str, Any],
+    creds: StoredCredentials,
+    cluster_name: str,
+    *,
+    max_age_seconds: float = EKS_BEARER_MAX_AGE_SECONDS,
+) -> bool:
+    """
+    Refresh EKS bearer if missing or older than max_age_seconds.
+
+    Returns True if a refresh was performed, False if still fresh / not AWS.
+    """
+    import time
+
+    # kubeconfig sessions never use EKS tokens.
+    if clients.get("_auth_mode") == "kubeconfig":
+        return False
+    if getattr(creds, "auth_mode", None) not in (None, "aws"):
+        return False
+    if clients.get("_auth_mode") not in (None, "aws"):
+        return False
+
+    last = clients.get("_token_refreshed_at")
+    now = time.monotonic()
+    if isinstance(last, (int, float)) and (now - last) < max_age_seconds:
+        return False
+
+    refresh_eks_bearer_on_clients(clients, creds, cluster_name)
+    return True
+
+
 def cleanup_k8s_clients(clients: Dict[str, Any]) -> None:
     """
-    Clean up Kubernetes API clients and temporary files.
-    
-    Args:
-        clients: Dictionary of K8s clients from get_k8s_clients()
+    Clean up Kubernetes API clients, wipe bearer/config secrets, remove temp files.
+
+    Always empties the clients dict so session maps do not retain live handles
+    or credential material after logout / cluster switch / expiry.
     """
+    if not clients:
+        return
+
+    # Mark closed before wipe so concurrent refresh paths fail closed.
+    clients["_closed"] = True
+
     try:
-        # Close API client
-        if '_api_client' in clients:
-            clients['_api_client'].close()
-        
-        # Remove temporary CA cert file
-        if '_ca_cert_path' in clients:
+        api_client = clients.get("_api_client")
+        if api_client is not None:
+            conf = getattr(api_client, "configuration", None)
+            if conf is not None:
+                # Wipe auth material so GC/residual refs cannot reuse tokens.
+                conf.api_key = {}
+                conf.api_key_prefix = {}
+                for attr in ("password", "username", "api_key"):
+                    if hasattr(conf, attr) and attr != "api_key":
+                        try:
+                            setattr(conf, attr, None)
+                        except Exception:
+                            pass
             try:
-                os.unlink(clients['_ca_cert_path'])
-                logger.debug(f"Cleaned up CA cert file: {clients['_ca_cert_path']}")
+                api_client.close()
+            except Exception as e:
+                logger.warning(f"Error closing K8s API client: {e}")
+
+        ca_path = clients.get("_ca_cert_path")
+        if ca_path:
+            try:
+                os.unlink(ca_path)
+                logger.debug(f"Cleaned up CA cert file: {ca_path}")
             except Exception as e:
                 logger.warning(f"Failed to remove CA cert file: {e}")
-                
+
+        kubeconfig_temp = clients.get("_kubeconfig_temp_path")
+        if kubeconfig_temp:
+            try:
+                os.unlink(kubeconfig_temp)
+                logger.debug(f"Cleaned up temp kubeconfig: {kubeconfig_temp}")
+            except Exception as e:
+                logger.warning(f"Failed to remove temp kubeconfig: {e}")
+
     except Exception as e:
         logger.warning(f"Error during K8s client cleanup: {e}")
+    finally:
+        # Drop all API object references (core_v1, custom_objects, …).
+        # Keep a closed marker so request-held dicts still fail refresh.
+        clients.clear()
+        clients["_closed"] = True
 
 
 class ClusterCache:

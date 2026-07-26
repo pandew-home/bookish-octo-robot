@@ -6,26 +6,32 @@ It initializes the FastAPI application and registers all API routers.
 
 Requirements: 15.2, 16.6, 16.7, 17.5
 """
+import asyncio
 import logging
 import os
 import sys
 from pathlib import Path
-from fastapi import FastAPI, Response
+
+from fastapi import FastAPI, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
-# Import startup validator
 from startup_validator import get_validator, validate_startup
-
-# Import API routers
 from api.credentials import router as credentials_router
 from api.clusters import router as clusters_router
 from api.weather import router as weather_router
-from api.solutions import router as solutions_router
 from api.chat import router as chat_router
-
-# Import metrics
 from utils.metrics import get_metrics
+from utils.error_handler import (
+    AUTH_REQUIRED,
+    INTERNAL_ERROR,
+    VALIDATION_ERROR,
+    error_envelope,
+    log_error,
+)
+from middleware.request_id import REQUEST_ID_HEADER, RequestIdMiddleware, get_request_id
 
 # Configure logging
 logging.basicConfig(
@@ -62,18 +68,116 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=False,  # Auth uses X-Session-ID header, not cookies
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Session-ID"],
+    allow_headers=["Content-Type", "X-Session-ID", "X-Session-Id", REQUEST_ID_HEADER],
+    expose_headers=[REQUEST_ID_HEADER, "X-Error-Code"],
 )
+# Request ID should wrap outer so all responses get the header.
+app.add_middleware(RequestIdMiddleware)
 
 # Register API routers
 logger.info("Registering API routers...")
 app.include_router(credentials_router)
 app.include_router(clusters_router)
 app.include_router(weather_router)
-app.include_router(solutions_router)
 app.include_router(chat_router)
 
 logger.info("API routers registered successfully")
+
+
+def _http_exception_body(exc: StarletteHTTPException) -> dict:
+    """Normalize HTTPException.detail into the standard envelope."""
+    rid = get_request_id()
+    detail = exc.detail
+    if isinstance(detail, dict) and isinstance(detail.get("error"), dict):
+        # Already an envelope (possibly nested under detail from api_error)
+        body = detail
+        if "detail" not in body and isinstance(body["error"].get("message"), str):
+            body = {**body, "detail": body["error"]["message"]}
+        return body
+    if isinstance(detail, dict) and "message" in detail and "code" in detail:
+        return error_envelope(
+            code=str(detail.get("code") or INTERNAL_ERROR),
+            message=str(detail.get("message")),
+            details=detail.get("details"),
+            recoverable=bool(detail.get("recoverable", exc.status_code != 401)),
+            request_id=rid,
+        )
+    message = detail if isinstance(detail, str) else str(detail)
+    code = AUTH_REQUIRED if exc.status_code == 401 else INTERNAL_ERROR
+    if exc.headers and exc.headers.get("X-Error-Code"):
+        code = exc.headers["X-Error-Code"]
+    return error_envelope(
+        code=code,
+        message=message,
+        recoverable=exc.status_code != 401,
+        request_id=rid,
+    )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    body = _http_exception_body(exc)
+    rid = body.get("error", {}).get("request_id") or get_request_id()
+    level = logging.ERROR if exc.status_code >= 500 else logging.WARNING
+    logger.log(
+        level,
+        "request_id=%s status=%s path=%s code=%s",
+        rid,
+        exc.status_code,
+        request.url.path,
+        body.get("error", {}).get("code"),
+    )
+    headers = dict(exc.headers or {})
+    headers[REQUEST_ID_HEADER] = rid
+    if "X-Error-Code" not in headers:
+        headers["X-Error-Code"] = body.get("error", {}).get("code", INTERNAL_ERROR)
+    return JSONResponse(status_code=exc.status_code, content=body, headers=headers)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    rid = get_request_id()
+    errs = exc.errors()
+    fields = []
+    for e in errs[:8]:
+        loc = ".".join(str(x) for x in e.get("loc", []) if x != "body")
+        fields.append(f"{loc}: {e.get('msg', 'invalid')}" if loc else str(e.get("msg")))
+    message = "Invalid request. " + ("; ".join(fields) if fields else "Check your input.")
+    body = error_envelope(
+        code=VALIDATION_ERROR,
+        message=message,
+        details=errs,
+        recoverable=True,
+        request_id=rid,
+    )
+    logger.warning(
+        "request_id=%s status=422 path=%s code=%s",
+        rid,
+        request.url.path,
+        VALIDATION_ERROR,
+    )
+    return JSONResponse(
+        status_code=422,
+        content=body,
+        headers={REQUEST_ID_HEADER: rid, "X-Error-Code": VALIDATION_ERROR},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    rid = get_request_id()
+    log_error(exc, context=f"unhandled {request.method} {request.url.path}", severity="ERROR")
+    body = error_envelope(
+        code=INTERNAL_ERROR,
+        message="An unexpected error occurred. Please try again.",
+        recoverable=True,
+        request_id=rid,
+    )
+    return JSONResponse(
+        status_code=500,
+        content=body,
+        headers={REQUEST_ID_HEADER: rid, "X-Error-Code": INTERNAL_ERROR},
+    )
 
 
 @app.get("/api/health")
@@ -213,6 +317,30 @@ async def startup_event():
     
     logger.info("Startup complete - ready to accept requests")
 
+    from kube_policy import init_policy
+
+    policy = init_policy()
+    logger.info("KubeApiPolicy loaded: allowRead=%s allowMutate=%s", policy.allowRead, policy.allowMutate)
+
+    # Periodic scrub of expired credentials + session K8s clients (P1).
+    async def _credential_cleanup_loop() -> None:
+        from api.credentials import credential_store
+
+        while True:
+            try:
+                await asyncio.sleep(60)
+                removed = credential_store.cleanup_expired()
+                if removed:
+                    logger.info("Expired credential cleanup removed %s session(s)", removed)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.warning("Credential cleanup loop error: %s", exc)
+
+    app.state.credential_cleanup_task = asyncio.create_task(
+        _credential_cleanup_loop(), name="credential-cleanup"
+    )
+
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -224,12 +352,36 @@ async def shutdown_event():
     logger.info("=" * 80)
     logger.info("DevOps Chatbot v2.0 - Shutting down")
     logger.info("=" * 80)
-    
-    # TODO: Add cleanup tasks
-    # - Close K8s client connections
-    # - Cleanup temporary files
-    # - Flush logs
-    
+
+    task = getattr(app.state, "credential_cleanup_task", None)
+    if task is not None:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    # Scrub remaining sessions (credentials + K8s clients) on process exit.
+    try:
+        from api.credentials import credential_store
+        from api.clusters import clear_session_cluster
+
+        stats = credential_store.get_stats()
+        # Remove all active sessions via store.remove (scrubs + on_session_removed).
+        # Collect ids without holding lock across clear.
+        with credential_store._lock:
+            session_ids = list(credential_store._store.keys())
+        for sid in session_ids:
+            credential_store.remove(sid)
+            clear_session_cluster(sid)
+        logger.info(
+            "Shutdown scrubbed %s session(s) (was total=%s)",
+            len(session_ids),
+            stats.get("total"),
+        )
+    except Exception as exc:
+        logger.warning("Shutdown session scrub failed: %s", exc)
+
     logger.info("Shutdown complete")
 
 

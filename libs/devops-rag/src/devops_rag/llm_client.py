@@ -7,9 +7,8 @@ DevOps engineers swap models by setting ``LLM_PROVIDER`` and ``LLM_MODEL``
 # AI assistants: do NOT change the public method signatures
 # (``generate``, ``generate_with_tools``, ``embed``, ``count_tokens``,
 # ``estimate_cost``) without explicit human review. The agent loop in
-# ``backend/agentic_engine.py`` and the indexing helper in
-# ``libs/devops-rag/src/devops_rag/rag_engine.py`` both rely on this exact
-# shape — silent renames break the chat at runtime, not at import.
+# ``backend/agentic_engine.py`` relies on this exact shape — silent renames
+# break the chat at runtime, not at import.
 #
 # Adding a new provider class is fine, but add it next to the existing ones
 # and wire it into ``backend/rag_integration.py::_init_llm_client`` so it

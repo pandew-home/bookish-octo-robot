@@ -1,586 +1,113 @@
-"""
-Unit tests for RAG integration.
-"""
+"""Unit tests for LLM (RAGIntegration) client wiring."""
+from unittest.mock import Mock, patch
+
 import pytest
-from unittest.mock import Mock, MagicMock, patch
-from datetime import datetime, timedelta
 
-from rag_integration import RAGIntegration, get_rag_integration
-
-
-@pytest.fixture
-def mock_llm_client():
-    """Create mock LLM client."""
-    client = Mock()
-    client.generate.return_value = "This is a test response"
-    client.embed.return_value = [0.1] * 1536  # Mock embedding
-    client.count_tokens.return_value = 10
-    client.estimate_cost.return_value = 0.001
-    client.total_prompt_tokens = 100
-    client.total_completion_tokens = 50
-    return client
-
-
-@pytest.fixture
-def mock_kb():
-    """Create mock knowledge base."""
-    kb = Mock()
-    kb.get_all_documents.return_value = [
-        {
-            'id': 'doc1',
-            'title': 'Test Document',
-            'content': 'This is test content',
-            'type': 'solution'
-        }
-    ]
-    return kb
-
-
-@pytest.fixture
-def mock_vector_store():
-    """Create mock vector store."""
-    store = Mock()
-    store.search.return_value = [
-        {
-            'id': 'doc1',
-            'title': 'Test Document',
-            'content': 'This is test content',
-            'score': 0.95
-        }
-    ]
-    return store
-
-
-@pytest.fixture
-def mock_rag_engine():
-    """Create mock RAG engine."""
-    engine = Mock()
-    engine.process_query.return_value = {
-        'query': 'test query',
-        'response': 'test response',
-        'citations': [],
-        'errors': [],
-        'metadata': {}
-    }
-    return engine
+from rag_integration import RAGIntegration, get_rag_integration, reset_rag_integration
 
 
 class TestRAGIntegration:
-    """Test RAGIntegration class."""
+    """Test RAGIntegration LLM-only class."""
 
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_initialization_openai(self, mock_rag, mock_openai):
-        """Test RAG integration initialization with OpenAI."""
+    @patch("rag_integration.OpenAIClient")
+    def test_initialization_openai(self, mock_openai):
         mock_openai.return_value = Mock()
-        mock_rag.return_value = Mock()
-
         rag = RAGIntegration(
             llm_provider="openai",
             llm_model="gpt-3.5-turbo",
             api_key="test-key",
         )
-
         assert rag.llm_provider == "openai"
         assert rag.llm_model == "gpt-3.5-turbo"
         mock_openai.assert_called_once()
 
-    @patch('rag_integration.AnthropicClient')
-    @patch('rag_integration.RAGEngine')
-    def test_initialization_anthropic(self, mock_rag, mock_anthropic):
-        """Test RAG integration initialization with Anthropic."""
+    @patch("rag_integration.AnthropicClient")
+    def test_initialization_anthropic(self, mock_anthropic):
         mock_anthropic.return_value = Mock()
-        mock_rag.return_value = Mock()
-
         rag = RAGIntegration(
             llm_provider="anthropic",
             llm_model="claude-3-sonnet",
-            api_key="test-key"
+            api_key="test-key",
         )
-
         assert rag.llm_provider == "anthropic"
         mock_anthropic.assert_called_once()
 
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_initialization_without_kb(self, mock_rag, mock_openai):
-        """Test initialization without knowledge base."""
-        mock_openai.return_value = Mock()
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path=None
-        )
-
-        assert rag.kb is None
-        assert rag.vector_store is None
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.VectorStore')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    @patch('rag_integration.os.path.exists', return_value=True)
-    @patch('rag_integration.os.path.isdir', return_value=True)
-    @patch('rag_integration.os.access', return_value=True)
-    def test_search_knowledge_base(
-        self, mock_access, mock_isdir, mock_exists,
-        mock_rag, mock_kb_class, mock_vector_class, mock_openai
-    ):
-        """Test searching knowledge base."""
-        mock_llm = Mock()
-        mock_llm.embed.return_value = [0.1] * 1536
-        mock_openai.return_value = mock_llm
-
-        mock_kb = Mock()
-        mock_kb.get_all_documents.return_value = []
-        mock_kb_class.return_value = mock_kb
-
-        mock_vector = Mock()
-        mock_vector.search.return_value = [
-            {'id': 'doc1', 'title': 'Test', 'content': 'Test content'}
-        ]
-        mock_vector_class.return_value = mock_vector
-
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/path/to/kb"
-        )
-
-        results = rag.search_knowledge_base("test query", top_k=5)
-
-        assert len(results) == 1
-        assert results[0]['id'] == 'doc1'
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_search_knowledge_base_without_vector_store(self, mock_rag, mock_openai):
-        """Test searching KB without vector store returns empty."""
-        mock_openai.return_value = Mock()
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        results = rag.search_knowledge_base("test query")
-
-        assert results == []
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_get_token_usage(self, mock_rag, mock_openai):
-        """Test getting token usage statistics."""
+    @patch("rag_integration.OpenAIClient")
+    def test_get_token_usage(self, mock_openai):
         mock_llm = Mock()
         mock_llm.total_prompt_tokens = 100
         mock_llm.total_completion_tokens = 50
         mock_openai.return_value = mock_llm
-        mock_rag.return_value = Mock()
-
         rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
         usage = rag.get_token_usage()
+        assert usage["prompt_tokens"] == 100
+        assert usage["completion_tokens"] == 50
+        assert usage["total_tokens"] == 150
 
-        assert usage['prompt_tokens'] == 100
-        assert usage['completion_tokens'] == 50
-        assert usage['total_tokens'] == 150
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_estimate_cost(self, mock_rag, mock_openai):
-        """Test estimating API cost."""
+    @patch("rag_integration.OpenAIClient")
+    def test_estimate_cost(self, mock_openai):
         mock_llm = Mock()
         mock_llm.total_prompt_tokens = 1000
         mock_llm.total_completion_tokens = 500
         mock_llm.estimate_cost.return_value = 0.0025
         mock_openai.return_value = mock_llm
-        mock_rag.return_value = Mock()
-
         rag = RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        cost = rag.estimate_cost()
-
-        assert cost == 0.0025
+        assert rag.estimate_cost() == 0.0025
         mock_llm.estimate_cost.assert_called_once_with(1000, 500)
 
-
-class TestGetRAGIntegration:
-    """Test get_rag_integration singleton function."""
-
-    @patch('rag_integration.RAGIntegration')
-    def test_get_rag_integration_creates_instance(self, mock_rag_class):
-        """Test that get_rag_integration creates instance when none exists."""
-        import rag_integration
-        rag_integration._rag_integration = None
-
-        mock_instance = Mock()
-        mock_rag_class.return_value = mock_instance
-
-        result = get_rag_integration(
-            llm_provider="openai",
-            api_key="test-key"
-        )
-
-        assert result == mock_instance
-        mock_rag_class.assert_called_once()
-
-        # Cleanup
-        rag_integration._rag_integration = None
-
-    @patch('rag_integration.RAGIntegration')
-    def test_get_rag_integration_returns_existing(self, mock_rag_class):
-        """Test that get_rag_integration returns existing instance (singleton)."""
-        import rag_integration
-        existing_instance = Mock()
-        rag_integration._rag_integration = existing_instance
-
-        result = get_rag_integration()
-
-        assert result == existing_instance
-        mock_rag_class.assert_not_called()
-
-        # Cleanup
-        rag_integration._rag_integration = None
-
-
-class TestEnhancedErrorHandling:
-    """Test enhanced error handling in RAG integration."""
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_init_llm_client_import_error(self, mock_rag, mock_openai):
-        """Test LLM client initialization with import error."""
-        mock_openai.side_effect = ImportError("No module named 'openai'")
-
-        with pytest.raises(ValueError) as exc_info:
-            RAGIntegration(llm_provider="openai", api_key="test-key")
-
-        assert "library not available" in str(exc_info.value).lower()
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_init_llm_client_api_key_error(self, mock_rag, mock_openai):
-        """Test LLM client initialization with API key error."""
-        mock_openai.side_effect = Exception("Invalid API key")
-
-        with pytest.raises(ValueError) as exc_info:
-            RAGIntegration(llm_provider="openai", api_key="invalid")
-
-        # Either the specific message or the generic wrapping contains "api key"
-        assert "api key" in str(exc_info.value).lower() or "llm client" in str(exc_info.value).lower()
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    def test_init_kb_file_not_found(self, mock_rag, mock_kb_class, mock_openai):
-        """Test knowledge base initialization with file not found."""
+    @patch("rag_integration.OpenAIClient")
+    def test_get_initialization_status(self, mock_openai):
         mock_openai.return_value = Mock()
-        mock_kb_class.side_effect = FileNotFoundError("KB path not found")
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/nonexistent/path"
-        )
-
-        # Should handle gracefully — path doesn't exist so _init_knowledge_base
-        # returns None before even calling KnowledgeBase()
-        assert rag.kb is None
-        assert rag.vector_store is None
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    def test_init_kb_permission_error(self, mock_rag, mock_kb_class, mock_openai):
-        """Test knowledge base initialization with permission error."""
-        mock_openai.return_value = Mock()
-        mock_kb_class.side_effect = PermissionError("Permission denied")
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/restricted/path"
-        )
-
-        assert rag.kb is None
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.VectorStore')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    @patch('rag_integration.os.path.exists', return_value=True)
-    @patch('rag_integration.os.path.isdir', return_value=True)
-    @patch('rag_integration.os.access', return_value=True)
-    def test_init_vector_store_import_error(
-        self, mock_access, mock_isdir, mock_exists,
-        mock_rag, mock_kb_class, mock_vector_class, mock_openai
-    ):
-        """Test vector store initialization with FAISS import error."""
-        mock_openai.return_value = Mock()
-        mock_kb = Mock()
-        mock_kb.get_all_documents.return_value = []
-        mock_kb_class.return_value = mock_kb
-        mock_vector_class.side_effect = ImportError("No module named 'faiss'")
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/path/to/kb"
-        )
-
-        assert rag.vector_store is None
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.VectorStore')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    @patch('rag_integration.os.path.exists', return_value=True)
-    @patch('rag_integration.os.path.isdir', return_value=True)
-    @patch('rag_integration.os.access', return_value=True)
-    def test_vector_store_embed_error_handling(
-        self, mock_access, mock_isdir, mock_exists,
-        mock_rag, mock_kb_class, mock_vector_class, mock_openai
-    ):
-        """Test vector store handles embedding errors gracefully (partial indexing)."""
-        mock_llm = Mock()
-        mock_llm.embed.side_effect = [
-            [0.1] * 1536,           # Doc 1 succeeds
-            Exception("Embedding failed"),  # Doc 2 fails
-            [0.1] * 1536            # Doc 3 succeeds
-        ]
-        mock_openai.return_value = mock_llm
-
-        mock_kb = Mock()
-        mock_kb.get_all_documents.return_value = [
-            {'id': 'doc1', 'content': 'test1'},
-            {'id': 'doc2', 'content': 'test2'},
-            {'id': 'doc3', 'content': 'test3'}
-        ]
-        mock_kb_class.return_value = mock_kb
-
-        mock_vector = Mock()
-        mock_vector_class.return_value = mock_vector
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/path/to/kb"
-        )
-
-        # 2 out of 3 documents should have been indexed (doc2 failed)
-        assert mock_vector.add_document.call_count == 2
-
-
-class TestImprovedInitialization:
-    """Test improved initialization with better error handling."""
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_initialization_tracks_warnings(self, mock_rag, mock_openai):
-        """Test that initialization warnings are tracked."""
-        mock_openai.return_value = Mock()
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path=None  # No KB path
-        )
-
-        assert hasattr(rag, 'initialization_warnings')
-        assert isinstance(rag.initialization_warnings, list)
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    @patch('rag_integration.os.path.exists')
-    def test_kb_init_path_not_exists(self, mock_exists, mock_rag, mock_kb_class, mock_openai):
-        """Test KB initialization when path doesn't exist."""
-        mock_openai.return_value = Mock()
-        mock_exists.return_value = False
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/nonexistent/path"
-        )
-
-        assert rag.kb is None
-        assert any("Knowledge base initialization failed" in w for w in rag.initialization_warnings)
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    @patch('rag_integration.os.path.exists')
-    @patch('rag_integration.os.path.isdir')
-    def test_kb_init_path_not_directory(self, mock_isdir, mock_exists, mock_rag, mock_kb_class, mock_openai):
-        """Test KB initialization when path is not a directory."""
-        mock_openai.return_value = Mock()
-        mock_exists.return_value = True
-        mock_isdir.return_value = False
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/path/to/file.txt"
-        )
-
-        assert rag.kb is None
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    @patch('rag_integration.os.path.exists')
-    @patch('rag_integration.os.path.isdir')
-    @patch('rag_integration.os.access')
-    def test_kb_init_no_read_permission(self, mock_access, mock_isdir, mock_exists, mock_rag, mock_kb_class, mock_openai):
-        """Test KB initialization when no read permission."""
-        mock_openai.return_value = Mock()
-        mock_exists.return_value = True
-        mock_isdir.return_value = True
-        mock_access.return_value = False
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/restricted/path"
-        )
-
-        assert rag.kb is None
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    @patch('rag_integration.os.path.exists')
-    @patch('rag_integration.os.path.isdir')
-    @patch('rag_integration.os.access')
-    def test_kb_init_empty_kb(self, mock_access, mock_isdir, mock_exists, mock_rag, mock_kb_class, mock_openai):
-        """Test KB initialization with empty knowledge base still sets rag.kb."""
-        mock_openai.return_value = Mock()
-        mock_exists.return_value = True
-        mock_isdir.return_value = True
-        mock_access.return_value = True
-
-        mock_kb = Mock()
-        mock_kb.get_all_documents.return_value = []
-        mock_kb_class.return_value = mock_kb
-
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/path/to/kb"
-        )
-
-        # KB should init even when empty
-        assert rag.kb is not None
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.VectorStore')
-    @patch('rag_integration.KnowledgeBase')
-    @patch('rag_integration.RAGEngine')
-    @patch('rag_integration.os.path.exists')
-    @patch('rag_integration.os.path.isdir')
-    @patch('rag_integration.os.access')
-    def test_vector_store_tracks_failed_documents(
-        self, mock_access, mock_isdir, mock_exists,
-        mock_rag, mock_kb_class, mock_vector_class, mock_openai
-    ):
-        """Test that warning is added when documents fail to index."""
-        mock_llm = Mock()
-        mock_llm.embed.side_effect = [
-            [0.1] * 1536,               # Doc 1 succeeds
-            Exception("Embedding failed"),  # Doc 2 fails
-            [0.1] * 1536                # Doc 3 succeeds
-        ]
-        mock_openai.return_value = mock_llm
-
-        mock_exists.return_value = True
-        mock_isdir.return_value = True
-        mock_access.return_value = True
-
-        mock_kb = Mock()
-        mock_kb.get_all_documents.return_value = [
-            {'id': 'doc1', 'content': 'test1'},
-            {'id': 'doc2', 'content': 'test2'},
-            {'id': 'doc3', 'content': 'test3'}
-        ]
-        mock_kb_class.return_value = mock_kb
-
-        mock_vector = Mock()
-        mock_vector_class.return_value = mock_vector
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
-            api_key="test-key",
-            kb_path="/path/to/kb"
-        )
-
-        assert any("failed to index" in w.lower() for w in rag.initialization_warnings)
-        assert mock_vector.add_document.call_count == 2
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_get_initialization_status(self, mock_rag, mock_openai):
-        """Test getting initialization status."""
-        mock_openai.return_value = Mock()
-        mock_rag.return_value = Mock()
-
         rag = RAGIntegration(
             llm_provider="openai",
             llm_model="gpt-4",
-            api_key="test-key"
-        )
-
-        status = rag.get_initialization_status()
-
-        assert 'llm_client' in status
-        assert status['llm_client']['initialized'] is True
-        assert status['llm_client']['provider'] == 'openai'
-        assert status['llm_client']['model'] == 'gpt-4'
-        assert 'knowledge_base' in status
-        assert 'vector_store' in status
-        assert 'rag_engine' in status
-        assert 'warnings' in status
-        assert 'fully_functional' in status
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_initialization_status_with_warnings(self, mock_rag, mock_openai):
-        """Test initialization status when there are warnings."""
-        mock_openai.return_value = Mock()
-        mock_rag.return_value = Mock()
-
-        rag = RAGIntegration(
-            llm_provider="openai",
             api_key="test-key",
-            kb_path="/nonexistent"  # Will cause warning
         )
-
         status = rag.get_initialization_status()
+        assert status["llm_client"]["initialized"] is True
+        assert status["llm_client"]["provider"] == "openai"
+        assert status["llm_client"]["model"] == "gpt-4"
+        assert "memory" in status
+        assert status["fully_functional"] is True
 
-        assert len(status['warnings']) > 0
-        assert status['fully_functional'] is False
-
-    @patch('rag_integration.OpenAIClient')
-    @patch('rag_integration.RAGEngine')
-    def test_rag_engine_init_failure_raises(self, mock_rag_class, mock_openai):
-        """Test that RAG engine initialization failure raises ValueError."""
-        mock_openai.return_value = Mock()
-        mock_rag_class.side_effect = Exception("RAG engine failed")
-
+    @patch("rag_integration.OpenAIClient")
+    def test_init_llm_client_import_error(self, mock_openai):
+        mock_openai.side_effect = ImportError("No module named 'openai'")
         with pytest.raises(ValueError) as exc_info:
             RAGIntegration(llm_provider="openai", api_key="test-key")
+        assert "library not available" in str(exc_info.value).lower()
 
-        assert "rag engine" in str(exc_info.value).lower()
+    @patch("rag_integration.OpenAIClient")
+    def test_init_llm_client_api_key_error(self, mock_openai):
+        mock_openai.side_effect = Exception("Invalid API key")
+        with pytest.raises(ValueError) as exc_info:
+            RAGIntegration(llm_provider="openai", api_key="invalid")
+        assert "api key" in str(exc_info.value).lower() or "llm client" in str(
+            exc_info.value
+        ).lower()
+
+
+class TestGetRAGIntegration:
+    """Singleton factory."""
+
+    def teardown_method(self):
+        reset_rag_integration()
+
+    @patch("rag_integration.RAGIntegration")
+    def test_get_rag_integration_creates_instance(self, mock_rag_class):
+        reset_rag_integration()
+        mock_instance = Mock()
+        mock_rag_class.return_value = mock_instance
+        result = get_rag_integration(llm_provider="openai", api_key="test-key")
+        assert result == mock_instance
+        mock_rag_class.assert_called_once()
+
+    @patch("rag_integration.RAGIntegration")
+    def test_get_rag_integration_returns_existing(self, mock_rag_class):
+        existing = Mock()
+        import rag_integration
+
+        rag_integration._rag_integration = existing
+        result = get_rag_integration()
+        assert result == existing
+        mock_rag_class.assert_not_called()

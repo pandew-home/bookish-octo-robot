@@ -2,13 +2,13 @@
 
 ## Removed user-facing KB write path
 
-| Surface | Before | After cutover |
-|---------|--------|---------------|
-| UI | `SolutionSubmitDialog` in chat | **Removed** — no Save-to-KB control |
-| Client | `solutionsApi.submitSolution` | **Removed** |
-| API | `POST /api/solutions` (and list if only for KB browser) | **410 Gone** with body `{ "detail": "Knowledge base save removed; memory is automatic via Vestige." }` **or** route deleted if no external clients |
+Never shipped to production — routes and UI were **deleted** entirely (no 410 stub).
 
-Prefer **410** for one release if any external automations called solutions API; then delete.
+| Surface | Status |
+|---------|--------|
+| UI | `SolutionSubmitDialog` **removed** |
+| Client | `solutionsApi` / solution types **removed** |
+| API | `backend/api/solutions.py` **deleted** (no `/api/solutions` or `/api/kb/search`) |
 
 ## Chat API (stable with additive metadata)
 

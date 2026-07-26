@@ -22,7 +22,6 @@ import {
 } from '@mui/material';
 import {
   Send as SendIcon,
-  Save as SaveIcon,
   ContentCopy as CopyIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
@@ -34,9 +33,6 @@ import {
   DeleteSweep as ClearIcon,
 } from '@mui/icons-material';
 import { CredentialBadge } from './CredentialBadge';
-import { SolutionSubmitDialog } from './SolutionSubmitDialog';
-import { solutionsApi } from '../services/api';
-import { Solution } from '../types/solution';
 import { useCredentials } from '../hooks/useCredentials';
 
 // Message interfaces
@@ -67,7 +63,6 @@ interface ChatMessage {
   k8sgptFindings?: ClusterAnalyzerFinding[];
   safetyNotice?: string;
   timestamp: string;
-  savedToKB?: boolean;
   queryType?: string;
   loading?: boolean;
   cluster?: string;
@@ -80,7 +75,6 @@ interface ChatInterfaceProps {
   isAuthenticated: boolean;
   selectedCluster?: string | null;
   onLogin?: () => void;
-  onSaveToKB?: (message: ChatMessage) => void;
   suggestedQueries?: string[];
   messages?: ChatMessage[];
   onMessagesChange?: (messages: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[])) => void;
@@ -94,7 +88,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   isAuthenticated,
   selectedCluster,
   onLogin,
-  onSaveToKB,
   suggestedQueries = [],
   messages: externalMessages,
   onMessagesChange,
@@ -107,8 +100,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [expandedCitations, setExpandedCitations] = useState<Set<string>>(new Set());
   const [expandedFindings, setExpandedFindings] = useState<Set<string>>(new Set());
-  const [solutionDialogOpen, setSolutionDialogOpen] = useState(false);
-  const [selectedMessageForKB, setSelectedMessageForKB] = useState<ChatMessage | null>(null);
   const [menuAnchorEl, setMenuAnchorEl] = useState<null | HTMLElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -247,46 +238,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       setCurrentQuery(query);
       onLogin?.();
     }
-  };
-
-  // Save message to knowledge base
-  const saveToKB = async (message: ChatMessage) => {
-    if (onSaveToKB) {
-      onSaveToKB(message);
-    } else {
-      // Open dialog with message content
-      setSelectedMessageForKB(message);
-      setSolutionDialogOpen(true);
-    }
-  };
-
-  // Handle solution submission from dialog
-  const handleSolutionSubmit = async (solution: Solution) => {
-    try {
-      await solutionsApi.submitSolution(solution);
-      
-      // Mark message as saved if it was from a message
-      if (selectedMessageForKB) {
-        if (onMessagesChange) {
-          onMessagesChange(messages.map(m => 
-            m.id === selectedMessageForKB.id ? { ...m, savedToKB: true } : m
-          ));
-        } else {
-          setInternalMessages(prev => prev.map(m => 
-            m.id === selectedMessageForKB.id ? { ...m, savedToKB: true } : m
-          ));
-        }
-      }
-    } catch (error) {
-      console.error('Failed to save to KB:', error);
-      throw error; // Re-throw to let dialog handle the error
-    }
-  };
-
-  // Handle dialog close
-  const handleSolutionDialogClose = () => {
-    setSolutionDialogOpen(false);
-    setSelectedMessageForKB(null);
   };
 
   // Handle chat actions menu
@@ -552,10 +503,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     formatMessageContent(message.content, message.id)
                   )}
 
-                  {/* Error Alert */}
+                  {/* Turn-scoped hard error (thread continues; composer stays usable) */}
                   {message.errorType && (
                     <Alert
-                      severity="warning"
+                      severity={message.errorType === 'auth_error' ? 'error' : 'warning'}
                       icon={<WarningIcon />}
                       sx={{
                         mt: 2,
@@ -569,24 +520,24 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     >
                       <Typography variant="body2">
                         {message.errorType === 'auth_error' && 'Authentication failed. Please check your credentials and try again.'}
-                        {message.errorType === 'cluster_unreachable' && 'Cluster is not responding. Please verify the cluster is accessible and try again.'}
-                        {message.errorType === 'rate_limited' && 'Rate limit exceeded. Please wait a moment and try again.'}
-                        {message.errorType === 'timeout' && 'Request timed out. The operation took too long to complete.'}
-                        {message.errorType === 'connection_error' && 'Connection failed. Please check your network and cluster connectivity.'}
-                        {message.errorType === 'rbac_forbidden' && 'Permission denied. You may not have the required RBAC permissions for this operation.'}
+                        {message.errorType === 'cluster_unreachable' && 'Cluster is not responding. Please verify the cluster is accessible, then continue this chat.'}
+                        {message.errorType === 'rate_limited' && 'Rate limit exceeded. Wait a moment, then send another message.'}
+                        {message.errorType === 'timeout' && 'Request timed out. Try a narrower question—your history is intact.'}
+                        {message.errorType === 'connection_error' && 'Connection failed. Check your network, then continue this chat.'}
+                        {message.errorType === 'rbac_forbidden' && 'Permission denied for that action. Rephrase or ask for a read-only diagnosis.'}
                       </Typography>
                     </Alert>
                   )}
 
-                  {/* Backend Errors */}
+                  {/* Soft agent warnings on HTTP 200 turns */}
                   {message.backendErrors && message.backendErrors.length > 0 && (
-                    <Alert severity="error" sx={{ mt: 2 }}>
+                    <Alert severity="warning" sx={{ mt: 2 }}>
                       <Typography variant="caption" display="block" sx={{ fontWeight: 'bold', mb: 0.5 }}>
-                        Backend errors ({message.backendErrors.length}):
+                        Notes from this turn ({message.backendErrors.length}):
                       </Typography>
                       {message.backendErrors.map((err, idx) => (
-                        <Typography key={idx} variant="caption" display="block" sx={{ fontFamily: 'monospace' }}>
-                          [{err.severity}] {err.type}: {err.message}
+                        <Typography key={idx} variant="caption" display="block">
+                          {err.message}
                         </Typography>
                       ))}
                     </Alert>
@@ -699,31 +650,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     </Box>
                   )}
 
-                  {/* Save to KB Button */}
-                  {message.role === 'assistant' && !message.loading && !message.savedToKB && isAuthenticated && (
-                    <Box sx={{ mt: 2, textAlign: 'right' }}>
-                      <Button
-                        size="small"
-                        startIcon={<SaveIcon />}
-                        onClick={() => saveToKB(message)}
-                        variant="outlined"
-                      >
-                        Save to KB
-                      </Button>
-                    </Box>
-                  )}
-
-                  {/* Saved indicator */}
-                  {message.savedToKB && (
-                    <Box sx={{ mt: 1 }}>
-                      <Chip 
-                        label="Saved to Knowledge Base" 
-                        size="small" 
-                        color="success" 
-                        variant="outlined"
-                      />
-                    </Box>
-                  )}
                 </Paper>
               ))}
             </Stack>
@@ -803,14 +729,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       </CardContent>
     </Card>
 
-    {/* Solution Submit Dialog */}
-    <SolutionSubmitDialog
-      open={solutionDialogOpen}
-      onClose={handleSolutionDialogClose}
-      onSubmit={handleSolutionSubmit}
-      initialContent={selectedMessageForKB?.content}
-      conversationId={selectedMessageForKB?.id}
-    />
   </>
   );
 };

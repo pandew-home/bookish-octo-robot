@@ -246,6 +246,10 @@ class TestK8sClientFactory:
     def test_cleanup_k8s_clients(self, mock_unlink):
         """Test cleanup of K8s clients and temp files."""
         mock_api_client = MagicMock()
+        mock_conf = MagicMock()
+        mock_conf.api_key = {"authorization": "Bearer tok"}
+        mock_conf.api_key_prefix = {"authorization": "Bearer"}
+        mock_api_client.configuration = mock_conf
         clients = {
             'core_v1': MagicMock(),
             '_api_client': mock_api_client,
@@ -254,11 +258,14 @@ class TestK8sClientFactory:
         
         cleanup_k8s_clients(clients)
         
-        # Verify API client was closed
+        # Verify API client was closed and secrets wiped
         mock_api_client.close.assert_called_once()
+        assert mock_conf.api_key == {}
+        assert mock_conf.api_key_prefix == {}
         
-        # Verify temp file was removed
+        # Verify temp file was removed; closed marker retained for fail-closed refresh
         mock_unlink.assert_called_once_with('/tmp/test-ca.crt')
+        assert clients == {"_closed": True}
 
 
 class TestClusterCache:

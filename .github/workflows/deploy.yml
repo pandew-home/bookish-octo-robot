@@ -283,8 +283,8 @@ jobs:
       - name: Run operator lib tests
         if: github.event.inputs.deploy_only != 'true' && needs.detect.outputs.libs_changed == 'true'
         run: |
-          pip install -e libs/devops-k8s -e libs/devops-kb -e libs/devops-rag
-          python -m pytest libs/devops-k8s/tests libs/devops-kb/tests libs/devops-rag/tests \
+          pip install -e libs/devops-k8s -e libs/devops-rag
+          python -m pytest libs/devops-k8s/tests \
             -v --tb=short -q --no-cov
 
       - name: Setup Node.js
@@ -683,7 +683,7 @@ jobs:
       - name: Run critical unit tests
         run: |
           pip install -r backend/requirements.txt
-          pip install -e libs/devops-k8s -e libs/devops-kb -e libs/devops-rag
+          pip install -e libs/devops-k8s -e libs/devops-rag
           pip install "httpx<0.28"
           cd backend
           echo "=== Running critical security and auth tests ==="

@@ -319,36 +319,6 @@ describe('ChatInterface', () => {
     expect(screen.getByText(/This command will delete resources permanently/)).toBeInTheDocument();
   });
 
-  it('should show Save to KB button on assistant messages', async () => {
-    const mockResponse = {
-      content: 'Test response',
-      citations: [],
-      k8sgpt_findings: [],
-    };
-
-    (global.fetch as jest.Mock).mockResolvedValue({
-      ok: true,
-      json: async () => mockResponse,
-    });
-
-    render(
-      <ChatInterface 
-        isAuthenticated={true}
-        selectedCluster="test-cluster"
-      />
-    );
-
-    const input = screen.getByPlaceholderText('Ask about your cluster...');
-    const sendButton = screen.getByRole('button', { name: '' });
-
-    fireEvent.change(input, { target: { value: 'Test query' } });
-    fireEvent.click(sendButton);
-
-    await waitFor(() => {
-      expect(screen.getByText('Save to KB')).toBeInTheDocument();
-    });
-  });
-
   it('should handle suggested queries', () => {
     const suggestedQueries = [
       'Show me failing pods',

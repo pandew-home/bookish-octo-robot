@@ -9,28 +9,93 @@
 """
 
 import logging
+import os
+import re
 from datetime import datetime
 from typing import Optional
-import re
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Query
 from kubernetes.client.exceptions import ApiException
 from pydantic import BaseModel, Field
 
 from agentic_engine import AgentEngine
 from conversation_history import ConversationHistory
-from k8s_client import get_k8s_client
 from k8sgpt_reader import K8sGPTReader
+from memory import MemoryUnavailableError, get_memory_port
+from memory.policy import is_durable_turn
+from memory.scrub import contains_high_risk_secret, scrub as scrub_text
+from kube_policy import get_policy
 from middleware.rate_limiter import rate_limiter
+from middleware.request_id import get_request_id
 from rag_integration import get_rag_integration
-from utils.error_handler import handle_generic_error
+from utils.error_handler import (
+    AUTH_REQUIRED,
+    CLUSTER_UNREACHABLE,
+    RATE_LIMITED,
+    RBAC_FORBIDDEN,
+    api_error,
+    handle_generic_error,
+    normalize_agent_errors,
+)
+
+# Soft code for "select a cluster before chat tools" (not a hard auth failure).
+CLUSTER_REQUIRED = "cluster_required"
+
+
+def _get_session_cluster_context(session_id: str):
+    """Return (k8s_clients, selected_cluster) for the authenticated session.
+
+    Lazy-imports api.clusters to avoid hard dependency cycles and to keep unit
+    tests free of botocore when they only patch this helper.
+    """
+    from api.clusters import get_k8s_clients_for_session, get_selected_cluster
+
+    return get_k8s_clients_for_session(session_id), get_selected_cluster(session_id)
 
 logger = logging.getLogger(__name__)
+
+_BULLET_RE = re.compile(r"^\s*(?:[-*]\s+|\d+\.\s+)(.*)", re.MULTILINE)
+
+
+def _build_ingest_content(
+    *,
+    cluster_name: str,
+    user_query: str,
+    assistant_response: str,
+) -> str:
+    """Build structured content for Vestige smart_ingest."""
+    bullets = _BULLET_RE.findall(assistant_response)
+    remediation = "\n".join(f"- {b.strip()}" for b in bullets[:10]) if bullets else "(no structured remediation found)"
+    diagnosis = assistant_response[:500] if len(assistant_response) > 500 else assistant_response
+    return (
+        f"cluster: {cluster_name}\n"
+        f"problem: {user_query}\n"
+        f"diagnosis: {diagnosis}\n"
+        f"remediation: {remediation}\n"
+        f"source: devops-chatbot-auto"
+    )
+
+
+def _format_memory_summary(recall_hits: list) -> str:
+    """Format recall hits with per-hit and total length caps."""
+    parts: list[str] = []
+    total = 0
+    for h in recall_hits:
+        content = h.content[:500]
+        part = f"- {content}" + (f" (score={h.score})" if h.score else "")
+        if total + len(part) > 2000:
+            remaining = 2000 - total - len("\n")
+            if remaining > 10:
+                parts.append(part[:remaining])
+            break
+        parts.append(part)
+        total += len(part) + len("\n")
+    return "\n".join(parts)
+
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 conversation_history = ConversationHistory()
-APPROVAL_RE = re.compile(r"\b(approve|approved|confirm|confirmed)\b", re.IGNORECASE)
 
 
 class ChatRequest(BaseModel):
@@ -41,19 +106,15 @@ class ChatRequest(BaseModel):
     conversation_id: Optional[str] = Field(
         None, description="Conversation ID (creates new if not provided)"
     )
+    cluster_name: Optional[str] = Field(
+        None, description="Selected cluster name (per-cluster history + memory scope)"
+    )
+    session_id: Optional[str] = Field(
+        None, description="Legacy body session id (prefer cookie/header)"
+    )
     max_tokens: int = Field(
         500, ge=100, le=2000, description="Maximum tokens for response"
     )
-
-
-def _is_mutation_approval_prompt(query: str) -> bool:
-    """Detect explicit user confirmation to allow mutating Kubernetes API calls."""
-    if not query:
-        return False
-    lowered = query.lower()
-    if not APPROVAL_RE.search(lowered):
-        return False
-    return "change" in lowered or "apply" in lowered or "execute" in lowered or "proceed" in lowered
 
 
 class ChatResponse(BaseModel):
@@ -68,43 +129,132 @@ class ChatResponse(BaseModel):
     metadata: dict = {}
 
 
+def require_chat_session(
+    x_session_id: Optional[str] = Header(None),
+    session_id_cookie: Optional[str] = Cookie(None, alias="session_id"),
+) -> str:
+    """Require session header/cookie and valid stored credentials."""
+    session_id = x_session_id or session_id_cookie
+    if not session_id:
+        raise api_error(
+            AUTH_REQUIRED,
+            "Session ID required. Please log in again.",
+            401,
+            recoverable=False,
+        )
+    # Import lazily so unit tests can patch without loading boto3 at import time.
+    from api.credentials import get_credentials_for_session
+
+    get_credentials_for_session(session_id)
+    return session_id
+
+
 @router.post("/query", response_model=ChatResponse)
-async def process_chat_query(request: ChatRequest) -> ChatResponse:
-    """Process a chat query through the agentic pipeline."""
+async def process_chat_query(
+    request: ChatRequest,
+    session_id: str = Depends(require_chat_session),
+) -> ChatResponse:
+    """Process a chat query through the agentic pipeline (authenticated session required)."""
     try:
-        logger.info("[CHAT_QUERY] user=%s query=%r", request.user_id, request.query[:100])
+
+        cluster_name = (
+            (request.cluster_name or "").strip()
+            or os.environ.get("CLUSTER_NAME")
+            or os.environ.get("IN_CLUSTER_EKS_CLUSTER_NAME")
+            or os.environ.get("EKS_CLUSTER_NAME")
+            or "unknown"
+        )
+
+        logger.info(
+            "[CHAT_QUERY] session=%s user=%s cluster=%s query=%r",
+            session_id[:8],
+            request.user_id,
+            cluster_name,
+            request.query[:100],
+        )
 
         allowed, retry_after, remaining = await rate_limiter.check_rate_limit(
             user_id=request.user_id, max_requests=20, window_seconds=60, endpoint="chat"
         )
         if not allowed:
-            raise HTTPException(
-                status_code=429,
-                detail=f"Rate limit exceeded. Try again in {retry_after} seconds.",
+            raise api_error(
+                RATE_LIMITED,
+                f"Rate limit exceeded. Try again in {retry_after} seconds.",
+                429,
+                recoverable=True,
                 headers={"Retry-After": str(retry_after)},
             )
 
-        k8s_client = get_k8s_client()
-        k8s_clients = k8s_client.get_clients()
-        cluster_version = k8s_client.get_cluster_version()
+        # Live diagnostics use the user's session clients (Kion/EKS or kubeconfig),
+        # not the pod ServiceAccount. SA is limited to K8sGPT Result CRDs.
+        try:
+            k8s_clients, selected_cluster = _get_session_cluster_context(session_id)
+        except HTTPException as exc:
+            if exc.status_code == 400:
+                raise api_error(
+                    CLUSTER_REQUIRED,
+                    "Select a cluster before chatting so diagnostics use your "
+                    "credentials (not the chatbot service account).",
+                    400,
+                    recoverable=True,
+                ) from exc
+            raise
 
-        k8sgpt_reader = K8sGPTReader(k8s_clients["custom_objects"])
-        k8sgpt_results = await k8sgpt_reader.read_results()
-        logger.info("[CHAT_QUERY] %d K8sGPT results", len(k8sgpt_results))
+        if selected_cluster.get("name"):
+            cluster_name = selected_cluster["name"]
+        cluster_version = (
+            selected_cluster.get("version")
+            or selected_cluster.get("kubernetes_version")
+            or "unknown"
+        )
+
+        # K8sGPT Result CRDs: same selected-cluster session clients as live tools
+        # (user RBAC). Do not use host pod SA here — multi-cluster would mix evidence.
+        k8sgpt_results = []
+        try:
+            custom_api = k8s_clients.get("custom_objects")
+            if custom_api is not None:
+                k8sgpt_reader = K8sGPTReader(custom_api)
+                k8sgpt_results = await k8sgpt_reader.read_results()
+                logger.info(
+                    "[CHAT_QUERY] %d K8sGPT results (session cluster)",
+                    len(k8sgpt_results),
+                )
+        except Exception as exc:
+            # Operator absent / RBAC deny on Results — non-fatal; live tools still work.
+            logger.warning(
+                "[CHAT_QUERY] K8sGPT Result read failed (continuing): %s",
+                exc,
+            )
 
         rag = get_rag_integration()
-        kb_results = rag.search_knowledge_base(request.query, top_k=5)
-        logger.info("[CHAT_QUERY] %d KB results", len(kb_results))
+
+        memory_summary = ""
+        memory_degraded = False
+        recall_hits = []
+        try:
+            memory_port = get_memory_port()
+            # Institutional memory: shared across users for this cluster's
+            # findings (not per-user isolation). See specs data-model Scoping.
+            recall_hits = await memory_port.recall(
+                query=request.query,
+                top_k=5,
+                metadata={"cluster": cluster_name},
+            )
+            if recall_hits:
+                memory_summary = _format_memory_summary(recall_hits)
+            logger.info("[CHAT_QUERY] %d memory recall hits", len(recall_hits))
+        except (MemoryUnavailableError, Exception) as exc:
+            memory_degraded = True
+            logger.warning("[CHAT_QUERY] memory recall failed, continuing degraded: %s", exc)
 
         agent = AgentEngine(
             llm_client=rag.llm_client,
             k8sgpt_results=k8sgpt_results,
-            kb_results=kb_results,
             k8s_clients=k8s_clients,
-            kb_search_func=rag.search_knowledge_base,
             cluster_version=cluster_version,
-            execution_mode="execute",
-            require_human_approval=not _is_mutation_approval_prompt(request.query),
+            memory_summary=memory_summary,
+            kube_policy=get_policy(),
         )
         rag_response = await agent.run(query=request.query)
         logger.info("[CHAT_QUERY] agent done: %d chars", len(rag_response["response"]))
@@ -112,7 +262,9 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
         conversation_id = request.conversation_id
         if not conversation_id:
             conversation_id = conversation_history.create_conversation(
-                user_id=request.user_id, title=request.query[:50]
+                user_id=request.user_id,
+                title=request.query[:50],
+                cluster_name=cluster_name,
             )
 
         conversation_history.save_message(
@@ -120,13 +272,54 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
             conversation_id=conversation_id,
             role="user",
             content=request.query,
+            cluster_name=cluster_name,
         )
         conversation_history.save_message(
             user_id=request.user_id,
             conversation_id=conversation_id,
             role="assistant",
             content=rag_response["response"],
+            cluster_name=cluster_name,
         )
+
+        memory_ingested = False
+        memory_ingest_status = "skipped"
+        assistant_response = rag_response["response"]
+        if is_durable_turn(request.query, assistant_response):
+            try:
+                # Refuse ingest when original text has high-risk secrets
+                if contains_high_risk_secret(request.query) or contains_high_risk_secret(
+                    assistant_response
+                ):
+                    memory_ingest_status = "unsafe"
+                    logger.info("[CHAT_QUERY] auto-ingest skipped: high-risk secret in turn")
+                else:
+                    scrubbed_query = scrub_text(request.query)
+                    scrubbed_response = scrub_text(assistant_response)
+                    ingest_content = _build_ingest_content(
+                        cluster_name=cluster_name,
+                        user_query=scrubbed_query,
+                        assistant_response=scrubbed_response,
+                    )
+                    ingest_port = get_memory_port()
+                    result = await ingest_port.ingest(
+                        content=ingest_content,
+                        metadata={
+                            "cluster": cluster_name,
+                            "source": "devops-chatbot-auto",
+                        },
+                    )
+                    memory_ingested = result.ok
+                    memory_ingest_status = result.status or (
+                        "stored" if result.ok else "failed"
+                    )
+                    logger.info(
+                        "[CHAT_QUERY] auto-ingest %s: %s", memory_ingest_status, result
+                    )
+            except (MemoryUnavailableError, Exception) as exc:
+                memory_ingested = False
+                memory_ingest_status = "failed"
+                logger.warning("[CHAT_QUERY] auto-ingest failed (non-blocking): %s", exc)
 
         return ChatResponse(
             query=request.query,
@@ -143,11 +336,16 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
                 for r in k8sgpt_results[:5]
             ],
             token_usage=rag.get_token_usage(),
-            errors=rag_response.get("errors", []),
+            errors=normalize_agent_errors(rag_response.get("errors", [])),
             metadata={
                 "k8sgpt_result_count": len(k8sgpt_results),
                 "rag_metadata": rag_response.get("metadata", {}),
                 "rate_limit_remaining": remaining,
+                "memory_degraded": memory_degraded,
+                "memory_hits": len(recall_hits),
+                "memory_ingested": memory_ingested,
+                "memory_ingest_status": memory_ingest_status,
+                "request_id": get_request_id(),
             },
         )
 
@@ -156,29 +354,39 @@ async def process_chat_query(request: ChatRequest) -> ChatResponse:
     except ApiException as e:
         if e.status == 403:
             logger.warning("RBAC forbidden: %s", e)
-            raise HTTPException(
-                status_code=403,
-                detail="Access denied. Check your RBAC permissions.",
-                headers={"X-Error-Code": "rbac_forbidden"},
+            raise api_error(
+                RBAC_FORBIDDEN,
+                "Access denied. Check your RBAC permissions. You can rephrase "
+                "or ask for a read-only diagnosis.",
+                403,
+                recoverable=True,
             )
         raise handle_generic_error(
             e,
             context="processing chat query",
-            user_message="An error occurred while processing your query. Please try again.",
+            user_message=(
+                "An error occurred while processing your query. "
+                "Your chat is still here—try again or rephrase."
+            ),
         )
     except ConnectionError as e:
         logger.error("Cluster connection error: %s", e)
-        raise HTTPException(
-            status_code=503,
-            detail="Cluster not responding. Please verify the cluster is accessible and try again.",
-            headers={"X-Error-Code": "cluster_unreachable"},
+        raise api_error(
+            CLUSTER_UNREACHABLE,
+            "Cluster not responding. Please verify the cluster is accessible, "
+            "then continue this chat with a narrower question.",
+            503,
+            recoverable=True,
         )
     except Exception as e:
         logger.error("Error processing chat query: %s", e, exc_info=True)
         raise handle_generic_error(
             e,
             context="processing chat query",
-            user_message="An error occurred while processing your query. Please try again.",
+            user_message=(
+                "An error occurred while processing your query. "
+                "Your earlier messages are still here—try again or rephrase."
+            ),
         )
 
 
@@ -207,6 +415,7 @@ async def get_chat_history(
     user_id: str = Query(..., description="User ID"),
     cluster_name: str = Query(..., description="Target cluster name"),
     limit: int = Query(50, ge=1, le=50, description="Maximum number of messages to return"),
+    session_id: str = Depends(require_chat_session),
 ) -> dict:
     """Last `limit` messages for the user on the given cluster (per-cluster isolation)."""
     try:
@@ -251,8 +460,12 @@ class ExportRequest(BaseModel):
 
 
 @router.post("/export")
-async def export_conversation(export: ExportRequest) -> dict:
+async def export_conversation(
+    export: ExportRequest,
+    session_id: str = Depends(require_chat_session),
+) -> dict:
     """Export a conversation (or all the user's conversations on the cluster) as Markdown."""
+    _ = session_id  # authz only — history is keyed by client user_id (pre-existing)
     try:
         if export.conversation_id:
             conversation = conversation_history.get_conversation(
@@ -318,8 +531,10 @@ async def get_conversation_list(
     user_id: str,
     cluster_name: Optional[str] = Query(None, description="Optional cluster name to filter conversations"),
     limit: int = Query(10, ge=1, le=50, description="Number of conversations to return"),
+    session_id: str = Depends(require_chat_session),
 ) -> dict:
     """List the user's conversations, optionally filtered to one cluster."""
+    _ = session_id
     try:
         conversations = conversation_history.get_user_conversations(user_id, cluster_name)
         conversations = conversations[:limit]
@@ -350,8 +565,10 @@ async def get_conversation(
     user_id: str,
     conversation_id: str,
     cluster_name: Optional[str] = Query(None, description="Optional cluster name for per-cluster isolation"),
+    session_id: str = Depends(require_chat_session),
 ) -> dict:
     """Fetch one conversation with all of its messages."""
+    _ = session_id
     try:
         conversation = conversation_history.get_conversation(user_id, conversation_id, cluster_name)
         if not conversation:

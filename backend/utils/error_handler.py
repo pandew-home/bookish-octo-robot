@@ -3,7 +3,7 @@ Centralized error handling with user-friendly messages and comprehensive logging
 
 Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.7
 """
-from typing import Optional, Dict, Any, Callable, TypeVar, Awaitable, cast, TypedDict
+from typing import Optional, Dict, Any, Callable, TypeVar, Awaitable, cast, TypedDict, List
 from fastapi import HTTPException
 from botocore.exceptions import ClientError, BotoCoreError
 from kubernetes.client.exceptions import ApiException
@@ -18,10 +18,102 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar('T')
 
+# Stable machine codes shared with the frontend
+AUTH_REQUIRED = "auth_required"
+RBAC_FORBIDDEN = "rbac_forbidden"
+CLUSTER_UNREACHABLE = "cluster_unreachable"
+RATE_LIMITED = "rate_limited"
+VALIDATION_ERROR = "validation_error"
+TIMEOUT = "timeout"
+INTERNAL_ERROR = "internal_error"
+AGENT_STOP = "agent_stop"
+AGENT_ERROR = "agent_error"
+
 
 class ErrorInfo(TypedDict):
     message: str
     status: int
+
+
+def _current_request_id() -> str:
+    try:
+        from middleware.request_id import get_request_id
+
+        return get_request_id()
+    except Exception:
+        return "unknown"
+
+
+def error_envelope(
+    *,
+    code: str,
+    message: str,
+    details: Any = None,
+    recoverable: bool = True,
+    request_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Standard API error body (plus detail mirror for legacy clients)."""
+    rid = request_id or _current_request_id()
+    body: Dict[str, Any] = {
+        "error": {
+            "code": code,
+            "message": message,
+            "details": details,
+            "request_id": rid,
+            "recoverable": recoverable,
+        },
+        "detail": message,
+    }
+    return body
+
+
+def api_error(
+    code: str,
+    message: str,
+    status_code: int = 500,
+    *,
+    details: Any = None,
+    recoverable: Optional[bool] = None,
+    headers: Optional[Dict[str, str]] = None,
+) -> HTTPException:
+    """Build an HTTPException with the standard envelope."""
+    if recoverable is None:
+        recoverable = status_code != 401
+    rid = _current_request_id()
+    hdrs = {"X-Error-Code": code, "X-Request-Id": rid}
+    if headers:
+        hdrs.update(headers)
+    return HTTPException(
+        status_code=status_code,
+        detail=error_envelope(
+            code=code,
+            message=message,
+            details=details,
+            recoverable=recoverable,
+            request_id=rid,
+        ),
+        headers=hdrs,
+    )
+
+
+def normalize_agent_errors(raw_errors: List[Any]) -> List[Dict[str, str]]:
+    """Turn free-text agent errors into structured objects for the UI."""
+    out: List[Dict[str, str]] = []
+    for item in raw_errors or []:
+        if isinstance(item, dict) and item.get("message"):
+            out.append(
+                {
+                    "code": str(item.get("code") or AGENT_ERROR),
+                    "message": str(item["message"]),
+                    "severity": str(item.get("severity") or "warning"),
+                }
+            )
+            continue
+        text = str(item)
+        code = AGENT_STOP if "Stop condition" in text else AGENT_ERROR
+        severity = "warning" if code == AGENT_STOP else "error"
+        out.append({"code": code, "message": text, "severity": severity})
+    return out
 
 # Import metrics (lazy import to avoid circular dependencies)
 _metrics = None
@@ -75,7 +167,8 @@ def log_error(
     error_type = type(error).__name__
     error_message = str(error)
     stack_trace = traceback.format_exc()
-    
+    request_id = _current_request_id()
+
     log_data = {
         "timestamp": timestamp,
         "severity": severity,
@@ -83,19 +176,18 @@ def log_error(
         "error_message": error_message,
         "context": context,
         "user_id": user_id or "anonymous",
-        "stack_trace": stack_trace
+        "request_id": request_id,
+        "stack_trace": stack_trace,
     }
-    
+
     if additional_data:
         log_data.update(additional_data)
-    
-    # Log with appropriate severity level
+
     log_method = getattr(logger, severity.lower(), logger.error)
     log_method(
-        f"Error in {context}: {error_type} - {error_message} | "
-        f"User: {user_id or 'anonymous'} | "
-        f"Timestamp: {timestamp}",
-        extra=log_data
+        f"request_id={request_id} Error in {context}: {error_type} - {error_message} | "
+        f"User: {user_id or 'anonymous'}",
+        extra=log_data,
     )
     
     # Record error metric
@@ -585,23 +677,27 @@ def handle_aws_error(
             'message': f'AWS error: {error_message}',
             'status': 500
         })
-        
-        return HTTPException(
-            status_code=error_info['status'],
-            detail=error_info['message']
+        st = error_info["status"]
+        code = (
+            AUTH_REQUIRED if st == 401 else
+            RBAC_FORBIDDEN if st == 403 else
+            RATE_LIMITED if st == 429 else
+            INTERNAL_ERROR
         )
-    
-    elif isinstance(error, BotoCoreError):
-        return HTTPException(
-            status_code=500,
-            detail=f'AWS connection error. Please check your network connection and try again.'
+        return api_error(code, error_info["message"], st, recoverable=st != 401)
+
+    if isinstance(error, BotoCoreError):
+        return api_error(
+            INTERNAL_ERROR,
+            "AWS connection error. Please check your network connection and try again.",
+            500,
         )
-    
-    else:
-        return HTTPException(
-            status_code=500,
-            detail=f'An unexpected error occurred while {context}. Please try again.'
-        )
+
+    return api_error(
+        INTERNAL_ERROR,
+        f"An unexpected error occurred while {context}. Please try again.",
+        500,
+    )
 
 
 def handle_k8s_error(
@@ -658,57 +754,53 @@ def handle_k8s_error(
             message = f'Kubernetes error: {reason}'
             http_status = 500
         
-        return HTTPException(
-            status_code=http_status,
-            detail=message
+        code = RBAC_FORBIDDEN if http_status == 403 else (
+            AUTH_REQUIRED if http_status == 401 else (
+                CLUSTER_UNREACHABLE if http_status == 503 else (
+                    RATE_LIMITED if http_status == 429 else INTERNAL_ERROR
+                )
+            )
         )
-    
-    else:
-        return HTTPException(
-            status_code=500,
-            detail=f'An unexpected error occurred while {context}. Please try again.'
+        return api_error(
+            code,
+            message,
+            http_status,
+            recoverable=http_status != 401,
         )
+
+    return api_error(
+        INTERNAL_ERROR,
+        f"An unexpected error occurred while {context}. Please try again.",
+        500,
+    )
 
 
 def handle_generic_error(
     error: Exception,
     context: str = "",
     user_message: Optional[str] = None,
-    user_id: Optional[str] = None
+    user_id: Optional[str] = None,
 ) -> HTTPException:
     """
     Convert generic errors into user-friendly HTTP exceptions.
-    
-    Logs errors with comprehensive information including severity, timestamp,
-    user ID, and stack trace. Returns user-friendly messages without exposing
-    internal details.
-    
-    Requirements: 17.1, 17.2
-    
-    Args:
-        error: The error
-        context: Additional context about what operation failed
-        user_message: Optional custom user-friendly message
-        user_id: User ID if available
-        
-    Returns:
-        HTTPException with user-friendly message
     """
-    # Log the error with comprehensive information
-    log_error(error, context, user_id, severity="ERROR", additional_data={
-        "error_category": "generic",
-        "operation": context
-    })
-    
+    log_error(
+        error,
+        context,
+        user_id,
+        severity="ERROR",
+        additional_data={"error_category": "generic", "operation": context},
+    )
+
     if user_message:
         message = user_message
     else:
-        message = f'An error occurred while {context}. Please try again or contact support if the issue persists.'
-    
-    return HTTPException(
-        status_code=500,
-        detail=message
-    )
+        message = (
+            f"An error occurred while {context}. Please try again or contact "
+            "support if the issue persists."
+        )
+
+    return api_error(INTERNAL_ERROR, message, 500, recoverable=True)
 
 
 def create_error_response(

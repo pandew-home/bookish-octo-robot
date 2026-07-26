@@ -36,9 +36,10 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from agent_tools import AgentContext, build_tool_specs, execute_tool
+from kube_policy import KubeApiPolicy
 from skills import format_skills_summary, load_skills
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,27 @@ def _load_system_prompt(path: Optional[Path] = None) -> str:
     return candidate.read_text(encoding="utf-8")
 
 
+def _safe_prompt_format(template: str, **kwargs: Any) -> str:
+    """Format system prompt without breaking on braces in memory/K8sGPT text.
+
+    Escapes ``{``/``}`` inside substituted values so ``str.format`` cannot
+    interpret them as field names (JSON, Helm, Go templates, etc.).
+    """
+    escaped = {
+        key: str(value).replace("{", "{{").replace("}", "}}")
+        for key, value in kwargs.items()
+    }
+    try:
+        return template.format(**escaped)
+    except (KeyError, ValueError, IndexError) as exc:
+        logger.warning("[AGENT] prompt format failed (%s); using unformatted template", exc)
+        # Last resort: append context blocks without format
+        parts = [template]
+        for key, value in kwargs.items():
+            parts.append(f"\n## {key}\n{value}")
+        return "\n".join(parts)
+
+
 class AgentEngine:
     """Tool-enabled LLM engine for Kubernetes troubleshooting."""
 
@@ -71,44 +93,67 @@ class AgentEngine:
         self,
         llm_client: Any,
         k8sgpt_results: Optional[List] = None,
-        kb_results: Optional[List] = None,
         k8s_clients: Optional[Dict[str, Any]] = None,
-        kb_search_func: Optional[Callable[..., List[Dict[str, Any]]]] = None,
         cluster_version: Optional[str] = None,
-        execution_mode: str = "observe-only",
-        require_human_approval: bool = True,
         skills_dir: Optional[Path] = None,
         system_prompt_path: Optional[Path] = None,
+        memory_summary: str = "",
+        kube_policy: Optional[KubeApiPolicy] = None,
     ):
         self.llm_client = llm_client
         self.k8sgpt_results = k8sgpt_results or []
-        self.kb_results = kb_results or []
         self.k8s_clients = k8s_clients or {}
-        self.kb_search_func = kb_search_func
         self.cluster_version = (cluster_version or "").strip() or "unknown"
-
-        mode = (execution_mode or "observe-only").strip().lower()
-        self.execution_mode = mode if mode in {"observe-only", "execute"} else "observe-only"
-        self.require_human_approval = bool(require_human_approval)
+        self.kube_policy = kube_policy
 
         self.skills = load_skills(skills_dir)
         self.system_prompt_template = _load_system_prompt(system_prompt_path)
+        self.memory_summary = memory_summary
 
     async def run(self, query: str) -> Dict[str, Any]:
-        """Run the tool-calling loop and return ``{response, errors, metadata}``."""
+        """Run the tool-calling loop and return ``{response, errors, metadata}``.
+
+        Unexpected failures are soft-failed into a recoverable response so the
+        chat turn does not derail the conversation thread.
+        """
+        try:
+            return await self._run_loop(query)
+        except Exception as exc:
+            logger.exception("[AGENT] unexpected failure (soft-fail for chat continuity): %s", exc)
+            return {
+                "response": (
+                    "I hit an internal error while investigating and could not finish this turn. "
+                    "Your earlier messages are still here—try rephrasing or narrowing the question."
+                ),
+                "errors": [
+                    {
+                        "code": "agent_error",
+                        "message": "Agent loop failed unexpectedly; you can continue the chat.",
+                        "severity": "error",
+                    }
+                ],
+                "metadata": {
+                    "tool_calls_used": 0,
+                    "rounds": 0,
+                    "stop_reason": "internal_error",
+                    "soft_failed": True,
+                },
+            }
+
+    async def _run_loop(self, query: str) -> Dict[str, Any]:
+        """Inner agent loop (may raise; wrapped by ``run``)."""
         ctx = AgentContext(
             k8s_clients=self.k8s_clients,
             k8sgpt_results=self.k8sgpt_results,
-            kb_search_func=self.kb_search_func,
             skills=self.skills,
             cluster_version=self.cluster_version,
-            execution_mode=self.execution_mode,
-            require_human_approval=self.require_human_approval,
+            kube_policy=self.kube_policy,
         )
 
-        system_content = self.system_prompt_template.format(
+        system_content = _safe_prompt_format(
+            self.system_prompt_template,
             k8sgpt_summary=self._format_k8sgpt_summary() or "None available.",
-            kb_summary=self._format_kb_results() or "No relevant articles found.",
+            memory_summary=self.memory_summary or "No memory context available.",
             cluster_version=_major_minor_version(self.cluster_version),
             api_reference_url=_api_reference_url(self.cluster_version),
             skills_summary=format_skills_summary(self.skills),
@@ -122,9 +167,8 @@ class AgentEngine:
 
         tool_calls_used = 0
         rounds = 0
-        errors: List[str] = []
+        errors: List[Any] = []
         stop_reason = ""
-        blocked_actions: List[Dict[str, Any]] = []
         dedup_hits = 0
         no_progress_rounds = 0
         dedup_only_rounds = 0
@@ -177,15 +221,6 @@ class AgentEngine:
                     round_all_blocked = False
                 elif not outcome["blocked"]:
                     round_all_blocked = False
-
-                if outcome["approval_required"]:
-                    blocked_actions.append(
-                        {
-                            "tool": outcome["tool_name"],
-                            "args": outcome["args"],
-                            "reason": outcome.get("reason", "approval required"),
-                        }
-                    )
 
                 messages.append(
                     {
@@ -252,11 +287,8 @@ class AgentEngine:
                 "tool_calls_used": tool_calls_used,
                 "rounds": rounds,
                 "tools_available": len(tools),
-                "execution_mode": self.execution_mode,
-                "human_approval_required": self.require_human_approval,
                 "dedup_hits": dedup_hits,
                 "stop_reason": stop_reason,
-                "blocked_actions": blocked_actions,
                 "skills_loaded": [s.name for s in self.skills.values()],
             },
         }
@@ -404,17 +436,6 @@ class AgentEngine:
     # ------------------------------------------------------------------
     # Context formatting helpers.
     # ------------------------------------------------------------------
-
-    def _format_kb_results(self) -> str:
-        if not self.kb_results:
-            return ""
-        lines = []
-        for r in self.kb_results[:5]:
-            title = r.get("title", "Untitled")
-            content = r.get("content") or r.get("snippet", "")
-            truncated = content[:500] + ("..." if len(content) > 500 else "")
-            lines.append(f"- {title}: {truncated}")
-        return "\n".join(lines)
 
     def _format_k8sgpt_summary(self) -> str:
         if not self.k8sgpt_results:
