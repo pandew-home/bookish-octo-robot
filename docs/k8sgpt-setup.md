@@ -1,25 +1,19 @@
-# K8sGPT Setup Guide
+# K8sGPT setup
 
-Install and operate K8sGPT so the DevOps Chatbot weather widget and chat agent can consume **Result CRDs**.
+K8sGPT Operator (+ instance) runs analyzers on a schedule and writes **Result** CRs. The chatbot weather widget and agent consume those CRDs (always verify against live API state).
 
-## Overview
+Preferred path: **Argo CD + Helm** — see [deployment.md](deployment.md).
 
-K8sGPT Operator (+ instance) runs analyzers on a schedule and writes Result custom resources. The chatbot reads those CRDs for health summaries and as supporting diagnostic signal (always verify against live API state).
-
-Preferred install path in this repo: **Argo CD Applications + Helm charts**, not ad-hoc one-off manifests alone.
-
-## GitOps path (recommended)
-
-After Argo CD root app is bootstrapped ([argocd-gitops.md](argocd-gitops.md)):
+## GitOps apps
 
 | Application | Purpose |
 |-------------|---------|
-| `00-k8sgpt-operator` | Operator install |
+| `00-k8sgpt-operator` | Operator |
 | `10-k8sgpt-instance` | Instance CR + RBAC (`helm/k8sgpt-instance`) |
-| `30-alloy` / `35-alloy-extras` | Telemetry + cleanup CronJob helpers |
+| `30-alloy` / `35-alloy-extras` | Telemetry + cleanup helpers |
 | `40-grafana-dashboards` | Dashboard ConfigMaps |
 
-Create the AI backend secret **before** the instance becomes healthy:
+AI backend secret **before** the instance is healthy:
 
 ```bash
 kubectl create namespace k8sgpt-operator-system --dry-run=client -o yaml | kubectl apply -f -
@@ -27,22 +21,20 @@ kubectl create namespace k8sgpt-operator-system --dry-run=client -o yaml | kubec
 kubectl create secret generic k8sgpt-ai-secret \
   --from-literal=openai-api-key=sk-... \
   -n k8sgpt-operator-system
-# Secret name/keys must match what the instance chart/values expect — verify helm/k8sgpt-instance
+# Name/keys must match helm/k8sgpt-instance values
 ```
 
-## Manual / Helm path
+## Manual Helm
 
 ```bash
-helm repo add k8sgpt https://charts.k8sgpt.ai/
-helm repo update
-
+helm repo add k8sgpt https://charts.k8sgpt.ai/ && helm repo update
 kubectl create namespace k8sgpt-operator-system
-# install operator per upstream docs, then:
+# install operator per upstream, then:
 helm upgrade --install k8sgpt-instance ./helm/k8sgpt-instance \
   -n k8sgpt-operator-system
 ```
 
-Reference fixtures and Alloy notes also live under `k8sgpt/` (including `k8sgpt/Alloy/ALLOY_INTEGRATION.md` where present).
+Fixtures and Alloy notes: `k8sgpt/` (e.g. `k8sgpt/Alloy/`).
 
 ## Verify
 
@@ -52,12 +44,10 @@ kubectl get results.core.k8sgpt.ai -A
 kubectl get k8sgpt -A
 ```
 
-Chatbot weather empty? Confirm Results exist and the chatbot’s credentials/SA can **get/list** those CRDs in the relevant namespaces.
+Empty weather → no Results, operator down, or missing get/list on Result CRDs.
 
-## CI helpers
-
-`.github/workflows/deploy-k8sgpt.yml` and `k8sgpt-deploy-shared.yml` support scripted/operator-oriented deploys. Steady state remains Argo CD when GitOps is enabled.
+CI helpers: `.github/workflows/deploy-k8sgpt.yml` — steady state remains Argo CD.
 
 ## Related
 
-- [Architecture](architecture.md) · [Deployment](deployment.md) · [Argo CD GitOps](argocd-gitops.md)
+- [Deployment](deployment.md) · [Architecture](architecture.md)

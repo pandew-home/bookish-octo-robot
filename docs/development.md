@@ -1,12 +1,10 @@
-# Development Guide
+# Development
 
-Local setup, tests, and layout for DevOps Chatbot v2.0.
+Local setup, tests, and layout. Agent rules: [../AGENTS.md](../AGENTS.md).
 
-Agent-facing rules: [../AGENTS.md](../AGENTS.md).
+## Setup
 
-## Local development setup
-
-### 1. Clone
+### Clone
 
 ```bash
 git clone https://github.com/pandew-home/bookish-octo-robot.git
@@ -14,7 +12,7 @@ cd bookish-octo-robot
 git checkout main
 ```
 
-### 2. Backend
+### Backend
 
 ```bash
 cd backend
@@ -23,42 +21,34 @@ python3 -m venv venv
 source venv/bin/activate
 
 pip install -r requirements.txt
-
-# Shared libraries (paths are repo-root libs/, not backend/libs/)
 pip install -e ../libs/devops-k8s
 pip install -e ../libs/devops-rag
 
 uvicorn app:app --reload --port 8000
 ```
 
-There is **no** `libs/devops-prompts` package; prompts live under `backend/prompts/` (see `system.md`).
+Prompts live under `backend/prompts/` (no separate `libs/devops-prompts` package).
 
-### 3. Frontend
+### Frontend
 
 ```bash
 cd frontend
 npm install
 npm start
-# Dev server proxies /api → localhost:8000 (see frontend package config)
+# Dev server proxies /api → localhost:8000
 ```
 
-### 4. Environment
-
-Create `.env` at repo root or export vars for the backend process:
+### Environment
 
 ```bash
 LLM_API_KEY=sk-...
 DEFAULT_REGION=us-east-1
 LLM_PROVIDER=openai          # or openrouter, etc.
 LLM_MODEL=gpt-4o-mini
-MEMORY_BACKEND=noop          # or vestige when local/in-cluster Vestige is up
+MEMORY_BACKEND=noop          # or vestige when Vestige is up
 # VESTIGE_HTTP_URL=http://localhost:3928
-# Optional single-cluster:
 # IN_CLUSTER_EKS_CLUSTER_NAME=my-cluster
-# EKS_CLUSTER_NAME=my-cluster
 ```
-
-### 5. Access
 
 | Surface | URL |
 |---------|-----|
@@ -68,68 +58,35 @@ MEMORY_BACKEND=noop          # or vestige when local/in-cluster Vestige is up
 
 ## Testing
 
-### Backend
-
 ```bash
-cd backend
-pytest
+# Backend
+cd backend && pytest
 pytest --cov=. --cov-report=html
-pytest -k "property"
 pytest tests/test_credential_store.py
-```
 
-### Frontend unit
-
-```bash
-cd frontend
-npm test -- --no-watch
+# Frontend unit
+cd frontend && npm test -- --no-watch
 npm test -- --coverage
-npm test -- src/components/LoginForm.test.tsx
-```
 
-### Frontend e2e (Playwright)
-
-```bash
+# Frontend e2e
 cd frontend
 npx playwright install   # first time
 npx playwright test
-```
-
-Specs live under `frontend/e2e/`. Point `BASE_URL` at a running stack when testing against deploy.
-
-### Workflow lint
-
-```bash
-# See .github/workflows/workflow-lint.yml for CI expectations
+# Specs: frontend/e2e/; set BASE_URL for deployed stack
 ```
 
 ## Project structure
 
 ```
 bookish-octo-robot/
-├── AGENTS.md                 # Rules for coding agents
+├── AGENTS.md
 ├── argocd/                   # App-of-apps GitOps
-├── helm/                     # Charts (chatbot, k8sgpt-instance, alloy-extras, dashboards)
-├── backend/
-│   ├── api/                  # credentials, clusters, chat, weather, solutions
-│   ├── skills/               # SKILL.md packs for the agent
-│   ├── prompts/system.md     # System prompt
-│   ├── agentic_engine.py
-│   ├── agent_tools.py
-│   ├── rag_integration.py
-│   ├── k8sgpt_reader.py
-│   ├── weather_calculator.py
-│   ├── tests/
-│   └── requirements.txt
-├── frontend/
-│   ├── src/                  # components, hooks, types
-│   ├── e2e/                  # Playwright
-│   └── playwright.config.ts
-├── libs/
-│   ├── devops-k8s/
-│   └── devops-rag/           # LLM client only
+├── helm/                     # Charts
+├── backend/                  # FastAPI, agent, memory, skills
+├── frontend/                 # React + Playwright e2e
+├── libs/devops-k8s|devops-rag
 ├── k8s/                      # Legacy/reference manifests
-├── k8sgpt/                   # Operator/Alloy docs & fixtures
+├── k8sgpt/                   # Operator/Alloy notes
 ├── .github/workflows/
 ├── docs/
 └── Dockerfile
@@ -138,22 +95,22 @@ bookish-octo-robot/
 ## Contributing
 
 1. Branch from `main`.  
-2. Prefer small PRs; run backend + frontend tests.  
+2. Small PRs; run backend + frontend tests.  
 3. Update docs/AGENTS when behavior or GitOps paths change.  
-4. Do not commit secrets or coverage HTML trees.  
+4. No secrets or coverage HTML trees in git.  
 5. Do not reintroduce Flux.
 
-## Code style
+## Style
 
-- **Python:** PEP 8, type hints, focused modules.  
-- **TypeScript:** strict mode, ESLint, small components/hooks.  
+- **Python:** PEP 8, type hints.  
+- **TypeScript:** strict, ESLint, small components/hooks.  
 - **Helm/YAML:** 2-space; security context and resources explicit.
 
 ## Debugging
 
-- Backend: `DEBUG=true` / `LOG_LEVEL=DEBUG`; use `/docs`.  
-- Frontend: React DevTools; network tab for `/api/*` and session cookie.  
-- Cluster: `kubectl logs -n devops-chatbot deploy/devops-chatbot`; check Argo CD app sync.
+- Backend: `DEBUG=true` / `LOG_LEVEL=DEBUG`; `/docs`.  
+- Frontend: DevTools; network for `/api/*` and session cookie.  
+- Cluster: `kubectl logs -n devops-chatbot deploy/devops-chatbot`; Argo app sync.
 
 ## Related
 

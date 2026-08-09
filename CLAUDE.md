@@ -105,7 +105,7 @@ kubectl get applications -n argocd
 kubectl get pods -n devops-chatbot
 ```
 
-See docs/argocd-gitops.md and docs/deployment.md. Raw `k8s/` manifests are legacy/reference.
+See docs/deployment.md (Argo CD + Helm). Raw `k8s/` manifests are legacy/reference.
 
 ## Critical Architecture Patterns
 

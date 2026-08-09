@@ -1,52 +1,79 @@
-# Deployment Guide
+# Deployment
 
-Deploy DevOps Chatbot v2.0 with **Docker → GHCR → Argo CD/Helm**. Prefer GitOps over imperative `kubectl apply` for ongoing delivery.
+Docker → GHCR → **Argo CD + Helm**. Prefer GitOps over imperative `kubectl apply`.
 
-## Recommended path (GitOps)
+## GitOps layout
 
-1. Build/push image (CI on `main` or local build).  
-2. Ensure cluster secrets exist.  
-3. Bootstrap Argo CD apps (once).  
-4. Let Argo CD reconcile `helm/devops-chatbot` and sibling charts.
+```
+argocd/
+  projects/bookish-octo-robot.yaml   # AppProject
+  bootstrap/root-app.yaml            # App-of-apps root
+  apps/
+    00-k8sgpt-operator.yaml
+    10-k8sgpt-instance.yaml
+    20-kube-prometheus-stack.yaml
+    30-alloy.yaml
+    35-alloy-extras.yaml
+    40-grafana-dashboards.yaml
+    50-devops-chatbot.yaml           # Chatbot + Image Updater annotations
+helm/
+  devops-chatbot/
+  k8sgpt-instance/
+  alloy-extras/
+  grafana-dashboards/
+```
 
-Full bootstrap and Image Updater notes: **[argocd-gitops.md](argocd-gitops.md)**.
+Root app watches `argocd/apps` on `main` with prune/selfHeal. **Flux is retired** — do not reintroduce a `flux/` tree.
 
-### One-time Argo CD
+## Bootstrap (once)
+
+Prerequisites: Argo CD installed; repo readable by Argo CD; `kubectl` context set.
 
 ```bash
 kubectl apply -n argocd -f argocd/projects/bookish-octo-robot.yaml
 kubectl apply -n argocd -f argocd/bootstrap/root-app.yaml
-```
 
-### Runtime secrets
-
-```bash
 kubectl create namespace devops-chatbot --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create secret generic devops-chatbot-secrets \
-  --from-literal=llm-api-key=sk-... \
+  --from-literal=llm-api-key=<api-key> \
   --from-literal=llm-provider=openrouter \
   --from-literal=llm-model=mistralai/devstral-2512 \
-  -n devops-chatbot
+  -n devops-chatbot \
+  --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl create secret docker-registry ghcr-pull-secret \
   --docker-server=ghcr.io \
-  --docker-username=<user> \
-  --docker-password=<token> \
-  -n devops-chatbot
+  --docker-username=<github-user> \
+  --docker-password=<ghcr-read-token> \
+  -n devops-chatbot \
+  --dry-run=client -o yaml | kubectl apply -f -
 ```
 
-## Docker image
+K8sGPT AI secret (before instance is healthy) — see [k8sgpt-setup.md](k8sgpt-setup.md).
+
+```bash
+kubectl get applications -n argocd
+kubectl get pods -n devops-chatbot
+```
+
+## Image updates
+
+- Image: `ghcr.io/pandew-home/bookish-octo-robot`
+- Prefer **40-char git SHA** tags (not `latest`)
+- Image Updater writes SHA into `argocd/apps/50-devops-chatbot.yaml` (needs updater + git write creds + GHCR pull)
 
 ```bash
 DOCKER_BUILDKIT=1 docker build -t ghcr.io/pandew-home/bookish-octo-robot:local .
 ```
 
-Production tags are **git SHAs** (`ghcr.io/pandew-home/bookish-octo-robot:<40-char-sha>`). Avoid pinning production to `latest`.
+| Path | Role |
+|------|------|
+| `.github/workflows/deploy.yml` | CI: build/test/push GHCR |
+| Argo CD + Image Updater | Steady-state CD |
+| `workflow_dispatch` `direct_deploy=true` | Emergency only |
 
-## Helm (without Argo CD)
-
-Useful for smoke tests:
+## Helm (smoke test without Argo)
 
 ```bash
 helm upgrade --install devops-chatbot ./helm/devops-chatbot \
@@ -56,155 +83,96 @@ helm upgrade --install devops-chatbot ./helm/devops-chatbot \
   --set llm.existingSecret=devops-chatbot-secrets
 ```
 
-Source values: `helm/devops-chatbot/values.yaml` (ingress host/path, resources, PVC, CORS, LLM secret ref).
-
 ### Ingress alignment
 
-Keep these consistent when changing host or path:
+Keep these consistent when changing host/path:
 
 | Setting | Purpose |
 |---------|---------|
-| `ingress.host` / `ingress.path` | External URL (chart default path `/chatbot`) |
+| `ingress.host` / `ingress.path` | External URL (default path `/chatbot`) |
 | `ingress.extraPaths` | `/api`, `/static`, favicon, manifest |
-| `app.apiBaseUrl` | Usually `/api` for root-built image |
-| `app.publicUrl` | Usually `/` unless frontend rebuilt for subpath assets |
-| `app.allowedOrigins` | CORS; include scheme+host (+ path origin if needed) |
+| `app.apiBaseUrl` | Usually `/api` |
+| `app.publicUrl` | Usually `/` unless SPA rebuilt for subpath |
+| `app.allowedOrigins` | CORS; scheme+host of the real UI |
 
-`k8s/ingress.yaml` may lag the chart — treat **Helm values + Argo Application** as authoritative.
-
-## Legacy raw manifests
-
-```bash
-kubectl apply -f k8s/
-```
-
-Still present for reference/emergency. Prefer `helm/` + Argo CD. Port-forward example:
+`k8s/` raw manifests are **legacy/reference** — Helm + Argo are authoritative.
 
 ```bash
 kubectl port-forward -n devops-chatbot svc/devops-chatbot 8080:80
 # http://localhost:8080
 ```
 
-## GitHub Actions
+## Config changes
 
-Workflow: `.github/workflows/deploy.yml`
-
-| Job area | Behavior |
-|----------|----------|
-| detect / build / test | CI; push image to GHCR |
-| deploy / smoke | Optional; `direct_deploy` is emergency-oriented |
-| k8sgpt workflows | Separate deploy helpers under `.github/workflows/` |
-
-Do not assume Actions is the only deployer — **Argo CD is steady state**.
+1. Edit `helm/<chart>/values.yaml` or Application CR values.
+2. Keep ingress, `apiBaseUrl`/`publicUrl`, and `allowedOrigins` aligned.
+3. PR → `main`; Argo self-heals.
 
 ## Environment variables
 
-### Required (runtime)
+### Required
 
 | Variable | Description |
 |----------|-------------|
-| `LLM_API_KEY` (or secret key in `devops-chatbot-secrets`) | LLM provider key |
+| `LLM_API_KEY` (or secret key) | LLM provider key |
 | `DEFAULT_REGION` | Default AWS region for STS/EKS |
 
 ### Common optional
 
 | Variable | Description | Notes |
 |----------|-------------|--------|
-| `LLM_PROVIDER` | `openai`, `openrouter`, `anthropic`, … | Chart/secret |
-| `LLM_MODEL` | Model id | Chart/secret |
-| `MEMORY_BACKEND` | `noop` \| `vestige` | Chart default `vestige`; code default when unset is `noop` |
-| `VESTIGE_HTTP_URL` | Local Vestige MCP URL | Default `http://127.0.0.1:3928` |
-| `VESTIGE_DATA_DIR` | Vestige SQLite dir on PVC | Default `/data/vestige` |
-| `FASTEMBED_CACHE_PATH` | Embedding model cache | Default `/data/vestige/model-cache` |
-| `DATA_ROOT` | Chatbot data PVC root | Conversations + Vestige under `/data` |
-| `IN_CLUSTER_EKS_CLUSTER_NAME` | Target cluster name | Single-cluster mode |
-| `EKS_CLUSTER_NAME` | Fallback target name | Same |
-| `ALLOWED_ORIGINS` / chart `app.allowedOrigins` | CORS | Must match browser origin |
-| `REACT_APP_API_URL` / `app.apiBaseUrl` | API base for UI | |
+| `LLM_PROVIDER` / `LLM_MODEL` | Provider and model id | Chart/secret |
+| `MEMORY_BACKEND` | `noop` \| `vestige` | Chart default `vestige`; unset → code `noop` |
+| `VESTIGE_HTTP_URL` | Local Vestige MCP | Default `http://127.0.0.1:3928` |
+| `VESTIGE_DATA_DIR` | SQLite on PVC | Default `/data/vestige` |
+| `FASTEMBED_CACHE_PATH` | Embedding cache | Default `/data/vestige/model-cache` |
+| `DATA_ROOT` | Chatbot data root | Conversations + Vestige under `/data` |
+| `IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME` | Single-cluster pin | |
+| `ALLOWED_ORIGINS` / `app.allowedOrigins` | CORS | Must match browser origin |
+| `REACT_APP_API_URL` / `app.apiBaseUrl` | UI API base | |
 | `DEBUG` / `LOG_LEVEL` | Logging | |
 
-### Auth session behavior
+Session: credential APIs set HttpOnly cookie `session_id` (1h); also accept `X-Session-Id`; logout clears cookie.
 
-- Credential APIs set HttpOnly cookie `session_id` (1h).  
-- APIs also accept legacy `X-Session-Id` header.  
-- Logout/delete clears cookie when credentials are removed.
+## Vestige (colocated)
 
-## Pre-deploy checklist
-
-- [ ] Secrets created (LLM, GHCR pull, K8sGPT AI)  
-- [ ] Argo CD project + root app healthy  
-- [ ] Ingress host/path/CORS match the real URL  
-- [ ] Image tag is a real SHA present in GHCR  
-- [ ] Security checklist: [security.md](security.md)  
-- [ ] K8sGPT Results visible: `kubectl get results.core.k8sgpt.ai -A`
-
-## Troubleshooting
-
-### Invalid credentials
-
-- Refresh Kion temporary keys; confirm region; STS must succeed.
-
-### No clusters / 403 on target cluster
-
-- Check `eks:ListClusters` and describe/auth for the target.  
-- If single-cluster env is set, credentials must reach that cluster’s API.
-
-### Weather empty
-
-- K8sGPT operator/instance running; Results exist; RBAC allows read of Result CRDs.
-
-### Memory degraded / no recall
-
-- Vestige runs **inside** the chatbot container (supervisord). Check pod logs for the `vestige` program:  
-  `kubectl logs -n devops-chatbot deploy/devops-chatbot --all-containers` / tmp supervisor logs.  
-- Confirm PVC has `/data/vestige` writable (fsGroup 1000).  
-- Chat still works with `MEMORY_BACKEND=noop` or Vestige down; look for `memory_degraded` in chat metadata.
-
-### UI calls wrong host / CORS errors
-
-- Realign `ingress.*`, `app.apiBaseUrl`, `app.publicUrl`, `allowedOrigins` and redeploy.
-
-### Image change not visible
-
-- Confirm SHA tag pulled (Image Updater / Helm values); avoid sticky old pods with failed pulls; check `imagePullSecrets`.
-
-## Vestige Memory (colocated in chatbot image)
-
-Vestige MCP runs **in the same container** as the FastAPI app (supervisord) and stores SQLite + embedding cache on the **chatbot PVC** under `/data/vestige`.
-
-| Item | Value |
-|------|--------|
-| Binary | Baked into chatbot image (`vestige` **2.2.1** linux/x64) |
-| Listen | `127.0.0.1:3928` (not Service-exposed) |
-| Data | `/data/vestige` on PVC `devops-chatbot-data` |
-| Model cache | `/data/vestige/model-cache` |
-| Client | `MEMORY_BACKEND=vestige`, `VESTIGE_HTTP_URL=http://127.0.0.1:3928` |
-
-**Single replica recommended** — local SQLite single-writer.
-
-### Backup
+Runs in the chatbot container (supervisord) on `127.0.0.1:3928`; data on PVC `/data/vestige`. Prefer `replicaCount: 1` (SQLite single-writer).
 
 ```bash
+# Health
+kubectl exec -n devops-chatbot deploy/devops-chatbot -- curl -s http://127.0.0.1:3928/health
+
+# Backup
 kubectl exec -n devops-chatbot deploy/devops-chatbot -- \
   tar czf - -C /data/vestige . > vestige-backup.tar.gz
-```
 
-### Wipe
-
-```bash
+# Wipe
 kubectl exec -n devops-chatbot deploy/devops-chatbot -- rm -rf /data/vestige/*
 kubectl rollout restart deployment/devops-chatbot -n devops-chatbot
 ```
 
-### Verify health
+`memory.backend=noop` skips MemoryPort→Vestige (process may still run).
 
-```bash
-kubectl exec -n devops-chatbot deploy/devops-chatbot -- \
-  curl -s http://127.0.0.1:3928/health
-```
+## Pre-deploy checklist
 
-Set `memory.backend=noop` to skip MemoryPort→Vestige (Vestige process may still run in the image).
+- [ ] Secrets out of band (LLM, GHCR pull, K8sGPT AI)
+- [ ] Argo project + root app healthy
+- [ ] Ingress host/path/CORS match real URL
+- [ ] Image tag is a real SHA in GHCR
+- [ ] [Security checklist](security.md)
+- [ ] K8sGPT Results: `kubectl get results.core.k8sgpt.ai -A`
+
+## Troubleshooting
+
+| Symptom | Check |
+|---------|--------|
+| Invalid credentials | Refresh Kion keys; region; STS |
+| No clusters / 403 | EKS list/describe/auth; single-cluster env pin |
+| Weather empty | Operator/instance; Results exist; Result CRD RBAC |
+| Memory degraded | Vestige logs in chatbot pod; PVC writable (fsGroup 1000); `memory_degraded` in chat metadata |
+| CORS / wrong host | Realign `ingress.*`, `apiBaseUrl`, `publicUrl`, `allowedOrigins` |
+| Image not updating | SHA in values; pull secret; Image Updater |
 
 ## Related
 
-- [Argo CD GitOps](argocd-gitops.md) · [K8sGPT setup](k8sgpt-setup.md) · [Architecture](architecture.md)
+- [Architecture](architecture.md) · [K8sGPT setup](k8sgpt-setup.md) · [Security](security.md) · [Development](development.md)

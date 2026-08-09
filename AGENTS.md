@@ -108,7 +108,7 @@ docs/                   # Human docs (keep in sync with this file)
 specs/                  # Feature specs and checklists
 ```
 
-**Do not reintroduce Flux.** There is no `flux/` tree; [docs/flux-gitops.md](docs/flux-gitops.md) is a redirect stub only.
+**Do not reintroduce Flux.** There is no `flux/` tree; delivery is Argo CD + Helm only.
 
 ---
 
@@ -125,7 +125,7 @@ specs/                  # Feature specs and checklists
    - K8sGPT AI backend secret in operator namespace  
 5. **Ingress (current chart defaults):** Traefik; host in `helm/devops-chatbot/values.yaml`; app path under `/chatbot` with extraPaths for `/api`, `/static`, etc. TLS optional via cert-manager annotations.
 
-Details: [docs/deployment.md](docs/deployment.md), [docs/argocd-gitops.md](docs/argocd-gitops.md).
+Details: [docs/deployment.md](docs/deployment.md).
 
 ---
 
@@ -157,7 +157,7 @@ See [docs/security.md](docs/security.md).
 | Change type | Update |
 |-------------|--------|
 | Auth / session / single-cluster env | `AGENTS.md`, `docs/architecture.md`, `docs/usage.md`, `docs/security.md` |
-| Ingress host/path / GitOps | `docs/deployment.md`, `docs/argocd-gitops.md`, `README.md` |
+| Ingress host/path / GitOps | `docs/deployment.md`, `README.md` |
 | Local dev / tests / tree layout | `docs/development.md`, `README.md` |
 | K8sGPT / Alloy / Grafana | `docs/k8sgpt-setup.md`, `k8sgpt/` docs |
 | Agent skills / system prompt | `AGENTS.md`, `backend/prompts/system.md` |
@@ -166,10 +166,10 @@ See [docs/security.md](docs/security.md).
 
 ## Quick links
 
+- [Docs index](docs/README.md)
 - [Architecture](docs/architecture.md)
 - [Development](docs/development.md)
-- [Deployment](docs/deployment.md)
-- [Argo CD GitOps](docs/argocd-gitops.md)
+- [Deployment](docs/deployment.md) (includes Argo CD)
 - [K8sGPT setup](docs/k8sgpt-setup.md)
 - [Security](docs/security.md)
 - [Usage](docs/usage.md)

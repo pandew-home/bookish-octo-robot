@@ -1,98 +1,79 @@
-# Usage Guide
+# Usage
 
-How to use DevOps Chatbot v2.0 for Kubernetes troubleshooting.
+Kubernetes troubleshooting with DevOps Chatbot v2.0.
 
 ## Getting started
 
 ### 1. Authentication
 
-1. Open the app URL (cluster ingress, e.g. `http://<host>/chatbot`, or local http://localhost:3000).  
-2. Sign in with **Kion temporary AWS credentials** (access key, secret, session token, region) **or** kubeconfig upload + context.  
-3. On success the API:
-   - Validates credentials (STS or kubeconfig)
-   - Optionally checks access to a configured target cluster (`IN_CLUSTER_EKS_CLUSTER_NAME` / `EKS_CLUSTER_NAME`)
-   - Returns a `session_id` and sets an **HttpOnly** `session_id` cookie (header `X-Session-Id` still works for API clients)
+1. Open the app (cluster ingress, e.g. `http://<host>/chatbot`, or local http://localhost:3000).  
+2. Sign in with **Kion temporary AWS credentials** or kubeconfig + context.  
+3. On success the API validates creds, optionally checks the configured target cluster, returns `session_id`, and sets an **HttpOnly** cookie (`X-Session-Id` still works for API clients).
 
-Credentials live in server memory with a **~1 hour TTL**. Re-authenticate when expired.
+Credentials live in server memory (~1 hour TTL). Re-authenticate when expired.
 
 ### 2. Cluster selection
 
-- **Multi-cluster:** choose a cluster from the list (EKS discovery or kubeconfig contexts).  
-- **Single-cluster deployments:** the list may show only the configured target; if none match, you get a clear access error.
+- **Multi-cluster:** pick from the list (EKS discovery or kubeconfig contexts).  
+- **Single-cluster:** list may show only the configured target.
 
-Selecting a cluster configures the Kubernetes API client (EKS bearer token or kubeconfig) for subsequent weather and chat calls.
+Selection configures the API client for weather and chat.
 
 ## Features
 
-### Health monitoring (weather widget)
+### Weather widget
 
-Status is derived from **K8sGPT Result CRDs** (not a separate metrics product):
+Status from **K8sGPT Result CRDs** (poll ~1 minute):
 
 | Icon | Meaning (approx.) |
 |------|-------------------|
 | Sunny | No critical issues |
 | Partly cloudy | Few low-severity issues |
-| Cloudy | Moderate volume/severity |
-| Rainy | Elevated issues |
-| Stormy | Many issues or high severity |
+| Cloudy | Moderate |
+| Rainy | Elevated |
+| Stormy | Many / high severity |
 
-Poll interval is on the order of a minute. Empty weather usually means operator not installed, no Results, or RBAC.
+Empty weather → operator missing, no Results, or RBAC.
 
-### Chat troubleshooting
+### Chat
 
-1. Ask a natural-language question about the **currently selected** cluster.  
-2. The backend agent may:
-   - Read live Kubernetes API state (tooling)
-   - Use K8sGPT findings as supporting signal
-   - Recall relevant prior lessons from Vestige memory (automatic)
-   - Load **skills** (e.g. networking/rbac/workload triage, k8s-check)
-3. Responses follow the system prompt structure: live assessment, root cause hypothesis, remediation.
-4. Memory is **automatic** — no manual "Save to KB" step. After durable diagnosis/fix turns, lessons are ingested into Vestige memory for future recall.
+1. Ask about the **currently selected** cluster.  
+2. Agent may use live API tools, K8sGPT findings, Vestige recall, and skills.  
+3. Responses: live assessment, root-cause hypothesis, remediation.  
+4. Memory is **automatic** (no manual "Save to KB"; that path returns 410).
 
-#### Mutations and approval
-
-The assistant is **not** free-fire admin:
-
-- Default posture is diagnose / observe.  
-- Mutating Kubernetes API **execution** is gated by **kubeApi policy** (Helm/env defaults + user cluster RBAC).  
-- Free-text **recommendations** (kubectl suggestions, YAML snippets, remediation advice) are always allowed — no approval ceremony needed.  
-- Prefer GitOps/IaC remediations when advising production changes.
-
-### Knowledge base (deprecated)
-
-- Manual "Save to KB" has been removed (returns 410 Gone).  
-- Memory is now automatic via Vestige — lessons are recalled and ingested without user action.
+**Mutations:** default observe/diagnose. Execution gated by kubeApi policy + user RBAC. Free-text recommendations always allowed. Prefer GitOps/IaC for production fixes.
 
 ### Switching clusters
 
-Changing the selector refreshes the API client and conversation context for that cluster (where history is scoped).
+Selector refreshes the API client and conversation context for that cluster.
 
 ## Example queries
 
-- "Why is my pod crashing?" / "Pods in CrashLoopBackOff in namespace X"  
+- "Why is my pod crashing?" / CrashLoopBackOff in namespace X  
 - "What did K8sGPT find for Deployments?"  
 - "Is the HPA scaling correctly for service Y?"  
 - "Summarize node pressure and recent events"  
-- "Show NetworkPolicy / Service endpoints for app Z"  
+- "Show NetworkPolicy / Service endpoints for app Z"
 
-## Local vs cluster URLs
+## URLs
 
 | Mode | Typical URL |
 |------|-------------|
 | Local frontend | http://localhost:3000 |
 | Local API | http://localhost:8000/docs |
-| In-cluster (chart defaults) | `http://<ingress.host>/chatbot` with API under `/api` |
+| In-cluster | `http://<ingress.host>/chatbot` with API under `/api` |
 
-Exact host/path come from `helm/devops-chatbot/values.yaml` / Argo CD values — they change per environment.
+Host/path from Helm/Argo values per environment.
 
 ## Troubleshooting (end user)
 
-| Symptom | What to try |
-|---------|-------------|
-| Login fails | New Kion session; correct region; clock skew |
+| Symptom | Try |
+|---------|-----|
+| Login fails | New Kion session; region; clock skew |
 | No clusters | IAM/EKS permissions; single-cluster env mismatch |
-| Weather empty | Ask admin to verify K8sGPT Results CRDs |
-| Chat 401 | Re-login; cookie blocked? try same-site origin |
-| CORS / blank API | Wrong origin vs `allowedOrigins`; path mismatch |
+| Weather empty | Admin: K8sGPT Results CRDs |
+| Chat 401 | Re-login; cookie/same-site origin |
+| CORS / blank API | Origin vs `allowedOrigins`; path mismatch |
 
-Admin-oriented deploy issues: [deployment.md](deployment.md).
+Deploy issues: [deployment.md](deployment.md).

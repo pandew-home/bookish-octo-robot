@@ -48,7 +48,7 @@ kubectl create secret generic devops-chatbot-secrets \
   -n devops-chatbot
 ```
 
-Details: [docs/argocd-gitops.md](docs/argocd-gitops.md), [docs/deployment.md](docs/deployment.md).
+Details: [docs/deployment.md](docs/deployment.md).
 
 ### K8sGPT
 
@@ -73,10 +73,10 @@ GHCR    → ghcr.io/pandew-home/bookish-octo-robot:<git-sha>
 | Doc | Topic |
 |-----|--------|
 | [AGENTS.md](AGENTS.md) | Rules for AI coding agents |
+| [docs/README.md](docs/README.md) | Docs index |
 | [docs/architecture.md](docs/architecture.md) | Design & data flows |
 | [docs/development.md](docs/development.md) | Local dev & tests |
-| [docs/deployment.md](docs/deployment.md) | Deploy, env, troubleshooting |
-| [docs/argocd-gitops.md](docs/argocd-gitops.md) | App-of-apps GitOps |
+| [docs/deployment.md](docs/deployment.md) | Deploy, Argo CD, env, troubleshooting |
 | [docs/k8sgpt-setup.md](docs/k8sgpt-setup.md) | K8sGPT |
 | [docs/security.md](docs/security.md) | Security |
 | [docs/usage.md](docs/usage.md) | End-user usage |
