@@ -6,7 +6,6 @@ metadata:
   labels:
     app: devops-chatbot
     version: v2.0
-    git-sha: "1121c46"
 spec:
   replicas: 1
   selector:
@@ -17,9 +16,7 @@ spec:
       labels:
         app: devops-chatbot
         version: v2.0
-        git-sha: "1121c46"
       annotations:
-        # Security profiles
         seccomp.security.alpha.kubernetes.io/pod: runtime/default
     spec:
       imagePullSecrets:
@@ -58,8 +55,8 @@ spec:
             - ALL
       containers:
       - name: chatbot
-        image: ghcr.io/pandew-home/bookish-octo-robot:1121c46
-        imagePullPolicy: Always
+        image: localhost:5000/devops-chatbot:local-test
+        imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8080
           name: http
